@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Writable, Readable } from "node:stream";
@@ -24,7 +24,7 @@ function toUint8ReadableStream(
   });
 }
 
-export function getAgentTransport() {
+export function createExampleAgentProcess() {
   // Get the current file's directory to find agent.ts
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
@@ -36,6 +36,15 @@ export function getAgentTransport() {
     stdio: ["pipe", "pipe", "inherit"],
   });
 
+  return agentProcess;
+}
+
+/**
+ * This allows the client to communicate with the agent process.
+ * @param agentProcess - The agent process to use. Defaults to a mock agent process, but can be replaced with Claude Agent SDK, Codex, etc.
+ * @returns A transport object containing the agent process, input stream, and output stream.
+ */
+export function getAgentTransport(agentProcess: ChildProcess) {
   // Create streams to communicate with the agent
   const stdin = agentProcess.stdin;
   const stdout = agentProcess.stdout;

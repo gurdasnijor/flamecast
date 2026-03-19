@@ -2,12 +2,13 @@
 
 import * as acp from "@agentclientprotocol/sdk";
 import { ExampleClient } from "./client.js";
-import { getAgentTransport } from "./transport.js";
+import { createExampleAgentProcess, getAgentTransport } from "./transport.js";
 
 async function main() {
   // Create the client connection
   const client = new ExampleClient();
-  const { input, output, agentProcess } = getAgentTransport();
+  const agentProcess = createExampleAgentProcess();
+  const { input, output } = getAgentTransport(agentProcess);
   const stream = acp.ndJsonStream(input, output);
   const connection = new acp.ClientSideConnection((_agent) => client, stream);
 
