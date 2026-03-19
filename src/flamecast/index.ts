@@ -2,7 +2,6 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as acp from "@agentclientprotocol/sdk";
 import type {
-  AgentType,
   ConnectionInfo,
   CreateConnectionBody,
   PendingPermission,

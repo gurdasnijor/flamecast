@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui
 import { Badge } from "@/client/components/ui/badge";
 import { Skeleton } from "@/client/components/ui/skeleton";
 import { Trash2Icon, PlusIcon, ZapIcon } from "lucide-react";
+import type { AgentType } from "@/shared/connection";
 
 export const Route = createFileRoute("/")({
   component: ConnectionsPage,
@@ -22,7 +23,7 @@ function ConnectionsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (agent: string) => createConnection(agent),
+    mutationFn: (agent: AgentType) => createConnection(agent),
     onSuccess: (conn) => {
       queryClient.invalidateQueries({ queryKey: ["connections"] });
       navigate({ to: "/connections/$id", params: { id: conn.id } });
