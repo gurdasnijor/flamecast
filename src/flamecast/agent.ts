@@ -77,17 +77,11 @@ class ExampleAgent implements acp.Agent {
   }
 
   private async simulateTurn(sessionId: string, abortSignal: AbortSignal): Promise<void> {
-    // Send initial text chunk
-    await this.connection.sessionUpdate({
+    await this.streamAgentMessageChunks(
       sessionId,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: {
-          type: "text",
-          text: "I'll help you with that. Let me start by reading some files to understand the current situation.",
-        },
-      },
-    });
+      "I'll help you with that. Let me start by reading some files to understand the current situation.",
+      abortSignal,
+    );
 
     await this.simulateModelInteraction(abortSignal);
 
@@ -129,17 +123,11 @@ class ExampleAgent implements acp.Agent {
 
     await this.simulateModelInteraction(abortSignal);
 
-    // Send more text
-    await this.connection.sessionUpdate({
+    await this.streamAgentMessageChunks(
       sessionId,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: {
-          type: "text",
-          text: " Now I understand the project structure. I need to make some changes to improve it.",
-        },
-      },
-    });
+      " Now I understand the project structure. I need to make some changes to improve it.",
+      abortSignal,
+    );
 
     await this.simulateModelInteraction(abortSignal);
 
@@ -206,36 +194,74 @@ class ExampleAgent implements acp.Agent {
 
         await this.simulateModelInteraction(abortSignal);
 
-        await this.connection.sessionUpdate({
+        await this.streamAgentMessageChunks(
           sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: " Perfect! I've successfully updated the configuration. The changes have been applied.",
-            },
-          },
-        });
+          " Perfect! I've successfully updated the configuration. The changes have been applied.",
+          abortSignal,
+        );
         break;
       }
       case "reject": {
         await this.simulateModelInteraction(abortSignal);
 
-        await this.connection.sessionUpdate({
+        await this.streamAgentMessageChunks(
           sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: " I understand you prefer not to make that change. I'll skip the configuration update.",
-            },
-          },
-        });
+          " I understand you prefer not to make that change. I'll skip the configuration update.",
+          abortSignal,
+        );
         break;
       }
       default:
         throw new Error(`Unexpected permission outcome ${permissionResponse.outcome}`);
     }
+  }
+
+  /** Sends text as many small `agent_message_chunk` updates with brief delays (LLM-style streaming). */
+  private async streamAgentMessageChunks(
+    sessionId: string,
+    text: string,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
+    const wordChunks = text.match(/\s*\S+\s*/g);
+    const chunks = wordChunks ?? (text.length > 0 ? (text.match(/.{1,4}/gu) ?? [text]) : []);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (abortSignal.aborted) {
+        throw new Error("aborted");
+      }
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: chunk },
+        },
+      });
+      if (i < chunks.length - 1) {
+        await this.delayBetweenStreamChunks(abortSignal);
+      }
+    }
+  }
+
+  private delayBetweenStreamChunks(abortSignal: AbortSignal): Promise<void> {
+    const ms = 35 + Math.floor(Math.random() * 55);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        if (abortSignal.aborted) {
+          reject(new Error("aborted"));
+        } else {
+          resolve();
+        }
+      }, ms);
+      abortSignal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
   }
 
   private simulateModelInteraction(abortSignal: AbortSignal): Promise<void> {
