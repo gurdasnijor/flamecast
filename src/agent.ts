@@ -16,9 +16,7 @@ class ExampleAgent implements acp.Agent {
     this.sessions = new Map();
   }
 
-  async initialize(
-    _params: acp.InitializeRequest,
-  ): Promise<acp.InitializeResponse> {
+  async initialize(_params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: {
@@ -27,9 +25,7 @@ class ExampleAgent implements acp.Agent {
     };
   }
 
-  async newSession(
-    _params: acp.NewSessionRequest,
-  ): Promise<acp.NewSessionResponse> {
+  async newSession(_params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     const sessionId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
@@ -43,16 +39,12 @@ class ExampleAgent implements acp.Agent {
     };
   }
 
-  async authenticate(
-    _params: acp.AuthenticateRequest,
-  ): Promise<acp.AuthenticateResponse | void> {
+  async authenticate(_params: acp.AuthenticateRequest): Promise<acp.AuthenticateResponse | void> {
     // No auth needed - return empty response
     return {};
   }
 
-  async setSessionMode(
-    _params: acp.SetSessionModeRequest,
-  ): Promise<acp.SetSessionModeResponse> {
+  async setSessionMode(_params: acp.SetSessionModeRequest): Promise<acp.SetSessionModeResponse> {
     // Session mode changes not implemented in this example
     return {};
   }
@@ -84,10 +76,7 @@ class ExampleAgent implements acp.Agent {
     };
   }
 
-  private async simulateTurn(
-    sessionId: string,
-    abortSignal: AbortSignal,
-  ): Promise<void> {
+  private async simulateTurn(sessionId: string, abortSignal: AbortSignal): Promise<void> {
     // Send initial text chunk
     await this.connection.sessionUpdate({
       sessionId,
@@ -245,9 +234,7 @@ class ExampleAgent implements acp.Agent {
         break;
       }
       default:
-        throw new Error(
-          `Unexpected permission outcome ${permissionResponse.outcome}`,
-        );
+        throw new Error(`Unexpected permission outcome ${permissionResponse.outcome}`);
     }
   }
 

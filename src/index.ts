@@ -57,9 +57,7 @@ class ExampleClient implements acp.Client {
         console.log(`\n🔧 ${update.title} (${update.status})`);
         break;
       case "tool_call_update":
-        console.log(
-          `\n🔧 Tool call \`${update.toolCallId}\` updated: ${update.status}\n`,
-        );
+        console.log(`\n🔧 Tool call \`${update.toolCallId}\` updated: ${update.status}\n`);
         break;
       case "plan":
       case "agent_thought_chunk":
@@ -71,24 +69,14 @@ class ExampleClient implements acp.Client {
     }
   }
 
-  async writeTextFile(
-    params: acp.WriteTextFileRequest,
-  ): Promise<acp.WriteTextFileResponse> {
-    console.error(
-      "[Client] Write text file called with:",
-      JSON.stringify(params, null, 2),
-    );
+  async writeTextFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
+    console.error("[Client] Write text file called with:", JSON.stringify(params, null, 2));
 
     return {};
   }
 
-  async readTextFile(
-    params: acp.ReadTextFileRequest,
-  ): Promise<acp.ReadTextFileResponse> {
-    console.error(
-      "[Client] Read text file called with:",
-      JSON.stringify(params, null, 2),
-    );
+  async readTextFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
+    console.error("[Client] Read text file called with:", JSON.stringify(params, null, 2));
 
     return {
       content: "Mock file content",
@@ -110,9 +98,7 @@ async function main() {
 
   // Create streams to communicate with the agent
   const input = Writable.toWeb(agentProcess.stdin!);
-  const output = Readable.toWeb(
-    agentProcess.stdout!,
-  ) as ReadableStream<Uint8Array>;
+  const output = Readable.toWeb(agentProcess.stdout!) as ReadableStream<Uint8Array>;
 
   // Create the client connection
   const client = new ExampleClient();
@@ -131,9 +117,7 @@ async function main() {
       },
     });
 
-    console.log(
-      `✅ Connected to agent (protocol v${initResult.protocolVersion})`,
-    );
+    console.log(`✅ Connected to agent (protocol v${initResult.protocolVersion})`);
 
     // Create a new session
     const sessionResult = await connection.newSession({
