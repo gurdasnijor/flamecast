@@ -46,13 +46,10 @@ export async function respondToPermission(
   requestId: string,
   body: { optionId: string } | { outcome: "cancelled" },
 ): Promise<void> {
-  const res = await fetch(
-    `/api/connections/${connectionId}/permissions/${requestId}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
+  const res = await fetch(`/api/connections/${connectionId}/permissions/${requestId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error("Failed to respond to permission");
 }

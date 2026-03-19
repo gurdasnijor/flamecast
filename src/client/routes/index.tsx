@@ -41,9 +41,7 @@ function ConnectionsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Connections</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your agent connections
-          </p>
+          <p className="text-sm text-muted-foreground">Manage your agent connections</p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -93,9 +91,7 @@ function ConnectionsPage() {
             >
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div className="flex items-center gap-3">
-                  <CardTitle className="text-base">
-                    Connection #{conn.id}
-                  </CardTitle>
+                  <CardTitle className="text-base">Connection #{conn.id}</CardTitle>
                   <Badge variant="secondary">{conn.agentType}</Badge>
                 </div>
                 <Button
@@ -112,14 +108,10 @@ function ConnectionsPage() {
               <CardContent>
                 <div className="flex gap-6 text-sm text-muted-foreground">
                   <span>
-                    Session:{" "}
-                    <code className="text-xs">{conn.sessionId.slice(0, 12)}…</code>
+                    Session: <code className="text-xs">{conn.sessionId.slice(0, 12)}…</code>
                   </span>
                   <span>{conn.logs.length} log entries</span>
-                  <span>
-                    Started{" "}
-                    {new Date(conn.startedAt).toLocaleTimeString()}
-                  </span>
+                  <span>Started {new Date(conn.startedAt).toLocaleTimeString()}</span>
                 </div>
               </CardContent>
             </Card>

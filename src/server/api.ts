@@ -44,15 +44,9 @@ api.post("/connections/:id/prompt", async (c) => {
 
 // Respond to a pending permission request
 api.post("/connections/:id/permissions/:requestId", async (c) => {
-  const body = await c.req.json<
-    { optionId: string } | { outcome: "cancelled" }
-  >();
+  const body = await c.req.json<{ optionId: string } | { outcome: "cancelled" }>();
   try {
-    flamecast.respondToPermission(
-      c.req.param("id"),
-      c.req.param("requestId"),
-      body,
-    );
+    flamecast.respondToPermission(c.req.param("id"), c.req.param("requestId"), body);
     return c.json({ ok: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

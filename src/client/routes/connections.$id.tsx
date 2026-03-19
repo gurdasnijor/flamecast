@@ -1,10 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  fetchConnection,
-  respondToPermission,
-  sendPrompt,
-} from "@/client/lib/api";
+import { fetchConnection, respondToPermission, sendPrompt } from "@/client/lib/api";
 import { useState } from "react";
 import { Button } from "@/client/components/ui/button";
 import {
@@ -102,9 +98,7 @@ function ConnectionDetailPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Connection #{conn.id}
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Connection #{conn.id}</h1>
           <p className="text-sm text-muted-foreground">
             <Badge variant="secondary" className="mr-2">
               {conn.agentType}
@@ -115,52 +109,54 @@ function ConnectionDetailPage() {
       </div>
 
       {/* Pending permission approval */}
-      {conn.pendingPermission && (
-        <Card className="border-amber-500/50 bg-amber-500/5">
-          <CardHeader>
-            <CardTitle className="text-base">
-              Permission required
-            </CardTitle>
-            <CardDescription>
-              {conn.pendingPermission.title}
-              {conn.pendingPermission.kind && (
-                <Badge variant="outline" className="ml-2">
-                  {conn.pendingPermission.kind}
-                </Badge>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {conn.pendingPermission.options.map((opt) => (
-              <Button
-                key={opt.optionId}
-                variant={opt.kind === "allow_once" ? "default" : "secondary"}
-                size="sm"
-                disabled={permissionMutation.isPending}
-                onClick={() =>
-                  handlePermission(conn.pendingPermission!.requestId, {
-                    optionId: opt.optionId,
-                  })
-                }
-              >
-                {opt.name}
-              </Button>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={permissionMutation.isPending}
-              onClick={() =>
-                handlePermission(conn.pendingPermission!.requestId, {
-                  outcome: "cancelled",
-                })
-              }
-            >
-              Cancel
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+      {conn.pendingPermission &&
+        (() => {
+          const pending = conn.pendingPermission;
+          return (
+            <Card className="border-amber-500/50 bg-amber-500/5">
+              <CardHeader>
+                <CardTitle className="text-base">Permission required</CardTitle>
+                <CardDescription>
+                  {pending.title}
+                  {pending.kind && (
+                    <Badge variant="outline" className="ml-2">
+                      {pending.kind}
+                    </Badge>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2">
+                {pending.options.map((opt) => (
+                  <Button
+                    key={opt.optionId}
+                    variant={opt.kind === "allow_once" ? "default" : "secondary"}
+                    size="sm"
+                    disabled={permissionMutation.isPending}
+                    onClick={() =>
+                      handlePermission(pending.requestId, {
+                        optionId: opt.optionId,
+                      })
+                    }
+                  >
+                    {opt.name}
+                  </Button>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={permissionMutation.isPending}
+                  onClick={() =>
+                    handlePermission(pending.requestId, {
+                      outcome: "cancelled",
+                    })
+                  }
+                >
+                  Cancel
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
       {/* Prompt Input */}
       <Card>
@@ -173,10 +169,7 @@ function ConnectionDetailPage() {
               placeholder="Send a prompt to the agent..."
               disabled={promptMutation.isPending}
             />
-            <Button
-              onClick={handleSend}
-              disabled={promptMutation.isPending || !prompt.trim()}
-            >
+            <Button onClick={handleSend} disabled={promptMutation.isPending || !prompt.trim()}>
               <SendIcon data-icon="inline-start" />
               {promptMutation.isPending ? "Sending…" : "Send"}
             </Button>
@@ -204,19 +197,14 @@ function ConnectionDetailPage() {
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {new Date(log.timestamp).toLocaleTimeString()}
                       </span>
-                      <Badge
-                        variant={getLogVariant(log.type)}
-                        className="shrink-0"
-                      >
+                      <Badge variant={getLogVariant(log.type)} className="shrink-0">
                         {log.type}
                       </Badge>
                       <pre className="min-w-0 flex-1 overflow-auto rounded-md bg-muted p-2 text-xs">
                         {JSON.stringify(log.data, null, 2)}
                       </pre>
                     </div>
-                    {i < conn.logs.length - 1 && (
-                      <Separator className="mt-3" />
-                    )}
+                    {i < conn.logs.length - 1 && <Separator className="mt-3" />}
                   </div>
                 ))
               )}
@@ -228,9 +216,7 @@ function ConnectionDetailPage() {
   );
 }
 
-function getLogVariant(
-  type: string,
-): "default" | "secondary" | "destructive" | "outline" {
+function getLogVariant(type: string): "default" | "secondary" | "destructive" | "outline" {
   switch (type) {
     case "initialized":
     case "session_created":
