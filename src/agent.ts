@@ -257,7 +257,28 @@ class ExampleAgent implements acp.Agent {
 }
 
 const input = Writable.toWeb(process.stdout);
-const output = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+function toUint8ReadableStream(
+  stream: ReturnType<typeof Readable.toWeb>,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      const reader = stream.getReader();
+      function pump(): Promise<void> {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
+          return pump();
+        });
+      }
+      pump();
+    },
+  });
+}
+
+const output = toUint8ReadableStream(Readable.toWeb(process.stdin));
 
 const stream = acp.ndJsonStream(input, output);
 new acp.AgentSideConnection((conn) => new ExampleAgent(conn), stream);

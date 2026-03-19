@@ -8,6 +8,27 @@ import readline from "node:readline/promises";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+function toUint8ReadableStream(
+  stream: ReturnType<typeof Readable.toWeb>,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      const reader = stream.getReader();
+      function pump(): Promise<void> {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
+          return pump();
+        });
+      }
+      pump();
+    },
+  });
+}
+
 class ExampleClient implements acp.Client {
   async requestPermission(
     params: acp.RequestPermissionRequest,
@@ -97,8 +118,13 @@ async function main() {
   });
 
   // Create streams to communicate with the agent
-  const input = Writable.toWeb(agentProcess.stdin!);
-  const output = Readable.toWeb(agentProcess.stdout!) as ReadableStream<Uint8Array>;
+  const stdin = agentProcess.stdin;
+  const stdout = agentProcess.stdout;
+  if (!stdin || !stdout) {
+    throw new Error("Failed to get stdin/stdout from agent process");
+  }
+  const input = Writable.toWeb(stdin);
+  const output = toUint8ReadableStream(Readable.toWeb(stdout));
 
   // Create the client connection
   const client = new ExampleClient();
