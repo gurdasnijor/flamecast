@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { AppType } from "@/server/api";
-import type { AgentType, ConnectionInfo } from "../../shared/connection";
+import type { AgentType, ConnectionInfo, PermissionResponseBody } from "../../shared/connection";
 
 const client = hc<AppType>("/api");
 
@@ -43,7 +43,7 @@ export async function killConnection(id: string): Promise<void> {
 export async function respondToPermission(
   connectionId: string,
   requestId: string,
-  body: { optionId: string } | { outcome: "cancelled" },
+  body: PermissionResponseBody,
 ): Promise<void> {
   const res = await client.connections[":id"].permissions[":requestId"].$post({
     param: { id: connectionId, requestId },

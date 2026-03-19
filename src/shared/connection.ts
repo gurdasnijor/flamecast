@@ -1,37 +1,57 @@
-// Supported agent backends that Flamecast can launch.
+import { z } from "zod";
+
 export const agentTypes = ["codex", "example"] as const;
-export type AgentType = (typeof agentTypes)[number];
 
-// Log entry surfaced to the client for connection activity.
-export interface ConnectionLog {
-  timestamp: string;
-  type: string;
-  data: Record<string, unknown>;
-}
+export const AgentTypeSchema = z.enum(agentTypes);
+export type AgentType = z.infer<typeof AgentTypeSchema>;
 
-// User-selectable option for a pending permission request.
-export interface PendingPermissionOption {
-  optionId: string;
-  name: string;
-  kind: string;
-}
+export const ConnectionLogSchema = z.object({
+  timestamp: z.string(),
+  type: z.string(),
+  data: z.record(z.string(), z.unknown()),
+});
+export type ConnectionLog = z.infer<typeof ConnectionLogSchema>;
 
-// Serializable permission request details shown in the UI.
-export interface PendingPermission {
-  requestId: string;
-  toolCallId: string;
-  title: string;
-  kind?: string;
-  options: PendingPermissionOption[];
-}
+export const PendingPermissionOptionSchema = z.object({
+  optionId: z.string(),
+  name: z.string(),
+  kind: z.string(),
+});
+export type PendingPermissionOption = z.infer<typeof PendingPermissionOptionSchema>;
 
-// Serializable connection payload shared by the server and client.
-export interface ConnectionInfo {
-  id: string;
-  agentType: AgentType;
-  sessionId: string;
-  startedAt: string;
-  lastUpdatedAt: string;
-  logs: ConnectionLog[];
-  pendingPermission: PendingPermission | null;
-}
+export const PendingPermissionSchema = z.object({
+  requestId: z.string(),
+  toolCallId: z.string(),
+  title: z.string(),
+  kind: z.string().optional(),
+  options: z.array(PendingPermissionOptionSchema),
+});
+export type PendingPermission = z.infer<typeof PendingPermissionSchema>;
+
+export const ConnectionInfoSchema = z.object({
+  id: z.string(),
+  agentType: AgentTypeSchema,
+  sessionId: z.string(),
+  startedAt: z.string(),
+  lastUpdatedAt: z.string(),
+  logs: z.array(ConnectionLogSchema),
+  pendingPermission: PendingPermissionSchema.nullable(),
+});
+export type ConnectionInfo = z.infer<typeof ConnectionInfoSchema>;
+
+export const CreateConnectionBodySchema = z.object({
+  agent: AgentTypeSchema.optional(),
+  cwd: z.string().optional(),
+});
+export type CreateConnectionBody = z.infer<typeof CreateConnectionBodySchema>;
+
+export const PromptBodySchema = z.object({
+  text: z.string(),
+});
+export type PromptBody = z.infer<typeof PromptBodySchema>;
+
+export const PermissionResponseBodySchema = z.union([
+  z.object({ optionId: z.string() }),
+  z.object({ outcome: z.literal("cancelled") }),
+]);
+export type PermissionResponseBody = z.infer<typeof PermissionResponseBodySchema>;

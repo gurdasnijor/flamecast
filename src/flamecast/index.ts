@@ -4,8 +4,10 @@ import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentType,
   ConnectionInfo,
+  CreateConnectionBody,
   PendingPermission,
   PendingPermissionOption,
+  PermissionResponseBody,
 } from "../shared/connection.js";
 import {
   createExampleAgentProcess,
@@ -32,12 +34,7 @@ export class Flamecast {
   private permissionResolvers = new Map<string, PermissionResolver>();
   private nextId = 1;
 
-  async create(
-    opts: {
-      agent?: AgentType;
-      cwd?: string;
-    } = {},
-  ): Promise<ConnectionInfo> {
+  async create(opts: CreateConnectionBody = {}): Promise<ConnectionInfo> {
     const { agent = "example", cwd = process.cwd() } = opts;
     const id = String(this.nextId++);
     const now = new Date().toISOString();
@@ -129,11 +126,7 @@ export class Flamecast {
     this.connections.delete(id);
   }
 
-  respondToPermission(
-    id: string,
-    requestId: string,
-    body: { optionId: string } | { outcome: "cancelled" },
-  ): void {
+  respondToPermission(id: string, requestId: string, body: PermissionResponseBody): void {
     const managed = this.resolve(id);
     const pending = this.takePendingPermissionResolution(managed, requestId);
 
