@@ -39,6 +39,15 @@ export function createExampleAgentProcess() {
   return agentProcess;
 }
 
+export function startCodexAgentProcess() {
+  const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
+  const agentProcess = spawn(npxCmd, ["@zed-industries/codex-acp"], {
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+
+  return agentProcess;
+}
+
 /**
  * This allows the client to communicate with the agent process.
  * @param agentProcess - The agent process to use. Defaults to a mock agent process, but can be replaced with Claude Agent SDK, Codex, etc.

@@ -2,12 +2,22 @@
 
 import * as acp from "@agentclientprotocol/sdk";
 import { ExampleClient } from "./client.js";
-import { createExampleAgentProcess, getAgentTransport } from "./transport.js";
+import {
+  createExampleAgentProcess,
+  getAgentTransport,
+  startCodexAgentProcess,
+} from "./transport.js";
 
-async function main() {
+async function main({
+  agent = "example",
+  prompt = "Hello, agent!",
+}: {
+  agent?: "codex" | "example";
+  prompt?: string;
+}) {
   // Create the client connection
   const client = new ExampleClient();
-  const agentProcess = createExampleAgentProcess();
+  const agentProcess = agent === "codex" ? startCodexAgentProcess() : createExampleAgentProcess();
   const { input, output } = getAgentTransport(agentProcess);
   const stream = acp.ndJsonStream(input, output);
   const connection = new acp.ClientSideConnection((_agent) => client, stream);
@@ -35,7 +45,7 @@ async function main() {
     });
 
     console.log(`📝 Created session: ${sessionResult.sessionId}`);
-    console.log(`💬 User: Hello, agent!\n`);
+    console.log(`💬 User: ${prompt}\n`);
     process.stdout.write(" ");
 
     // Send a test prompt
@@ -44,7 +54,7 @@ async function main() {
       prompt: [
         {
           type: "text",
-          text: "Hello, agent!",
+          text: prompt,
         },
       ],
     });
@@ -58,4 +68,4 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main({ agent: "codex", prompt: "what files are in the current directory?" }).catch(console.error);
