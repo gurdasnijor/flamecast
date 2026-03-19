@@ -20,13 +20,13 @@ export interface ConnectionInfo {
   sessionId: string;
   startedAt: Date;
   lastUpdatedAt: Date;
+  logs: ConnectionLog[];
 }
 
 interface ManagedConnection {
   info: ConnectionInfo;
   connection: acp.ClientSideConnection | null;
   agentProcess: ChildProcess;
-  logs: ConnectionLog[];
 }
 
 export class Flamecast {
@@ -42,7 +42,6 @@ export class Flamecast {
     const { agent = "example", cwd = process.cwd() } = opts;
     const id = String(this.nextId++);
     const now = new Date();
-    const logs: ConnectionLog[] = [];
 
     const agentProcess = agent === "codex" ? startCodexAgentProcess() : createExampleAgentProcess();
 
@@ -56,10 +55,10 @@ export class Flamecast {
         sessionId: "",
         startedAt: now,
         lastUpdatedAt: now,
+        logs: [],
       },
       connection: null,
       agentProcess,
-      logs,
     };
 
     const client = this.createClient(managed);
@@ -89,19 +88,15 @@ export class Flamecast {
     });
 
     this.connections.set(id, managed);
-    return { ...managed.info };
+    return this.snapshotInfo(managed);
   }
 
   list(): ConnectionInfo[] {
-    return [...this.connections.values()].map((m) => ({ ...m.info }));
+    return [...this.connections.values()].map((m) => this.snapshotInfo(m));
   }
 
   get(id: string): ConnectionInfo {
-    return { ...this.resolve(id).info };
-  }
-
-  getLogs(id: string): ConnectionLog[] {
-    return [...this.resolve(id).logs];
+    return this.snapshotInfo(this.resolve(id));
   }
 
   async prompt(id: string, text: string): Promise<acp.PromptResponse> {
@@ -137,10 +132,14 @@ export class Flamecast {
     return managed;
   }
 
+  private snapshotInfo(managed: ManagedConnection): ConnectionInfo {
+    return { ...managed.info, logs: [...managed.info.logs] };
+  }
+
   private pushLog(managed: ManagedConnection, type: string, data: Record<string, unknown>): void {
     const now = new Date();
     managed.info.lastUpdatedAt = now;
-    managed.logs.push({ timestamp: now.toISOString(), type, data });
+    managed.info.logs.push({ timestamp: now.toISOString(), type, data });
   }
 
   private createClient(managed: ManagedConnection): acp.Client {

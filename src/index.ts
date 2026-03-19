@@ -34,19 +34,14 @@ async function main() {
         break;
       }
     }
-    console.log(
-      "\n\n",
-      flamecast
-        .getLogs(conn.id)
-        .map((l) => JSON.stringify(l))
-        .join("\n"),
-      "\n\n",
-    );
+    const current = flamecast.get(conn.id);
+    console.log("\n\n", current.logs.map((l) => JSON.stringify(l)).join("\n"), "\n\n");
   }
   console.log(`\n✅ Agent completed with: ${result.stopReason}`);
 
-  console.log(`\n📜 Connection logs (${flamecast.getLogs(conn.id).length} entries):`);
-  for (const log of flamecast.getLogs(conn.id)) {
+  const final = flamecast.get(conn.id);
+  console.log(`\n📜 Connection logs (${final.logs.length} entries):`);
+  for (const log of final.logs) {
     console.log(`   [${log.timestamp}] ${log.type}`, JSON.stringify(log.data));
   }
 
