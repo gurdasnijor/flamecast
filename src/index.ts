@@ -15,11 +15,13 @@ async function main() {
     // Initialize the connection
     const initResult = await connection.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
+      // This is the *client* capabilities that are told to the agent
       clientCapabilities: {
         fs: {
           readTextFile: true,
           writeTextFile: true,
         },
+        terminal: true,
       },
     });
 
