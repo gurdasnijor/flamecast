@@ -68,10 +68,7 @@ function ConnectionDetailPage() {
     setPrompt("");
   };
 
-  const markdownSegments = useMemo(
-    () => connectionLogsToSegments(conn?.logs ?? []),
-    [conn?.logs],
-  );
+  const markdownSegments = useMemo(() => connectionLogsToSegments(conn?.logs ?? []), [conn?.logs]);
 
   if (isLoading) {
     return (
@@ -287,15 +284,6 @@ function ConnectionDetailPage() {
       </Card>
     </div>
   );
-}
-
-function logLabel(log: { type: string; data: Record<string, unknown> }): string {
-  if (log.type === "rpc") {
-    const method = typeof log.data.method === "string" ? log.data.method : "?";
-    const phase = typeof log.data.phase === "string" ? log.data.phase : "?";
-    return `${method} (${phase})`;
-  }
-  return log.type;
 }
 
 function getLogVariant(type: string): "default" | "secondary" | "destructive" | "outline" {
