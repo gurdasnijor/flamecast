@@ -83,15 +83,6 @@ export class Flamecast {
     }
   }
 
-  /**
-   * Convenience factory — resolves config and initializes alchemy.
-   * Prefer `createFlamecast()` from `./config.js` for the full config API.
-   */
-  static async create(opts: import("./config.js").FlamecastOptions = {}): Promise<Flamecast> {
-    const { createFlamecast } = await import("./config.js");
-    return createFlamecast(opts);
-  }
-
   // -----------------------------------------------------------------------
   // Public API
   // -----------------------------------------------------------------------
@@ -564,8 +555,7 @@ export class Flamecast {
           "request",
           params,
         );
-        const content = "";
-        const response: acp.ReadTextFileResponse = { content };
+        const response: acp.ReadTextFileResponse = { content: "" };
         await this.pushRpcLog(
           managed,
           acp.CLIENT_METHODS.fs_read_text_file,
