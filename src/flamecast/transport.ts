@@ -104,6 +104,7 @@ export function getAgentTransport(agentProcess: ChildProcess) {
 export function openTcpTransport(host: string, port: number): Promise<AcpTransport> {
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host, port }, () => {
+      socket.setNoDelay(true); // Disable Nagle — NDJSON needs immediate flush
       const input = new WritableStream<Uint8Array>({
         write(chunk) {
           return new Promise((res, rej) => {

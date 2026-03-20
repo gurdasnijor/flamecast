@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
-import { Hono } from "hono";
-import { zValidator } from "@hono/zod-validator";
+import alchemy, { type Scope } from "alchemy";
 import type {
   AgentProcessInfo,
   AgentSpawn,
@@ -15,182 +14,27 @@ import type {
   PermissionResponseBody,
   RegisterAgentProcessBody,
 } from "../shared/connection.js";
-import {
-  CreateConnectionBodySchema,
-  PermissionResponseBodySchema,
-  PromptBodySchema,
-  RegisterAgentProcessBodySchema,
-} from "../shared/connection.js";
 import type { FlamecastStateManager } from "./state-manager.js";
-import { getBuiltinAgentProcessPresets, type AcpTransport } from "./transport.js";
-import type { Provisioner } from "./provisioner.js";
-import { LocalProvisioner, RemoteProvisioner, DockerProvisioner } from "./provisioner.js";
-import { MemoryFlamecastStateManager } from "./state-managers/memory/index.js";
+import {
+  getBuiltinAgentProcessPresets,
+  openLocalTransport,
+  openTcpTransport,
+  type AcpTransport,
+} from "./transport.js";
+import type { Provisioner } from "./config.js";
 
+// Re-exports for consumers
 export type { AgentProcessInfo, ConnectionInfo, PendingPermission } from "../shared/connection.js";
 export type { ConnectionMeta, FlamecastStateManager } from "./state-manager.js";
 export { MemoryFlamecastStateManager } from "./state-managers/memory/index.js";
 export { createPsqlStateManager } from "./state-managers/psql/index.js";
 export type { PsqlAppDb } from "./state-managers/psql/types.js";
-export { LocalProvisioner, RemoteProvisioner, DockerProvisioner } from "./provisioner.js";
-export type { Provisioner, SandboxHandle } from "./provisioner.js";
+export { createFlamecast } from "./config.js";
+export type { FlamecastOptions, StateManagerConfig, Provisioner } from "./config.js";
+export { createApi, type AppType } from "./api.js";
 
 // ---------------------------------------------------------------------------
-// Config types for the static factory
-// ---------------------------------------------------------------------------
-
-export type StateManagerConfig =
-  | { type: "memory" }
-  | { type: "pglite"; dataDir?: string }
-  | { type: "postgres"; url: string }
-  | FlamecastStateManager; // pass your own implementation
-
-export type ProvisionerConfig =
-  | { type: "local" }
-  | { type: "docker"; image: string; network?: string; memory?: number; cpus?: number }
-  | { type: "remote"; host: string; port: number }
-  | Provisioner; // pass your own implementation
-
-export type FlamecastOptions = {
-  stateManager?: StateManagerConfig; // default: { type: "pglite" }
-  provisioner?: ProvisionerConfig; // default: { type: "local" }
-  workspaceDir?: string;
-};
-
-// ---------------------------------------------------------------------------
-// Config → instance resolvers
-// ---------------------------------------------------------------------------
-
-async function resolveStateManager(config?: StateManagerConfig): Promise<FlamecastStateManager> {
-  if (!config || (typeof config === "object" && "type" in config && config.type === "pglite")) {
-    const { createDatabase } = await import("./db/client.js");
-    const { db } = await createDatabase(
-      typeof config === "object" && "dataDir" in config ? { pgliteDataDir: config.dataDir } : {},
-    );
-    const { createPsqlStateManager } = await import("./state-managers/psql/index.js");
-    return createPsqlStateManager(db);
-  }
-  if (typeof config === "object" && "type" in config) {
-    switch (config.type) {
-      case "memory":
-        return new MemoryFlamecastStateManager();
-      case "postgres": {
-        const { createDatabase } = await import("./db/client.js");
-        process.env.FLAMECAST_POSTGRES_URL = config.url;
-        const { db } = await createDatabase();
-        const { createPsqlStateManager } = await import("./state-managers/psql/index.js");
-        return createPsqlStateManager(db);
-      }
-    }
-  }
-  // It's a FlamecastStateManager instance
-  return config;
-}
-
-function resolveProvisioner(config?: ProvisionerConfig): Provisioner {
-  if (!config || (typeof config === "object" && "type" in config && config.type === "local")) {
-    return new LocalProvisioner();
-  }
-  if (typeof config === "object" && "type" in config) {
-    switch (config.type) {
-      case "docker":
-        return new DockerProvisioner({
-          image: config.image,
-          network: config.network,
-          memory: config.memory,
-          nanoCpus: config.cpus ? Math.round(config.cpus * 1e9) : undefined,
-        });
-      case "remote":
-        return new RemoteProvisioner(config.host, config.port);
-    }
-  }
-  // It's a Provisioner instance
-  return config;
-}
-
-// ---------------------------------------------------------------------------
-// Standalone createApi — preserves chained return type for AppType
-// ---------------------------------------------------------------------------
-
-export function createApi(flamecast: Flamecast) {
-  return new Hono()
-    .get("/agent-processes", (c) => {
-      return c.json(flamecast.listAgentProcesses());
-    })
-    .post("/agent-processes", zValidator("json", RegisterAgentProcessBodySchema), (c) => {
-      const body = c.req.valid("json");
-      const row = flamecast.registerAgentProcess(body);
-      return c.json(row, 201);
-    })
-    .get("/connections", async (c) => {
-      return c.json(await flamecast.list());
-    })
-    .post("/connections", zValidator("json", CreateConnectionBodySchema), async (c) => {
-      try {
-        const body = c.req.valid("json");
-        const info = await flamecast.create(body);
-        return c.json(info, 201);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Unknown error";
-        return c.json({ error: message }, 400);
-      }
-    })
-    .get("/connections/:id", async (c) => {
-      try {
-        const info = await flamecast.get(c.req.param("id"));
-        return c.json(info);
-      } catch {
-        return c.json({ error: "Connection not found" }, 404);
-      }
-    })
-    .post("/connections/:id/prompt", zValidator("json", PromptBodySchema), async (c) => {
-      const { text } = c.req.valid("json");
-      try {
-        const result = await flamecast.prompt(c.req.param("id"), text);
-        return c.json(result);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Unknown error";
-        return c.json({ error: message }, 400);
-      }
-    })
-    .post(
-      "/connections/:id/permissions/:requestId",
-      zValidator("json", PermissionResponseBodySchema),
-      async (c) => {
-        const body = c.req.valid("json");
-        try {
-          await flamecast.respondToPermission(c.req.param("id"), c.req.param("requestId"), body);
-          return c.json({ ok: true });
-        } catch (e) {
-          const message = e instanceof Error ? e.message : "Unknown error";
-          return c.json({ error: message }, 400);
-        }
-      },
-    )
-    .delete("/connections/:id", async (c) => {
-      try {
-        await flamecast.kill(c.req.param("id"));
-        return c.json({ ok: true });
-      } catch {
-        return c.json({ error: "Connection not found" }, 404);
-      }
-    });
-}
-
-export type AppType = ReturnType<typeof createApi>;
-
-// ---------------------------------------------------------------------------
-// Internal options type (constructor takes resolved instances)
-// ---------------------------------------------------------------------------
-
-type InternalFlamecastOptions = {
-  stateManager: FlamecastStateManager;
-  provisioner?: Provisioner;
-  workspaceDir?: string;
-};
-
-// ---------------------------------------------------------------------------
-// Core types
+// Internal types
 // ---------------------------------------------------------------------------
 
 type PermissionResolver = (response: acp.RequestPermissionResponse) => void | Promise<void>;
@@ -207,18 +51,22 @@ interface SessionTextChunkLogBuffer {
 interface ManagedConnection {
   id: string;
   sessionId: string;
-  /** Resolved workspace root for filesystem access. Undefined = fs disabled. */
   workspaceDir: string | undefined;
-  /** JSON-serializable handle for the provisioned agent — enables reconnect. */
-  handle: Record<string, unknown>;
+  scope: Scope | null;
   runtime: {
     connection: acp.ClientSideConnection | null;
     sessionTextChunkLogBuffer: SessionTextChunkLogBuffer | null;
   };
 }
 
+export type FlamecastConstructorOptions = {
+  stateManager: FlamecastStateManager;
+  provisioner?: Provisioner;
+  workspaceDir?: string;
+};
+
 // ---------------------------------------------------------------------------
-// Flamecast
+// Flamecast — pure orchestration core
 // ---------------------------------------------------------------------------
 
 export class Flamecast {
@@ -226,13 +74,12 @@ export class Flamecast {
   private permissionResolvers = new Map<string, PermissionResolver>();
   private agentProcesses = new Map<string, { label: string; spawn: AgentSpawn }>();
   private readonly stateManager: FlamecastStateManager;
-  private readonly provisioner: Provisioner;
+  private readonly provisioner: Provisioner | undefined;
   private readonly workspaceDir: string | undefined;
-  private app: Hono;
 
-  constructor(opts: InternalFlamecastOptions) {
+  constructor(opts: FlamecastConstructorOptions) {
     this.stateManager = opts.stateManager;
-    this.provisioner = opts.provisioner ?? new LocalProvisioner();
+    this.provisioner = opts.provisioner;
     this.workspaceDir = opts.workspaceDir;
     for (const preset of getBuiltinAgentProcessPresets()) {
       this.agentProcesses.set(preset.id, {
@@ -240,40 +87,19 @@ export class Flamecast {
         spawn: { command: preset.spawn.command, args: preset.spawn.args },
       });
     }
-    const api = createApi(this);
-    this.app = new Hono();
-    this.app.route("/api", api);
+  }
+
+  /**
+   * Convenience factory — resolves config and initializes alchemy.
+   * Prefer `createFlamecast()` from `./config.js` for the full config API.
+   */
+  static async create(opts: import("./config.js").FlamecastOptions = {}): Promise<Flamecast> {
+    const { createFlamecast } = await import("./config.js");
+    return createFlamecast(opts);
   }
 
   // -----------------------------------------------------------------------
-  // Static factory — resolves config → instances
-  // -----------------------------------------------------------------------
-
-  static async create(opts: FlamecastOptions = {}): Promise<Flamecast> {
-    const stateManager = await resolveStateManager(opts.stateManager);
-    const provisioner = resolveProvisioner(opts.provisioner);
-    return new Flamecast({ stateManager, provisioner, workspaceDir: opts.workspaceDir });
-  }
-
-  // -----------------------------------------------------------------------
-  // HTTP surface
-  // -----------------------------------------------------------------------
-
-  /** Hono fetch handler — for serverless deployment (Cloudflare Workers, Vercel, etc.) */
-  get fetch() {
-    return this.app.fetch;
-  }
-
-  /** Start a Node HTTP server on the given port. */
-  async listen(port: number): Promise<void> {
-    const { serve } = await import("@hono/node-server");
-    serve({ fetch: this.app.fetch, port }, (info) => {
-      console.log(`Flamecast running on http://localhost:${info.port}`);
-    });
-  }
-
-  // -----------------------------------------------------------------------
-  // Public API methods
+  // Public API
   // -----------------------------------------------------------------------
 
   listAgentProcesses(): AgentProcessInfo[] {
@@ -327,14 +153,28 @@ export class Flamecast {
       pendingPermission: null,
     });
 
-    const { handle, transport } = await this.provisioner.start(spawn);
+    let transport: AcpTransport;
+    let scope: Scope | null = null;
+
+    if (this.provisioner) {
+      const provisioner = this.provisioner;
+      let endpoint = { host: "localhost", port: 0 };
+      scope = await alchemy.run(`connection-${id}`, async (s) => {
+        endpoint = await provisioner(id);
+        return s;
+      });
+      transport = await openTcpTransport(endpoint.host, endpoint.port);
+    } else {
+      transport = openLocalTransport(spawn);
+    }
+
     const stream = acp.ndJsonStream(transport.input, transport.output);
 
     const managed: ManagedConnection = {
       id,
       sessionId: "",
       workspaceDir: this.workspaceDir ? path.resolve(this.workspaceDir) : cwd,
-      handle,
+      scope,
       runtime: {
         connection: null,
         sessionTextChunkLogBuffer: null,
@@ -386,10 +226,9 @@ export class Flamecast {
     );
 
     managed.sessionId = sessionResult.sessionId;
-    const updatedAt = new Date().toISOString();
     await this.stateManager.updateConnection(id, {
       sessionId: managed.sessionId,
-      lastUpdatedAt: updatedAt,
+      lastUpdatedAt: new Date().toISOString(),
     });
 
     this.runtimes.set(id, managed);
@@ -447,7 +286,9 @@ export class Flamecast {
       this.permissionResolvers.delete(meta.pendingPermission.requestId);
     }
     await this.flushSessionTextChunkLogBuffer(managed);
-    await this.provisioner.destroy(managed.handle);
+    if (managed.scope) {
+      await alchemy.destroy(managed.scope);
+    }
     await this.pushLog(managed, "killed", {});
     await this.stateManager.finalizeConnection(id, "killed");
     this.runtimes.delete(id);
@@ -474,9 +315,7 @@ export class Flamecast {
     const option = this.getPermissionOption(pending, body.optionId);
     await this.logPermissionSelection(managed, pending, option);
     await Promise.resolve(
-      pending.resolve({
-        outcome: { outcome: "selected", optionId: option.optionId },
-      }),
+      pending.resolve({ outcome: { outcome: "selected", optionId: option.optionId } }),
     );
   }
 
@@ -484,10 +323,6 @@ export class Flamecast {
   // Private helpers
   // -----------------------------------------------------------------------
 
-  /**
-   * Resolve a file path against the connection's workspace root.
-   * Returns undefined if no workspace is configured. Prevents path traversal.
-   */
   private resolveWorkspacePath(managed: ManagedConnection, filePath: string): string | undefined {
     if (!managed.workspaceDir) return undefined;
     const resolved = path.resolve(managed.workspaceDir, filePath);
@@ -497,17 +332,13 @@ export class Flamecast {
 
   private resolveRuntime(id: string): ManagedConnection {
     const managed = this.runtimes.get(id);
-    if (!managed) {
-      throw new Error(`Connection "${id}" not found`);
-    }
+    if (!managed) throw new Error(`Connection "${id}" not found`);
     return managed;
   }
 
   private async snapshotInfo(id: string): Promise<ConnectionInfo> {
     const meta = await this.stateManager.getConnectionMeta(id);
-    if (!meta) {
-      throw new Error(`Connection "${id}" not found`);
-    }
+    if (!meta) throw new Error(`Connection "${id}" not found`);
     const logs = await this.stateManager.getLogs(id);
     return {
       ...meta,
@@ -515,7 +346,7 @@ export class Flamecast {
       pendingPermission: meta.pendingPermission
         ? {
             ...meta.pendingPermission,
-            options: meta.pendingPermission.options.map((option) => ({ ...option })),
+            options: meta.pendingPermission.options.map((o) => ({ ...o })),
           }
         : null,
     };
@@ -589,10 +420,7 @@ export class Flamecast {
       acp.CLIENT_METHODS.session_update,
       "agent_to_client",
       "notification",
-      {
-        sessionId: buf.sessionId,
-        update,
-      },
+      { sessionId: buf.sessionId, update },
     );
   }
 
@@ -632,7 +460,6 @@ export class Flamecast {
       }
       return;
     }
-
     await this.flushSessionTextChunkLogBuffer(managed);
     await this.pushRpcLog(
       managed,
@@ -662,10 +489,8 @@ export class Flamecast {
     pending: { permission: PendingPermission; resolve: PermissionResolver },
     optionId: string,
   ): PendingPermissionOption {
-    const option = pending.permission.options.find((candidate) => candidate.optionId === optionId);
-    if (!option) {
-      throw new Error(`Unknown permission option "${optionId}"`);
-    }
+    const option = pending.permission.options.find((c) => c.optionId === optionId);
+    if (!option) throw new Error(`Unknown permission option "${optionId}"`);
     return option;
   }
 
@@ -709,10 +534,10 @@ export class Flamecast {
       toolCallId: params.toolCall.toolCallId,
       title: params.toolCall.title ?? "",
       kind: params.toolCall.kind ?? undefined,
-      options: params.options.map((option) => ({
-        optionId: option.optionId,
-        name: option.name,
-        kind: String(option.kind),
+      options: params.options.map((o) => ({
+        optionId: o.optionId,
+        name: o.name,
+        kind: String(o.kind),
       })),
     };
   }
@@ -736,10 +561,9 @@ export class Flamecast {
         const pendingPermission = this.createPendingPermission(params);
         const now = new Date().toISOString();
         await this.stateManager.updateConnection(managed.id, {
-          pendingPermission: pendingPermission,
+          pendingPermission,
           lastUpdatedAt: now,
         });
-
         return new Promise<acp.RequestPermissionResponse>((resolve) => {
           const wrapped: PermissionResolver = async (response) => {
             await this.pushRpcLog(

@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import type { AppType } from "@/flamecast/index";
+import type { AppType } from "@/flamecast/api";
 import type {
   ConnectionInfo,
   CreateConnectionBody,
