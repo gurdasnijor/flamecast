@@ -12,7 +12,7 @@ export class MemoryFlamecastStateManager implements FlamecastStateManager {
   }
 
   async createConnection(meta: ConnectionMeta): Promise<void> {
-    this.connections.set(meta.id, { ...meta, status: meta.status ?? "active" });
+    this.connections.set(meta.id, { ...meta });
     this.logs.set(meta.id, []);
   }
 
@@ -22,7 +22,6 @@ export class MemoryFlamecastStateManager implements FlamecastStateManager {
   ): Promise<void> {
     const row = this.connections.get(id);
     if (!row) throw new Error(`Connection "${id}" not found in state manager`);
-    if (row.status === "killed") return;
     this.connections.set(id, {
       ...row,
       ...patch,
@@ -46,15 +45,8 @@ export class MemoryFlamecastStateManager implements FlamecastStateManager {
     return [...(this.logs.get(connectionId) ?? [])];
   }
 
-  async listConnections(): Promise<ConnectionMeta[]> {
-    return [...this.connections.values()]
-      .map((row) => ({ ...row }))
-      .sort((a, b) => (a.lastUpdatedAt < b.lastUpdatedAt ? 1 : -1));
-  }
-
   async finalizeConnection(id: string, _reason: "killed"): Promise<void> {
-    const row = this.connections.get(id);
-    if (!row) return;
-    this.connections.set(id, { ...row, status: "killed" });
+    this.connections.delete(id);
+    this.logs.delete(id);
   }
 }

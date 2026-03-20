@@ -43,9 +43,6 @@ export const PendingPermissionSchema = z.object({
 });
 export type PendingPermission = z.infer<typeof PendingPermissionSchema>;
 
-export const ConnectionStatusSchema = z.enum(["active", "killed"]);
-export type ConnectionStatus = z.infer<typeof ConnectionStatusSchema>;
-
 export const ConnectionInfoSchema = z.object({
   id: z.string(),
   agentLabel: z.string(),
@@ -53,7 +50,6 @@ export const ConnectionInfoSchema = z.object({
   sessionId: z.string(),
   startedAt: z.string(),
   lastUpdatedAt: z.string(),
-  status: ConnectionStatusSchema,
   logs: z.array(ConnectionLogSchema),
   pendingPermission: PendingPermissionSchema.nullable(),
 });
