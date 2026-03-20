@@ -215,9 +215,7 @@ function ConnectionsPage() {
       ) : connections?.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-muted-foreground">
-              No active connections. Create one to get started.
-            </p>
+            <p className="text-muted-foreground">No connections yet. Create one to get started.</p>
           </CardContent>
         </Card>
       ) : (
@@ -239,17 +237,20 @@ function ConnectionsPage() {
                   <Badge variant="secondary" className="max-w-[12rem] shrink truncate">
                     {conn.agentLabel}
                   </Badge>
+                  {conn.status === "killed" ? <Badge variant="outline">Killed</Badge> : null}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    killMutation.mutate(conn.id);
-                  }}
-                >
-                  <Trash2Icon className="text-destructive" />
-                </Button>
+                {conn.status === "active" ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      killMutation.mutate(conn.id);
+                    }}
+                  >
+                    <Trash2Icon className="text-destructive" />
+                  </Button>
+                ) : null}
               </CardHeader>
               <CardContent>
                 <div className="flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-6">
