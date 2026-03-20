@@ -120,14 +120,38 @@ export class Flamecast {
         terminal: true,
       },
     };
-    this.pushRpcLog(managed, acp.AGENT_METHODS.initialize, "client_to_agent", "request", initParams);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.initialize,
+      "client_to_agent",
+      "request",
+      initParams,
+    );
     const initResult = await connection.initialize(initParams);
-    this.pushRpcLog(managed, acp.AGENT_METHODS.initialize, "agent_to_client", "response", initResult);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.initialize,
+      "agent_to_client",
+      "response",
+      initResult,
+    );
 
     const newSessionParams: acp.NewSessionRequest = { cwd, mcpServers: [] };
-    this.pushRpcLog(managed, acp.AGENT_METHODS.session_new, "client_to_agent", "request", newSessionParams);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.session_new,
+      "client_to_agent",
+      "request",
+      newSessionParams,
+    );
     const sessionResult = await connection.newSession(newSessionParams);
-    this.pushRpcLog(managed, acp.AGENT_METHODS.session_new, "agent_to_client", "response", sessionResult);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.session_new,
+      "agent_to_client",
+      "response",
+      sessionResult,
+    );
 
     managed.info.sessionId = sessionResult.sessionId;
 
@@ -152,11 +176,23 @@ export class Flamecast {
       sessionId: managed.info.sessionId,
       prompt: [{ type: "text", text }],
     };
-    this.pushRpcLog(managed, acp.AGENT_METHODS.session_prompt, "client_to_agent", "request", promptParams);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.session_prompt,
+      "client_to_agent",
+      "request",
+      promptParams,
+    );
 
     const result = await managed.runtime.connection.prompt(promptParams);
 
-    this.pushRpcLog(managed, acp.AGENT_METHODS.session_prompt, "agent_to_client", "response", result);
+    this.pushRpcLog(
+      managed,
+      acp.AGENT_METHODS.session_prompt,
+      "agent_to_client",
+      "response",
+      result,
+    );
     return result;
   }
 
@@ -352,48 +388,118 @@ export class Flamecast {
       },
 
       readTextFile: async (params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.fs_read_text_file, "agent_to_client", "request", params);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.fs_read_text_file,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.ReadTextFileResponse = { content: "" };
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.fs_read_text_file, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.fs_read_text_file,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
       writeTextFile: async (
         params: acp.WriteTextFileRequest,
       ): Promise<acp.WriteTextFileResponse> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.fs_write_text_file, "agent_to_client", "request", params);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.fs_write_text_file,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.WriteTextFileResponse = {};
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.fs_write_text_file, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.fs_write_text_file,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
-      createTerminal: async (params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_create, "agent_to_client", "request", params);
+      createTerminal: async (
+        params: acp.CreateTerminalRequest,
+      ): Promise<acp.CreateTerminalResponse> => {
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_create,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.CreateTerminalResponse = { terminalId: `stub-${randomUUID()}` };
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_create, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_create,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
-      terminalOutput: async (params: acp.TerminalOutputRequest): Promise<acp.TerminalOutputResponse> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_output, "agent_to_client", "request", params);
+      terminalOutput: async (
+        params: acp.TerminalOutputRequest,
+      ): Promise<acp.TerminalOutputResponse> => {
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_output,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.TerminalOutputResponse = { output: "", truncated: false };
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_output, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_output,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
       releaseTerminal: async (
         params: acp.ReleaseTerminalRequest,
       ): Promise<acp.ReleaseTerminalResponse | void> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_release, "agent_to_client", "request", params);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_release,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.ReleaseTerminalResponse = {};
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_release, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_release,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
       waitForTerminalExit: async (
         params: acp.WaitForTerminalExitRequest,
       ): Promise<acp.WaitForTerminalExitResponse> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_wait_for_exit, "agent_to_client", "request", params);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_wait_for_exit,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.WaitForTerminalExitResponse = { exitCode: 0 };
         this.pushRpcLog(
           managed,
@@ -405,10 +511,24 @@ export class Flamecast {
         return response;
       },
 
-      killTerminal: async (params: acp.KillTerminalRequest): Promise<acp.KillTerminalResponse | void> => {
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_kill, "agent_to_client", "request", params);
+      killTerminal: async (
+        params: acp.KillTerminalRequest,
+      ): Promise<acp.KillTerminalResponse | void> => {
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_kill,
+          "agent_to_client",
+          "request",
+          params,
+        );
         const response: acp.KillTerminalResponse = {};
-        this.pushRpcLog(managed, acp.CLIENT_METHODS.terminal_kill, "client_to_agent", "response", response);
+        this.pushRpcLog(
+          managed,
+          acp.CLIENT_METHODS.terminal_kill,
+          "client_to_agent",
+          "response",
+          response,
+        );
         return response;
       },
 
