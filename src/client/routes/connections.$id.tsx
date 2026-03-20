@@ -199,8 +199,8 @@ function ConnectionDetailPage() {
         <CardContent>
           <Tabs defaultValue="markdown" className="w-full gap-4">
             <TabsList>
-              <TabsTrigger value="log">Log view</TabsTrigger>
               <TabsTrigger value="markdown">Markdown</TabsTrigger>
+              <TabsTrigger value="log">Log view</TabsTrigger>
             </TabsList>
             <TabsContent value="log" className="mt-4">
               <ScrollArea className="h-[500px]">
