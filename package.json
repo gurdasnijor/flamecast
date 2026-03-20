@@ -2,9 +2,9 @@
   "name": "acp",
   "type": "module",
   "scripts": {
-    "dev": "alchemy dev & tsx watch src/main.ts & vite",
+    "dev": "tsx watch src/main.ts & vite",
     "dev:client": "vite",
-    "dev:server": "alchemy dev & tsx watch src/main.ts",
+    "dev:server": "tsx watch src/main.ts",
     "build": "vite build",
     "start": "node dist/index.js",
     "lint": "eslint .",
