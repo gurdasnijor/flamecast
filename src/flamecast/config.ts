@@ -14,20 +14,26 @@ export type StateManagerConfig =
   | FlamecastStateManager; // pass your own implementation
 
 /**
- * An Alchemy Resource that provisions an agent sandbox.
- * Called with (connectionId) inside a per-connection Alchemy scope.
- * Must return { host, port } so Flamecast can open a TCP transport.
- * Alchemy handles create/update/delete lifecycle automatically.
+ * Provisioner — a function that creates an agent and returns an AcpTransport.
+ * Called inside a per-connection Alchemy scope. The transport is how Flamecast
+ * communicates with the agent (stdio streams, TCP socket, RPC, etc.).
  *
- * Omit for local ChildProcess (no Alchemy, no scope).
+ * Implementations:
+ * - Local: spawn ChildProcess, return stdio streams
+ * - Docker: create container via alchemy/docker, connect TCP, return streams
+ * - Cloudflare: create Container resource, return RPC-backed streams
+ *
+ * Alchemy handles create/update/delete lifecycle automatically via scopes.
  */
-export type Provisioner = (connectionId: string) => Promise<{ host: string; port: number }>;
+export type Provisioner = (
+  connectionId: string,
+  spec: import("../shared/connection.js").AgentSpawn,
+) => Promise<import("./transport.js").AcpTransport>;
 
 export type FlamecastOptions = {
   stateManager?: StateManagerConfig; // default: { type: "pglite" }
-  /** Alchemy Resource that provisions agent sandboxes. Omit for local ChildProcess. */
+  /** Provisioner that creates agents and returns an AcpTransport. Defaults to local ChildProcess. */
   provisioner?: Provisioner;
-
   /** Alchemy stage for resource isolation. Defaults to $USER. */
   stage?: string;
 };
@@ -73,13 +79,15 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flamecast> {
   const stateManager = await resolveStateManager(opts.stateManager);
 
-  // Initialize Alchemy when a provisioner needs it for scope-based lifecycle.
-  if (opts.provisioner) {
-    await alchemy("flamecast", { stage: opts.stage });
-  }
+  await alchemy("flamecast", { stage: opts.stage });
 
-  return new Flamecast({
-    stateManager,
-    provisioner: opts.provisioner,
-  });
+  // Default provisioner: local ChildProcess via stdio
+  const provisioner: Provisioner =
+    opts.provisioner ??
+    (async (_connectionId, spec) => {
+      const { openLocalTransport } = await import("./transport.js");
+      return openLocalTransport(spec);
+    });
+
+  return new Flamecast({ stateManager, provisioner });
 }

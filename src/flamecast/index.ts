@@ -14,12 +14,7 @@ import type {
   RegisterAgentProcessBody,
 } from "../shared/connection.js";
 import type { FlamecastStateManager } from "./state-manager.js";
-import {
-  getBuiltinAgentProcessPresets,
-  openLocalTransport,
-  openTcpTransport,
-  type AcpTransport,
-} from "./transport.js";
+import { getBuiltinAgentProcessPresets, type AcpTransport } from "./transport.js";
 import type { Provisioner } from "./config.js";
 
 // Re-exports for consumers
@@ -50,7 +45,7 @@ interface SessionTextChunkLogBuffer {
 interface ManagedConnection {
   id: string;
   sessionId: string;
-  scope: Scope | null;
+  scope: Scope;
   runtime: {
     connection: acp.ClientSideConnection | null;
     sessionTextChunkLogBuffer: SessionTextChunkLogBuffer | null;
@@ -59,7 +54,7 @@ interface ManagedConnection {
 
 export type FlamecastConstructorOptions = {
   stateManager: FlamecastStateManager;
-  provisioner?: Provisioner;
+  provisioner: Provisioner;
 };
 
 // ---------------------------------------------------------------------------
@@ -71,7 +66,7 @@ export class Flamecast {
   private permissionResolvers = new Map<string, PermissionResolver>();
   private agentProcesses = new Map<string, { label: string; spawn: AgentSpawn }>();
   private readonly stateManager: FlamecastStateManager;
-  private readonly provisioner: Provisioner | undefined;
+  private readonly provisioner: Provisioner;
 
   constructor(opts: FlamecastConstructorOptions) {
     this.stateManager = opts.stateManager;
@@ -148,20 +143,11 @@ export class Flamecast {
       pendingPermission: null,
     });
 
-    let transport: AcpTransport;
-    let scope: Scope | null = null;
-
-    if (this.provisioner) {
-      const provisioner = this.provisioner;
-      let endpoint = { host: "localhost", port: 0 };
-      scope = await alchemy.run(`connection-${id}`, async (s) => {
-        endpoint = await provisioner(id);
-        return s;
-      });
-      transport = await openTcpTransport(endpoint.host, endpoint.port);
-    } else {
-      transport = openLocalTransport(spawn);
-    }
+    let scope!: Scope;
+    const transport = await alchemy.run(`connection-${id}`, async (s) => {
+      scope = s;
+      return this.provisioner(id, spawn);
+    });
 
     const stream = acp.ndJsonStream(transport.input, transport.output);
 
@@ -280,9 +266,7 @@ export class Flamecast {
       this.permissionResolvers.delete(meta.pendingPermission.requestId);
     }
     await this.flushSessionTextChunkLogBuffer(managed);
-    if (managed.scope) {
-      await alchemy.destroy(managed.scope);
-    }
+    await alchemy.destroy(managed.scope);
     await this.pushLog(managed, "killed", {});
     await this.stateManager.finalizeConnection(id, "killed");
     this.runtimes.delete(id);
