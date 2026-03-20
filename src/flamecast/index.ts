@@ -12,7 +12,7 @@ import type {
   PermissionResponseBody,
   RegisterAgentProcessBody,
 } from "../shared/connection.js";
-import type { FlamecastStateManager } from "./state-manager.js";
+import type { ConnectionMeta, FlamecastStateManager } from "./state-manager.js";
 import {
   getAgentTransport,
   getBuiltinAgentProcessPresets,
@@ -115,6 +115,7 @@ export class Flamecast {
       startedAt: now,
       lastUpdatedAt: now,
       pendingPermission: null,
+      status: "active",
     });
 
     const agentProcess = startAgentProcess(spawn);
@@ -188,13 +189,19 @@ export class Flamecast {
   }
 
   async list(): Promise<ConnectionInfo[]> {
-    const ids = [...this.runtimes.keys()];
-    return Promise.all(ids.map((id) => this.snapshotInfo(id)));
+    const metas = await this.stateManager.listConnections();
+    return Promise.all(metas.map((m) => this.connectionInfoFromMeta(m)));
   }
 
   async get(id: string): Promise<ConnectionInfo> {
-    this.resolveRuntime(id);
-    return this.snapshotInfo(id);
+    if (this.runtimes.has(id)) {
+      return this.snapshotInfo(id);
+    }
+    const meta = await this.stateManager.getConnectionMeta(id);
+    if (!meta || meta.status !== "killed") {
+      throw new Error(`Connection "${id}" not found`);
+    }
+    return this.connectionInfoFromMeta(meta);
   }
 
   async prompt(id: string, text: string): Promise<acp.PromptResponse> {
@@ -284,7 +291,11 @@ export class Flamecast {
     if (!meta) {
       throw new Error(`Connection "${id}" not found`);
     }
-    const logs = await this.stateManager.getLogs(id);
+    return this.connectionInfoFromMeta(meta);
+  }
+
+  private async connectionInfoFromMeta(meta: ConnectionMeta): Promise<ConnectionInfo> {
+    const logs = await this.stateManager.getLogs(meta.id);
     return {
       ...meta,
       logs: [...logs],

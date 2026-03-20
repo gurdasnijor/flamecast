@@ -17,6 +17,7 @@ export type FlamecastStateManager = {
   appendLog(connectionId: string, sessionId: string, log: ConnectionLog): Promise<void>;
   getConnectionMeta(id: string): Promise<ConnectionMeta | null>;
   getLogs(connectionId: string): Promise<ConnectionLog[]>;
-  /** Called after the last kill log is appended — e.g. mark row dead (SQL) or evict (memory). */
+  listConnections(): Promise<ConnectionMeta[]>;
+  /** Called after the last kill log is appended — mark connection {@link ConnectionMeta.status} as killed (do not remove). */
   finalizeConnection(id: string, reason: "killed"): Promise<void>;
 };

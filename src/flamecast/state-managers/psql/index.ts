@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { ConnectionLog } from "../../../shared/connection.js";
 import type { ConnectionMeta, FlamecastStateManager } from "../../state-manager.js";
 import { connectionLogs, connections } from "./schema.js";
@@ -8,7 +8,8 @@ import type { PsqlAppDb } from "./types.js";
 export type { PsqlAppDb } from "./types.js";
 
 function rowToMeta(row: typeof connections.$inferSelect | undefined): ConnectionMeta | null {
-  if (!row || row.status !== "active") return null;
+  if (!row) return null;
+  const status = row.status === "killed" ? "killed" : "active";
   return {
     id: row.id,
     agentLabel: row.agentLabel,
@@ -16,6 +17,7 @@ function rowToMeta(row: typeof connections.$inferSelect | undefined): Connection
     sessionId: row.sessionId,
     startedAt: row.startedAt,
     lastUpdatedAt: row.lastUpdatedAt,
+    status,
     pendingPermission: row.pendingPermission ?? null,
   };
 }
@@ -36,7 +38,7 @@ export function createPsqlStateManager(db: PsqlAppDb): FlamecastStateManager {
         startedAt: meta.startedAt,
         lastUpdatedAt: meta.lastUpdatedAt,
         pendingPermission: meta.pendingPermission,
-        status: "active",
+        status: meta.status ?? "active",
       });
     },
 
@@ -47,7 +49,10 @@ export function createPsqlStateManager(db: PsqlAppDb): FlamecastStateManager {
       if (patch.pendingPermission !== undefined)
         updates.pendingPermission = patch.pendingPermission;
       if (Object.keys(updates).length === 0) return;
-      await db.update(connections).set(updates).where(eq(connections.id, id));
+      await db
+        .update(connections)
+        .set(updates)
+        .where(and(eq(connections.id, id), eq(connections.status, "active")));
     },
 
     async appendLog(connectionId: string, sessionId: string, log: ConnectionLog) {
@@ -61,12 +66,13 @@ export function createPsqlStateManager(db: PsqlAppDb): FlamecastStateManager {
     },
 
     async getConnectionMeta(id: string) {
-      const rows = await db
-        .select()
-        .from(connections)
-        .where(and(eq(connections.id, id), eq(connections.status, "active")))
-        .limit(1);
+      const rows = await db.select().from(connections).where(eq(connections.id, id)).limit(1);
       return rowToMeta(rows[0]);
+    },
+
+    async listConnections() {
+      const rows = await db.select().from(connections).orderBy(desc(connections.lastUpdatedAt));
+      return rows.map((r) => rowToMeta(r)).filter((m): m is ConnectionMeta => m !== null);
     },
 
     async getLogs(connectionId: string): Promise<ConnectionLog[]> {

@@ -109,6 +109,11 @@ function ConnectionDetailPage() {
             <Badge variant="secondary" className="mr-2">
               {conn.agentLabel}
             </Badge>
+            {conn.status === "killed" ? (
+              <Badge variant="outline" className="mr-2">
+                Killed
+              </Badge>
+            ) : null}
             Session: <code className="text-xs">{conn.sessionId}</code>
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -120,7 +125,8 @@ function ConnectionDetailPage() {
       </div>
 
       {/* Pending permission approval */}
-      {conn.pendingPermission &&
+      {conn.status === "active" &&
+        conn.pendingPermission &&
         (() => {
           const pending = conn.pendingPermission;
           return (
@@ -178,9 +184,12 @@ function ConnectionDetailPage() {
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
               placeholder="Send a prompt to the agent..."
-              disabled={promptMutation.isPending}
+              disabled={conn.status === "killed" || promptMutation.isPending}
             />
-            <Button onClick={handleSend} disabled={promptMutation.isPending || !prompt.trim()}>
+            <Button
+              onClick={handleSend}
+              disabled={conn.status === "killed" || promptMutation.isPending || !prompt.trim()}
+            >
               <SendIcon data-icon="inline-start" />
               {promptMutation.isPending ? "Sending…" : "Send"}
             </Button>
