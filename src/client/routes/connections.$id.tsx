@@ -133,12 +133,14 @@ function ConnectionDetailPage() {
                         <span className="shrink-0 text-xs text-muted-foreground">
                           {new Date(log.timestamp).toLocaleTimeString()}
                         </span>
-                        <Badge variant={getLogVariant(log.type)} className="shrink-0">
-                          {log.type}
-                        </Badge>
-                        <pre className="min-w-0 flex-1 overflow-auto rounded-md bg-muted p-2 text-xs">
-                          {JSON.stringify(log.data, null, 2)}
-                        </pre>
+                        <div className="min-w-0 flex-1 flex flex-col gap-2">
+                          <Badge variant={getLogVariant(log.type)} className="w-fit shrink-0">
+                            {log.type}
+                          </Badge>
+                          <pre className="min-w-0 overflow-auto rounded-md bg-muted p-2 text-xs">
+                            {JSON.stringify(log.data, null, 2)}
+                          </pre>
+                        </div>
                       </div>
                     </Fragment>
                   ))
@@ -156,7 +158,7 @@ function ConnectionDetailPage() {
               resize="smooth"
               initial="smooth"
             >
-              <StickToBottom.Content className="flex flex-col gap-4">
+              <StickToBottom.Content className="flex flex-col gap-4 px-px">
                 {markdownSegments.length === 0 ? (
                   <p className="py-8 text-center text-sm text-muted-foreground">
                     No conversation yet. Send a prompt or wait for session updates to show here.
