@@ -36,11 +36,17 @@ function ConnectionsPage() {
     queryFn: fetchAgentProcesses,
   });
 
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const createMutation = useMutation({
     mutationFn: (agentProcessId: string) => createConnection({ agentProcessId, cwd: undefined }),
     onSuccess: (conn) => {
+      setCreateError(null);
       queryClient.invalidateQueries({ queryKey: ["connections"] });
       navigate({ to: "/connections/$id", params: { id: conn.id } });
+    },
+    onError: (err) => {
+      setCreateError(err instanceof Error ? err.message : "Failed to create connection");
     },
   });
 
@@ -192,6 +198,14 @@ function ConnectionsPage() {
                 />
               ))}
             </div>
+          )}
+
+          {createError && (
+            <Card className="border-destructive bg-destructive/5">
+              <CardContent className="py-3">
+                <p className="text-sm text-destructive">{createError}</p>
+              </CardContent>
+            </Card>
           )}
         </div>
       </div>
