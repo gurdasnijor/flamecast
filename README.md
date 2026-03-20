@@ -19,9 +19,23 @@ For **planned** evolution (sandboxing, durable projection, optional Convex), see
 
 ---
 
+## Server configuration
+
+The API server reads **`config.yaml`** from the process working directory (repo root when you run `dev:server` / `dev` from there). Set **`ACP_CONFIG_PATH`** to use another file path (resolved relative to `cwd`).
+
+| Field        | Values             | Meaning                                                                                                                            |
+| ------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `projection` | `psql` _(default)_ | Drizzle + Postgres (`FLAMECAST_POSTGRES_URL`) or embedded PGLite if unset (see **`createDatabase`** in `src/server/db/client.ts`). |
+| `projection` | `memory`           | In-memory projection only; connection metadata and logs are **not** persisted across restarts.                                     |
+
+If **`config.yaml` is missing**, the server behaves like **`projection: psql`** (unchanged from before this file existed).
+
+---
+
 ## Repository layout
 
 ```
+config.yaml       # optional; chooses Flamecast projection (memory vs psql)
 src/
   client/           # Vite app (port 3000); proxies /api → 3001
     routes/         # TanStack file routes: /, /connections/$id
@@ -29,6 +43,7 @@ src/
     lib/api.ts      # hc<AppType> client
   server/
     index.ts        # Hono root, route("/api", api)
+    config.ts       # loadServerConfig(): config.yaml + zod
     api.ts          # REST handlers → Flamecast
   flamecast/
     index.ts        # Flamecast — runtime handles + ACP client
@@ -91,7 +106,7 @@ flowchart LR
 
 **Logging:** `pushLog` is async and appends to the projection (`connection_logs`). **RPC tracing** uses `type: "rpc"` with the same `data` shape as before (`method`, `direction`, `phase`, optional `payload`).
 
-**Database:** `createDatabase()` (`src/server/db/client.ts`) uses **Postgres** when `DATABASE_URL` or `ACP_DATABASE_URL` is set, otherwise **PGLite** under `.acp/pglite` (`ACP_PGLITE_DIR`). Schema lives in `src/flamecast/projections/psql/schema.ts`; Drizzle Kit writes SQL to `src/flamecast/projections/psql/migrations/`. Run `bun run db:generate` after schema edits and commit migrations.
+**Database:** `createDatabase()` (`src/server/db/client.ts`) uses **Postgres** when **`FLAMECAST_POSTGRES_URL`** is set; otherwise it logs a short warning and uses **PGLite** under `.acp/pglite` (`ACP_PGLITE_DIR`). Schema lives in `src/flamecast/projections/psql/schema.ts`; Drizzle Kit writes SQL to `src/flamecast/projections/psql/migrations/`. Run `bun run db:generate` after schema edits and commit migrations.
 
 If you previously used the inlined DDL-only setup, remove `.acp/pglite` once so the migrator can create tables cleanly.
 

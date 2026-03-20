@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzlePgLite } from "drizzle-orm/pglite";
@@ -20,7 +21,7 @@ export type DatabaseBundle = {
 export { schema as psqlSchema };
 
 function postgresConnectionString(): string | undefined {
-  const url = process.env.ACP_DATABASE_URL ?? process.env.DATABASE_URL;
+  const url = process.env.FLAMECAST_POSTGRES_URL;
   const t = url?.trim();
   return t || undefined;
 }
@@ -31,7 +32,7 @@ export type CreateDatabaseOptions = {
 };
 
 /**
- * Connects to **Postgres** when `DATABASE_URL` or `ACP_DATABASE_URL` is set; otherwise **PGLite** on disk.
+ * Connects to **Postgres** when `FLAMECAST_POSTGRES_URL` is set; otherwise **PGLite** on disk.
  * Applies Drizzle migrations from `flamecast/projections/psql/migrations`.
  */
 export async function createDatabase(options: CreateDatabaseOptions = {}): Promise<DatabaseBundle> {
@@ -50,11 +51,14 @@ export async function createDatabase(options: CreateDatabaseOptions = {}): Promi
     };
   }
 
+  console.warn("postgres url not found, falling back to pglite");
+
   const dataDir = path.resolve(
     options.pgliteDataDir ??
       process.env.ACP_PGLITE_DIR ??
       path.join(process.cwd(), ".acp", "pglite"),
   );
+  await mkdir(dataDir, { recursive: true });
   const client = await PGlite.create(dataDir);
   const db = drizzlePgLite({ client, schema });
   await migratePgLite(db, { migrationsFolder });
