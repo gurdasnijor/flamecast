@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import alchemy, { type Scope } from "alchemy";
 import type {
@@ -501,7 +500,7 @@ export class Flamecast {
       requestId: randomUUID(),
       toolCallId: params.toolCall.toolCallId,
       title: params.toolCall.title ?? "",
-      kind: params.toolCall.kind ?? undefined,
+      kind: params.toolCall.kind,
       options: params.options.map((o) => ({
         optionId: o.optionId,
         name: o.name,

@@ -4,8 +4,8 @@ import "alchemy/test/vitest";
 import { File } from "alchemy/fs";
 import * as docker from "alchemy/docker";
 import { createServer, createConnection } from "node:net";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { Flamecast } from "../src/flamecast/index.js";
+import { existsSync, rmSync } from "node:fs";
+import { createFlamecast, type Flamecast } from "../src/flamecast/index.js";
 
 const test = alchemy.test(import.meta, { prefix: "test" });
 
@@ -96,7 +96,7 @@ async function runConnectionLifecycle(
 
 describe("flamecast", () => {
   test("local - full connection lifecycle", async (scope) => {
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
     });
 
@@ -110,7 +110,7 @@ describe("flamecast", () => {
   });
 
   test("local - preset agent process", async (scope) => {
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
     });
 
@@ -126,7 +126,7 @@ describe("flamecast", () => {
   });
 
   test("local - connection management", async (scope) => {
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
     });
 
@@ -145,7 +145,7 @@ describe("flamecast", () => {
     // inside a per-connection scope, and destroy(scope) cleans it up.
     const testFilePath = `.alchemy-test-${Date.now()}.txt`;
 
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
       provisioner: async (connectionId) => {
         // Use alchemy/fs File as a stand-in for any resource (Docker, K8s, etc.)
@@ -183,7 +183,7 @@ describe("flamecast", () => {
     let containerCreated = false;
     let containerId = "";
 
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
       provisioner: async (connectionId) => {
         const container = await docker.Container(`sandbox-${connectionId}`, {
@@ -226,7 +226,7 @@ describe("flamecast", () => {
       skipPush: true,
     });
 
-    const flamecast = await Flamecast.create({
+    const flamecast = await createFlamecast({
       stateManager: { type: "memory" },
       provisioner: async (connectionId) => {
         const port = await findFreePort();

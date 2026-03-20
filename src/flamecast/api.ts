@@ -14,6 +14,15 @@ import {
  */
 export function createApi(flamecast: Flamecast) {
   return new Hono()
+    .get("/health", async (c) => {
+      try {
+        await flamecast.list();
+        return c.json({ status: "ok", connections: (await flamecast.list()).length });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unknown error";
+        return c.json({ status: "degraded", error: message }, 503);
+      }
+    })
     .get("/agent-processes", (c) => {
       return c.json(flamecast.listAgentProcesses());
     })

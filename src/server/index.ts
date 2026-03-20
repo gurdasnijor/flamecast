@@ -8,6 +8,18 @@ const api = createApi(flamecast);
 const app = new Hono();
 app.route("/api", api);
 
-serve({ fetch: app.fetch, port: 3001 }, (info) => {
+const server = serve({ fetch: app.fetch, port: 3001 }, (info) => {
   console.log(`Flamecast running on http://localhost:${info.port}`);
 });
+
+async function shutdown() {
+  console.log("\nShutting down...");
+  for (const conn of await flamecast.list()) {
+    await flamecast.kill(conn.id).catch(() => {});
+  }
+  server.close();
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
