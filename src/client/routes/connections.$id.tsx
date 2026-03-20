@@ -208,7 +208,7 @@ function ConnectionDetailPage() {
                   (() => {
                     const pending = conn.pendingPermission;
                     return (
-                      <Card className="border-amber-500/50 bg-amber-500/5 max-w-2xl">
+                      <Card className="max-w-2xl border-primary/50 bg-primary/5">
                         <CardHeader>
                           <CardTitle className="text-base">Permission required</CardTitle>
                           <CardDescription>
