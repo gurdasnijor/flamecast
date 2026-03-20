@@ -15,15 +15,12 @@ export type StateManagerConfig =
 
 /**
  * Provisioner — a function that creates an agent and returns an AcpTransport.
- * Called inside a per-connection Alchemy scope. The transport is how Flamecast
- * communicates with the agent (stdio streams, TCP socket, RPC, etc.).
+ * Called inside a per-connection Alchemy scope.
  *
- * Implementations:
- * - Local: spawn ChildProcess, return stdio streams
- * - Docker: create container via alchemy/docker, connect TCP, return streams
- * - Cloudflare: create Container resource, return RPC-backed streams
- *
- * Alchemy handles create/update/delete lifecycle automatically via scopes.
+ * The provisioner can create Alchemy resources (docker.Container, etc.) inside
+ * the scope — those get lifecycle-managed automatically. The transport itself
+ * is ephemeral (not persisted). Alchemy persists the resource state (container ID,
+ * etc.) for reconnection; the transport is recreated from that state.
  */
 export type Provisioner = (
   connectionId: string,
@@ -69,19 +66,23 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 }
 
 // ---------------------------------------------------------------------------
+// Built-in provisioner: local ChildProcess as an Alchemy Resource
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
  * Create a Flamecast instance from config options.
- * Resolves state manager, initializes Alchemy when a provisioner is provided.
+ * Resolves state manager, initializes Alchemy.
  */
 export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flamecast> {
   const stateManager = await resolveStateManager(opts.stateManager);
 
   await alchemy("flamecast", { stage: opts.stage });
 
-  // Default provisioner: local ChildProcess via stdio
+  // Default provisioner: local ChildProcess (no Alchemy resource needed — process dies with orchestrator)
   const provisioner: Provisioner =
     opts.provisioner ??
     (async (_connectionId, spec) => {
