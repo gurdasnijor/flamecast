@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { createFlamecast } from "./flamecast/config.js";
-import { createApi } from "./flamecast/api.js";
+import { createFlamecast } from "../flamecast/config.js";
+import { createApi } from "../flamecast/api.js";
 
 const flamecast = await createFlamecast();
 const api = createApi(flamecast);
