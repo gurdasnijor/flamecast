@@ -100,7 +100,7 @@ function ConnectionDetailPage() {
           <div className="flex shrink-0 flex-wrap items-center gap-3">
             <TabsList>
               <TabsTrigger value="markdown">Markdown</TabsTrigger>
-              <TabsTrigger value="log">Log view</TabsTrigger>
+              <TabsTrigger value="log">Traces</TabsTrigger>
             </TabsList>
             <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:gap-3">
               <Badge variant="secondary" className="shrink-0">

@@ -1,10 +1,10 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchConnections, killConnection } from "@/client/lib/api";
+import { cn } from "@/client/lib/utils";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -14,14 +14,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
-  SidebarSeparator,
 } from "@/client/components/ui/sidebar";
-import { HomeIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 
 export function ConnectionsSidebar() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const activeConnectionId = useRouterState({
     select: (s) => s.matches.find((m) => m.routeId === "/connections/$id")?.params.id,
   });
@@ -44,13 +42,20 @@ export function ConnectionsSidebar() {
 
   return (
     <Sidebar>
-      <SidebarHeader className="h-14 shrink-0 justify-center">
+      <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild>
+            <SidebarMenuButton size="lg" asChild>
               <Link to="/">
-                <span className="text-lg">🔥</span>
-                <span className="truncate font-bold">Flamecast</span>
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                  <span className="text-base leading-none">🔥</span>
+                </div>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-semibold">Flamecast</span>
+                  <span className="truncate text-xs text-sidebar-foreground/70">
+                    ACP connections
+                  </span>
+                </div>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -78,7 +83,7 @@ export function ConnectionsSidebar() {
                       asChild
                       isActive={conn.id === activeConnectionId}
                       tooltip={`${conn.agentLabel} · ${conn.id.slice(0, 8)}…`}
-                      className="!h-auto min-h-8 items-start py-2"
+                      className="!h-auto min-h-8 items-start py-2 pr-10"
                     >
                       <Link to="/connections/$id" params={{ id: conn.id }}>
                         <span className="grid min-w-0 flex-1 gap-1 leading-snug">
@@ -93,14 +98,21 @@ export function ConnectionsSidebar() {
                       showOnHover
                       title="Close connection"
                       disabled={killMutation.isPending}
-                      className="z-10 !top-1/2 right-1 !-translate-y-1/2 text-sidebar-foreground hover:!text-destructive"
+                      className={cn(
+                        "z-10 !top-1/2 right-1 !-translate-y-1/2 size-8 cursor-pointer rounded-md",
+                        "text-destructive/90 transition-[opacity,transform,colors] duration-150",
+                        "hover:bg-destructive/15 hover:text-destructive active:scale-95",
+                        "focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                        "md:pointer-events-none md:group-hover/menu-item:pointer-events-auto md:group-focus-within/menu-item:pointer-events-auto",
+                        "disabled:pointer-events-none disabled:opacity-40",
+                      )}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         killMutation.mutate(conn.id);
                       }}
                     >
-                      <Trash2Icon className="text-destructive" />
+                      <Trash2Icon className="size-4 shrink-0" />
                       <span className="sr-only">Close connection</span>
                     </SidebarMenuAction>
                   </SidebarMenuItem>
@@ -110,19 +122,6 @@ export function ConnectionsSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarSeparator />
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={pathname === "/"} tooltip="Home">
-              <Link to="/">
-                <HomeIcon />
-                <span>Home & new connection</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </Sidebar>
   );
 }
