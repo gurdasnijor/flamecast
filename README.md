@@ -50,7 +50,7 @@ src/
     projection.ts   # durable port (metadata + logs)
     projections/
       memory/       # in-memory FlamecastProjection
-      psql/         # Drizzle schema + SQL migrations + createPsqlProjection (Postgres or PGLite)
+      psql/         # schema, drizzle.config.ts, migrations/, createPsqlProjection (Postgres or PGLite)
     transport.ts    # spawn + stdio → streams; built-in agent presets
     agent.ts        # example agent process (tsx) for local dev
   server/db/
@@ -106,7 +106,7 @@ flowchart LR
 
 **Logging:** `pushLog` is async and appends to the projection (`connection_logs`). **RPC tracing** uses `type: "rpc"` with the same `data` shape as before (`method`, `direction`, `phase`, optional `payload`).
 
-**Database:** `createDatabase()` (`src/server/db/client.ts`) uses **Postgres** when **`FLAMECAST_POSTGRES_URL`** is set; otherwise it logs a short warning and uses **PGLite** under `.acp/pglite` (`ACP_PGLITE_DIR`). Schema lives in `src/flamecast/projections/psql/schema.ts`; Drizzle Kit writes SQL to `src/flamecast/projections/psql/migrations/`. Run `bun run db:generate` after schema edits and commit migrations.
+**Database:** `createDatabase()` (`src/server/db/client.ts`) uses **Postgres** when **`FLAMECAST_POSTGRES_URL`** is set; otherwise it logs a short warning and uses **PGLite** under `.acp/pglite` (`ACP_PGLITE_DIR`). Schema lives in `src/flamecast/projections/psql/schema.ts`; Drizzle Kit writes SQL to `src/flamecast/projections/psql/migrations/`. Run `bun run psql:generate` after schema edits and commit migrations (`drizzle.config.ts` lives next to the schema under `src/flamecast/projections/psql/`).
 
 If you previously used the inlined DDL-only setup, remove `.acp/pglite` once so the migrator can create tables cleanly.
 
