@@ -22,7 +22,7 @@ import {
 } from "@/client/components/ui/combobox";
 import { Trash2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AgentProcessInfo } from "@/shared/connection";
+import type { AgentProcessInfo, CreateConnectionBody } from "@/shared/connection";
 
 export const Route = createFileRoute("/")({
   component: ConnectionsPage,
@@ -32,6 +32,9 @@ function ConnectionsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
+  const [runtimeKind, setRuntimeKind] = useState<CreateConnectionBody["runtimeKind"]>("local");
+  const [dockerfile, setDockerfile] = useState("Dockerfile");
+  const [dockerBuildContext, setDockerBuildContext] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newCommand, setNewCommand] = useState("");
   const [newArgs, setNewArgs] = useState("");
@@ -57,7 +60,24 @@ function ConnectionsPage() {
   }, [processes]);
 
   const createMutation = useMutation({
-    mutationFn: (agentProcessId: string) => createConnection({ agentProcessId, cwd: undefined }),
+    mutationFn: () => {
+      if (!selectedProcessId) {
+        throw new Error("Select an agent process");
+      }
+      return createConnection({
+        agentProcessId: selectedProcessId,
+        runtimeKind,
+        cwd: undefined,
+        ...(runtimeKind === "docker"
+          ? {
+              dockerfile: dockerfile.trim() || "Dockerfile",
+              ...(dockerBuildContext.trim()
+                ? { dockerBuildContext: dockerBuildContext.trim() }
+                : {}),
+            }
+          : {}),
+      });
+    },
     onSuccess: (conn) => {
       queryClient.invalidateQueries({ queryKey: ["connections"] });
       navigate({ to: "/connections/$id", params: { id: conn.id } });
@@ -109,6 +129,22 @@ function ConnectionsPage() {
         </div>
         <div className="flex w-full min-w-0 flex-col gap-3 sm:max-w-md">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2">
+              <label htmlFor="runtime-kind" className="text-xs text-muted-foreground">
+                Runtime
+              </label>
+              <select
+                id="runtime-kind"
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                value={runtimeKind}
+                onChange={(event) =>
+                  setRuntimeKind(event.target.value as CreateConnectionBody["runtimeKind"])
+                }
+              >
+                <option value="local">Local</option>
+                <option value="docker">Docker</option>
+              </select>
+            </div>
             <div className="min-w-0 flex-1">
               <Combobox
                 items={processes}
@@ -145,13 +181,39 @@ function ConnectionsPage() {
             </div>
             <Button
               className="shrink-0"
-              onClick={() => selectedProcessId && createMutation.mutate(selectedProcessId)}
-              disabled={createMutation.isPending || !selectedProcessId || processes.length === 0}
+              onClick={() => createMutation.mutate()}
+              disabled={
+                createMutation.isPending ||
+                !selectedProcessId ||
+                processes.length === 0 ||
+                (runtimeKind === "docker" && !dockerfile.trim())
+              }
             >
               <PlusIcon data-icon="inline-start" />
               New connection
             </Button>
           </div>
+          {runtimeKind === "docker" && (
+            <div className="flex flex-col gap-2">
+              <Input
+                placeholder="Dockerfile path (e.g. Dockerfile or docker/agent.Dockerfile)"
+                value={dockerfile}
+                onChange={(e) => setDockerfile(e.target.value)}
+                aria-label="Path to Dockerfile"
+              />
+              <Input
+                placeholder="Build context directory (optional, defaults to session cwd on server)"
+                value={dockerBuildContext}
+                onChange={(e) => setDockerBuildContext(e.target.value)}
+                aria-label="Docker build context directory"
+              />
+              <p className="text-xs text-muted-foreground">
+                Runs <code className="rounded bg-muted px-1">docker build</code> then{" "}
+                <code className="rounded bg-muted px-1">docker run -i</code> with the selected
+                agent&apos;s command and args inside the image.
+              </p>
+            </div>
+          )}
           {selectedProcess && (
             <p className="text-xs text-muted-foreground">
               Spawns:{" "}

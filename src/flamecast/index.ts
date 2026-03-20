@@ -1,5 +1,5 @@
-import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentProcessInfo,
@@ -12,10 +12,11 @@ import type {
   RegisterAgentProcessBody,
 } from "../shared/connection.js";
 import {
-  getAgentTransport,
   getBuiltinAgentProcessPresets,
-  startAgentProcess,
 } from "./transport.js";
+import type { RuntimeKind, SandboxProvisioner } from "./sandbox.js";
+import { localProvisioner } from "./provisioners/local.js";
+import { dockerProvisioner } from "./provisioners/docker.js";
 
 export type { AgentProcessInfo, ConnectionInfo, PendingPermission } from "../shared/connection.js";
 
@@ -27,7 +28,7 @@ interface ManagedConnection {
   info: ConnectionInfo;
   runtime: {
     connection: acp.ClientSideConnection | null;
-    agentProcess: ChildProcess;
+    dispose: () => void | Promise<void>;
   };
 }
 
@@ -35,9 +36,16 @@ export class Flamecast {
   private connections = new Map<string, ManagedConnection>();
   private permissionResolvers = new Map<string, PermissionResolver>();
   private agentProcesses = new Map<string, { label: string; spawn: AgentSpawn }>();
+  private provisioners: Record<RuntimeKind, SandboxProvisioner>;
   private nextId = 1;
 
-  constructor() {
+  constructor(
+    provisioners: Partial<Record<RuntimeKind, SandboxProvisioner>> = {},
+  ) {
+    this.provisioners = {
+      local: provisioners.local ?? localProvisioner,
+      docker: provisioners.docker ?? dockerProvisioner,
+    };
     for (const preset of getBuiltinAgentProcessPresets()) {
       this.agentProcesses.set(preset.id, {
         label: preset.label,
@@ -66,6 +74,7 @@ export class Flamecast {
 
   async create(opts: CreateConnectionBody): Promise<ConnectionInfo> {
     const cwd = opts.cwd ?? process.cwd();
+    const runtimeKind: RuntimeKind = opts.runtimeKind ?? "local";
     const id = String(this.nextId++);
     const now = new Date().toISOString();
 
@@ -87,10 +96,23 @@ export class Flamecast {
       throw new Error("Provide agentProcessId or spawn");
     }
 
-    const agentProcess = startAgentProcess(spawn);
-
-    const { input, output } = getAgentTransport(agentProcess);
-    const stream = acp.ndJsonStream(input, output);
+    const provisioner = this.provisioners[runtimeKind];
+    if (!provisioner) {
+      throw new Error(`Unsupported runtime kind "${runtimeKind}"`);
+    }
+    const runtime = await provisioner.start({
+      spawn,
+      agentProcessId: opts.agentProcessId,
+      connectionId: id,
+      docker:
+        runtimeKind === "docker" && opts.dockerfile?.trim()
+          ? {
+              dockerfile: opts.dockerfile.trim(),
+              contextDir: path.resolve(opts.dockerBuildContext ?? cwd),
+            }
+          : undefined,
+    });
+    const stream = acp.ndJsonStream(runtime.streams.input, runtime.streams.output);
 
     const managed: ManagedConnection = {
       info: {
@@ -105,13 +127,14 @@ export class Flamecast {
       },
       runtime: {
         connection: null,
-        agentProcess,
+        dispose: runtime.dispose,
       },
     };
 
-    const client = this.createClient(managed);
-    const connection = new acp.ClientSideConnection((_agent) => client, stream);
-    managed.runtime.connection = connection;
+    try {
+      const client = this.createClient(managed);
+      const connection = new acp.ClientSideConnection((_agent) => client, stream);
+      managed.runtime.connection = connection;
 
     const initParams: acp.InitializeRequest = {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -131,8 +154,12 @@ export class Flamecast {
 
     managed.info.sessionId = sessionResult.sessionId;
 
-    this.connections.set(id, managed);
-    return this.snapshotInfo(managed);
+      this.connections.set(id, managed);
+      return this.snapshotInfo(managed);
+    } catch (error) {
+      await Promise.resolve(managed.runtime.dispose());
+      throw error;
+    }
   }
 
   list(): ConnectionInfo[] {
@@ -165,7 +192,7 @@ export class Flamecast {
     if (managed.info.pendingPermission) {
       this.permissionResolvers.delete(managed.info.pendingPermission.requestId);
     }
-    managed.runtime.agentProcess.kill();
+    void Promise.resolve(managed.runtime.dispose());
     this.pushLog(managed, "killed", {});
     this.connections.delete(id);
   }
