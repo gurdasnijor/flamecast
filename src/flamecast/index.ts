@@ -100,7 +100,7 @@ export class Flamecast {
       command: body.spawn.command,
       args: body.spawn.args,
     };
-    this.agentProcesses.set(id, { label: body.label, spawn });
+    this.agentProcesses.set(id, { label: body.label, spawn, runtime: { type: "local" } });
     return { id, label: body.label, spawn };
   }
 
