@@ -42,6 +42,7 @@ export const server = await Worker("flamecast-api", {
   bundle: {
     format: "esm",
     target: "esnext",
+    conditions: ["node", "import"],
   },
 });
 
