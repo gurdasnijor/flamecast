@@ -40,7 +40,8 @@ export const server = await Worker("flamecast-api", {
     port: 3001,
   },
   bundle: {
-    external: ["alchemy", "alchemy/*"],
+    format: "esm",
+    target: "es2020",
   },
 });
 
