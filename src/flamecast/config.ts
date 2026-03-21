@@ -83,6 +83,7 @@ const defaultProvisioner: Provisioner = async (connectionId, spec, runtime) => {
   // Build image if dockerfile is provided
   if (runtime.image && runtime.dockerfile) {
     await provider.Image(`agent-image-${connectionId}`, {
+      adopt: true,
       name: runtime.image,
       tag: "latest",
       build: { context: ".", dockerfile: runtime.dockerfile },
