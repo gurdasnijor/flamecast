@@ -31,7 +31,7 @@ const DATABASE_URL = `postgres://flamecast:flamecast@localhost:5432/flamecast`;
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
   entrypoint: "./src/worker.ts",
-  compatibilityFlags: ["nodejs_compat"],
+  compatibility: "node",
   bindings: {
     DATABASE_URL,
   },
