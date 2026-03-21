@@ -1,6 +1,6 @@
 import alchemy from "alchemy";
 import { Worker } from "alchemy/cloudflare";
-import { Database, Branch, Password } from "alchemy/planetscale";
+import { Database, Password } from "alchemy/planetscale";
 import { Exec } from "alchemy/os";
 
 const app = await alchemy("flamecast-infra");
@@ -17,17 +17,9 @@ const database = await Database("flamecast-db", {
   migrationTableName: "__drizzle_migrations",
 });
 
-const branch = await Branch("flamecast-branch", {
-  adopt: true,
-  name: `flamecast-${app.stage}-branch`,
-  database,
-  parentBranch: database.defaultBranch,
-});
-
 const password = await Password("flamecast-password", {
   name: `flamecast-${app.stage}-password`,
   database,
-  branch,
   role: "admin",
 });
 
