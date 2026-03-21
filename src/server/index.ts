@@ -1,7 +1,11 @@
+import alchemy from "alchemy";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { createFlamecast } from "../flamecast/config.js";
 import { createApi } from "../flamecast/api.js";
+
+// Init alchemy at startup — provides scope for per-connection provisioning
+await alchemy("flamecast", { phase: "up", quiet: true });
 
 const flamecast = await createFlamecast();
 const api = createApi(flamecast);

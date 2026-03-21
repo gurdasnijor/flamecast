@@ -115,19 +115,7 @@ const defaultProvisioner: Provisioner = async (connectionId, spec) => {
 export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flamecast> {
   const stateManager = await resolveStateManager(opts.stateManager);
 
-  let provisioner: Provisioner;
-  if (opts.provisioner) {
-    provisioner = opts.provisioner;
-  } else {
-    // Default provisioner uses alchemy/docker — init alchemy and wrap in scopes
-    const alchemy = (await import("alchemy")).default;
-    await alchemy("flamecast", { phase: "up", stage: opts.stage, quiet: true });
-    provisioner = async (connectionId, spec) => {
-      return alchemy.run(`connection-${connectionId}`, { quiet: true }, async () => {
-        return defaultProvisioner(connectionId, spec);
-      });
-    };
-  }
+  const provisioner: Provisioner = opts.provisioner ?? defaultProvisioner;
 
   const { getBuiltinAgentPresets } = await import("./presets.js");
   const presets = getBuiltinAgentPresets();
