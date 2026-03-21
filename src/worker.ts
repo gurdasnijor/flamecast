@@ -7,11 +7,9 @@ import type { server } from "../alchemy.run";
 
 const flamecast = new Flamecast({
   stateManager: new MemoryFlamecastStateManager(),
-  provisioner: async (_id, spec) => {
-    const { openLocalTransport } = await import("./flamecast/transport.js");
-    return openLocalTransport(spec);
+  provisioner: async () => {
+    throw new Error("Agent provisioning not available in Worker — configure a remote provisioner");
   },
-  // No alchemyScope — alchemy runs at deploy time, not inside the Worker
 });
 
 const app = new Hono();

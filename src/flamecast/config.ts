@@ -66,33 +66,59 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 }
 
 // ---------------------------------------------------------------------------
-// Built-in provisioner: local ChildProcess as an Alchemy Resource
+// Default provisioner — routes Docker presets to containers, rest to local
 // ---------------------------------------------------------------------------
+
+const DOCKER_AGENTS: Record<string, { image: string; dockerfile: string }> = {
+  "codex-acp": {
+    image: "flamecast/codex-agent",
+    dockerfile: "docker/codex-agent.Dockerfile",
+  },
+};
+
+const defaultProvisioner: Provisioner = async (connectionId, spec) => {
+  const cmd = [spec.command, ...(spec.args ?? [])].join(" ");
+  const match = Object.entries(DOCKER_AGENTS).find(([key]) => cmd.includes(key));
+
+  if (match) {
+    const [, { image, dockerfile }] = match;
+    const docker = await import("alchemy/docker");
+    const { findFreePort, waitForPort, openTcpTransport } = await import("./transport.js");
+    const port = await findFreePort();
+
+    await docker.Image(`agent-image-${connectionId}`, {
+      name: image,
+      tag: "latest",
+      build: { context: ".", dockerfile },
+      skipPush: true,
+    });
+
+    await docker.Container(`sandbox-${connectionId}`, {
+      image: `${image}:latest`,
+      name: `flamecast-sandbox-${connectionId}`,
+      environment: { ACP_PORT: String(port) },
+      ports: [{ external: port, internal: port }],
+      start: true,
+    });
+
+    await waitForPort("localhost", port);
+    return openTcpTransport("localhost", port);
+  }
+
+  const { openLocalTransport } = await import("./transport.js");
+  return openLocalTransport(spec);
+};
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
-/**
- * Create a Flamecast instance from config options.
- * Resolves state manager, initializes Alchemy, wraps provisioner in scopes.
- *
- * Alchemy scope management is handled HERE — not inside Flamecast.
- * The provisioner passed to Flamecast is already wrapped with scope lifecycle.
- * Flamecast just calls provisioner(id, spec) and gets a transport.
- */
 export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flamecast> {
   const stateManager = await resolveStateManager(opts.stateManager);
 
   await alchemy("flamecast", { phase: "up", stage: opts.stage, quiet: true });
 
-  // The user's provisioner (or default local ChildProcess)
-  const userProvisioner: Provisioner =
-    opts.provisioner ??
-    (async (_connectionId, spec) => {
-      const { openLocalTransport } = await import("./transport.js");
-      return openLocalTransport(spec);
-    });
+  const userProvisioner: Provisioner = opts.provisioner ?? defaultProvisioner;
 
   // Wrap in an Alchemy scope per connection so any resources created
   // inside (docker.Container, etc.) get lifecycle-managed automatically.
@@ -115,5 +141,9 @@ export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flam
     };
   };
 
-  return new Flamecast({ stateManager, provisioner });
+  // Load presets (dynamic import to avoid bundling child_process in Workers)
+  const { getBuiltinAgentProcessPresets } = await import("./transport.js");
+  const presets = getBuiltinAgentProcessPresets();
+
+  return new Flamecast({ stateManager, provisioner, presets });
 }

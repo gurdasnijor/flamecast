@@ -12,7 +12,7 @@ import type {
   RegisterAgentProcessBody,
 } from "../shared/connection.js";
 import type { FlamecastStateManager } from "./state-manager.js";
-import { getBuiltinAgentProcessPresets, type AcpTransport } from "./transport.js";
+import type { AcpTransport, BuiltinAgentPreset } from "./transport.js";
 import type { Provisioner } from "./config.js";
 
 // Re-exports for consumers
@@ -53,6 +53,8 @@ interface ManagedConnection {
 export type FlamecastConstructorOptions = {
   stateManager: FlamecastStateManager;
   provisioner: Provisioner;
+  /** Agent presets. Injected by createFlamecast(); empty in Workers. */
+  presets?: BuiltinAgentPreset[];
 };
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ export class Flamecast {
   constructor(opts: FlamecastConstructorOptions) {
     this.stateManager = opts.stateManager;
     this.provisioner = opts.provisioner;
-    for (const preset of getBuiltinAgentProcessPresets()) {
+    for (const preset of opts.presets ?? []) {
       this.agentProcesses.set(preset.id, {
         label: preset.label,
         spawn: { command: preset.spawn.command, args: preset.spawn.args },

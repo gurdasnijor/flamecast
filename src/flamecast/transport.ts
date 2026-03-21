@@ -1,6 +1,6 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { Writable, Readable } from "node:stream";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 
 function toUint8ReadableStream(
   stream: ReturnType<typeof Readable.toWeb>,
@@ -131,5 +131,39 @@ export function openTcpTransport(host: string, port: number): Promise<AcpTranspo
       resolve({ input, output });
     });
     socket.on("error", reject);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
+}
+
+export function waitForPort(host: string, port: number, timeoutMs = 30_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    function attempt() {
+      if (Date.now() > deadline) {
+        reject(new Error(`Port ${port} not ready after ${timeoutMs}ms`));
+        return;
+      }
+      const socket = createConnection({ host, port }, () => {
+        socket.destroy();
+        resolve();
+      });
+      socket.on("error", () => setTimeout(attempt, 500));
+    }
+    attempt();
   });
 }
