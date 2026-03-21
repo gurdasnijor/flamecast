@@ -7,17 +7,17 @@ Flamecast is an open-source, self-hostable control plane for ACP-compatible agen
 ## Quick start
 
 ```bash
-npm install
-npm run build
-npm start
+pnpm install
+pnpm run build
+pnpm start
 ```
 
-The `flamecast` CLI starts the API on port 3001 by default. During local package development, `npm start` runs that same entrypoint.
+The `flamecast` CLI starts the API on port 3001 by default. During local package development, `pnpm start` runs that same entrypoint.
 
 For the split dev loop:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Open **http://localhost:3000** for the Vite app in development.
@@ -295,24 +295,24 @@ Base URL: `http://localhost:3001/api`
 ### Local dev (Node)
 
 ```bash
-npm run dev
-npm run dev:server
-npm run dev:client
+pnpm run dev
+pnpm run dev:server
+pnpm run dev:client
 ```
 
 ### Alchemy / Worker path
 
 `alchemy.run.ts` and `src/worker.ts` are still experimental. The Worker entry point can serve the API, but the built-in `local` and `docker` providers are intentionally stubbed there and will throw unless you configure a provider that works in that environment.
 
-Use `npm run dev` for the stable local development flow.
+Use `pnpm run dev` for the stable local development flow.
 
 ---
 
 ## Testing
 
 ```bash
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
 
 Tests create isolated Flamecast instances and exercise the API surface end-to-end.
@@ -323,16 +323,16 @@ Tests create isolated Flamecast instances and exercise the API surface end-to-en
 
 | Script | Description |
 |---|---|
-| `npm run dev` | API + Vite in parallel |
-| `npm run dev:server` | API only |
-| `npm run dev:client` | Vite only |
-| `npm test` | Integration tests |
-| `npm run check` | Lint + format + build + API coverage |
-| `npm run fmt` | ESLint fix + Prettier |
-| `npm run alchemy:dev` | Local dev via Alchemy |
-| `npm run alchemy:deploy` | Deploy via Alchemy |
-| `npm run alchemy:destroy` | Tear down Alchemy resources |
-| `npm run psql:generate` | Generate Drizzle migrations |
+| `pnpm run dev` | API + Vite in parallel |
+| `pnpm run dev:server` | API only |
+| `pnpm run dev:client` | Vite only |
+| `pnpm test` | Integration tests |
+| `pnpm run check` | Lint + format + build + API coverage |
+| `pnpm run fmt` | ESLint fix + Biome format |
+| `pnpm run alchemy:dev` | Local dev via Alchemy |
+| `pnpm run alchemy:deploy` | Deploy via Alchemy |
+| `pnpm run alchemy:destroy` | Tear down Alchemy resources |
+| `pnpm run psql:generate` | Generate Drizzle migrations |
 
 ---
 
