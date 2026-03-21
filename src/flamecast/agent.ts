@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as acp from "@agentclientprotocol/sdk";
+import * as net from "node:net";
 import { Readable, Writable } from "node:stream";
 
 interface AgentSession {
@@ -311,7 +312,6 @@ function connectStdio(): void {
 }
 
 async function listenTcp(port: number): Promise<void> {
-  const net = await import("node:net");
   const server = net.createServer((socket) => {
     socket.setNoDelay(true); // Disable Nagle — NDJSON needs immediate flush
     const input = new WritableStream<Uint8Array>({

@@ -1,6 +1,14 @@
+import * as docker from "alchemy/docker";
+import { createConnection } from "node:net";
+import type { AgentSpawn } from "../shared/connection.js";
+import { createDatabase } from "./db/client.js";
+import { Flamecast } from "./index.js";
+import { getBuiltinAgentPresets, type AgentRuntime } from "./presets.js";
 import type { FlamecastStateManager } from "./state-manager.js";
 import { MemoryFlamecastStateManager } from "./state-managers/memory/index.js";
-import { Flamecast } from "./index.js";
+import { createPsqlStateManager } from "./state-managers/psql/index.js";
+import { findFreePort, openLocalTransport, openTcpTransport } from "./transport.js";
+import type { AcpTransport } from "./transport.js";
 
 // ---------------------------------------------------------------------------
 // Config types
@@ -23,9 +31,9 @@ export type StateManagerConfig =
  */
 export type Provisioner = (
   connectionId: string,
-  spec: import("../shared/connection.js").AgentSpawn,
-  runtime: import("./presets.js").AgentRuntime,
-) => Promise<import("./transport.js").AcpTransport>;
+  spec: AgentSpawn,
+  runtime: AgentRuntime,
+) => Promise<AcpTransport>;
 
 export type FlamecastOptions = {
   stateManager?: StateManagerConfig; // default: { type: "pglite" }
@@ -41,11 +49,9 @@ export type FlamecastOptions = {
 
 async function resolveStateManager(config?: StateManagerConfig): Promise<FlamecastStateManager> {
   if (!config || (typeof config === "object" && "type" in config && config.type === "pglite")) {
-    const { createDatabase } = await import("./db/client.js");
     const { db } = await createDatabase(
       typeof config === "object" && "dataDir" in config ? { pgliteDataDir: config.dataDir } : {},
     );
-    const { createPsqlStateManager } = await import("./state-managers/psql/index.js");
     return createPsqlStateManager(db);
   }
   if (typeof config === "object" && "type" in config) {
@@ -53,10 +59,8 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
       case "memory":
         return new MemoryFlamecastStateManager();
       case "postgres": {
-        const { createDatabase } = await import("./db/client.js");
         process.env.FLAMECAST_POSTGRES_URL = config.url;
         const { db } = await createDatabase();
-        const { createPsqlStateManager } = await import("./state-managers/psql/index.js");
         return createPsqlStateManager(db);
       }
     }
@@ -69,21 +73,28 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 // Default provisioner — uses runtime from preset to decide local vs Docker
 // ---------------------------------------------------------------------------
 
+function getAlchemyProvider(runtimeType: string): typeof docker {
+  switch (runtimeType) {
+    case "docker":
+      return docker;
+    default:
+      throw new Error(
+        `Unsupported alchemy runtime type: ${JSON.stringify(runtimeType)}. Add a static import and case in getAlchemyProvider().`,
+      );
+  }
+}
+
 const defaultProvisioner: Provisioner = async (connectionId, spec, runtime) => {
   if (runtime.type === "local") {
-    const { openLocalTransport } = await import("./transport.js");
     return openLocalTransport(spec);
   }
 
-  // Non-local runtimes use alchemy/{type} provider
-  const provider = await import(`alchemy/${runtime.type}`);
-  const { findFreePort, openTcpTransport } = await import("./transport.js");
+  const provider = getAlchemyProvider(runtime.type);
   const port = await findFreePort();
 
   // Build image if dockerfile is provided
   if (runtime.image && runtime.dockerfile) {
     await provider.Image(`agent-image-${connectionId}`, {
-      adopt: true,
       name: runtime.image,
       tag: "latest",
       build: { context: ".", dockerfile: runtime.dockerfile },
@@ -106,7 +117,6 @@ const defaultProvisioner: Provisioner = async (connectionId, spec, runtime) => {
 
 /** Wait until the agent actually responds to an ACP initialize, not just port open. */
 async function waitForAcp(host: string, port: number, timeoutMs = 30_000): Promise<void> {
-  const { createConnection } = await import("node:net");
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -149,7 +159,6 @@ export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flam
 
   const provisioner: Provisioner = opts.provisioner ?? defaultProvisioner;
 
-  const { getBuiltinAgentPresets } = await import("./presets.js");
   const presets = getBuiltinAgentPresets();
 
   return new Flamecast({ stateManager, provisioner, presets });
