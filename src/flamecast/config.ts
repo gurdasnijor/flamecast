@@ -96,8 +96,24 @@ export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flam
 
   // Wrap in an Alchemy scope per connection so any resources created
   // inside (docker.Container, etc.) get lifecycle-managed automatically.
-  const provisioner: Provisioner = (connectionId, spec) =>
-    alchemy.run(`connection-${connectionId}`, async () => userProvisioner(connectionId, spec));
+  // transport.dispose() destroys the scope, cleaning up all resources.
+  const provisioner: Provisioner = async (connectionId, spec) => {
+    let scope: Awaited<ReturnType<typeof alchemy.run>> | undefined;
+    const transport = await alchemy.run(
+      `connection-${connectionId}`,
+      async (s: Awaited<ReturnType<typeof alchemy.run>>) => {
+        scope = s;
+        return userProvisioner(connectionId, spec);
+      },
+    );
+    return {
+      ...transport,
+      dispose: async () => {
+        await transport.dispose?.();
+        if (scope) await alchemy.destroy(scope);
+      },
+    };
+  };
 
   return new Flamecast({ stateManager, provisioner });
 }

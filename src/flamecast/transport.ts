@@ -1,6 +1,4 @@
 import { ChildProcess, spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { Writable, Readable } from "node:stream";
 import { createConnection } from "node:net";
 
@@ -29,6 +27,8 @@ function toUint8ReadableStream(
 export type AcpTransport = {
   input: WritableStream<Uint8Array>;
   output: ReadableStream<Uint8Array>;
+  /** Clean up the transport and any backing resources (process, container, scope). */
+  dispose?: () => Promise<void>;
 };
 
 const npxCmd = () => (process.platform === "win32" ? "npx.cmd" : "npx");
@@ -41,15 +41,12 @@ export type BuiltinAgentPreset = {
 
 /** Built-in presets; IDs are stable so clients can reference them. */
 export function getBuiltinAgentProcessPresets(): BuiltinAgentPreset[] {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const agentPath = join(__dirname, "agent.ts");
   const cmd = npxCmd();
   return [
     {
       id: "example",
       label: "Example agent (tsx)",
-      spawn: { command: cmd, args: ["tsx", agentPath] },
+      spawn: { command: cmd, args: ["tsx", "src/flamecast/agent.ts"] },
     },
     {
       id: "codex",

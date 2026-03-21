@@ -43,6 +43,7 @@ interface SessionTextChunkLogBuffer {
 interface ManagedConnection {
   id: string;
   sessionId: string;
+  transport: AcpTransport;
   runtime: {
     connection: acp.ClientSideConnection | null;
     sessionTextChunkLogBuffer: SessionTextChunkLogBuffer | null;
@@ -137,6 +138,7 @@ export class Flamecast {
     const managed: ManagedConnection = {
       id,
       sessionId: "",
+      transport,
       runtime: {
         connection: null,
         sessionTextChunkLogBuffer: null,
@@ -248,6 +250,7 @@ export class Flamecast {
       this.permissionResolvers.delete(meta.pendingPermission.requestId);
     }
     await this.flushSessionTextChunkLogBuffer(managed);
+    await managed.transport.dispose?.();
     await this.pushLog(managed, "killed", {});
     await this.stateManager.finalizeConnection(id, "killed");
     this.runtimes.delete(id);
