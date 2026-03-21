@@ -32,7 +32,7 @@ const DATABASE_URL = `postgres://flamecast:flamecast@localhost:5432/flamecast`;
 
 const agentContainer = await CfContainer<AgentContainer>("agent-container", {
   className: "AgentContainer",
-  image: "docker/example-agent.Dockerfile",
+  image: "flamecast/example-agent:latest",
 });
 
 // ---------------------------------------------------------------------------
