@@ -17,7 +17,7 @@ function createClient(flamecast: Flamecast) {
   const api = createApi(flamecast);
   const app = new Hono().route("/api", api);
   return hc<AppType>("http://localhost/api", {
-    fetch: (input, init) => app.fetch(new Request(input as string, init)),
+    fetch: (input, init) => app.fetch(new Request(String(input), init)),
   });
 }
 
