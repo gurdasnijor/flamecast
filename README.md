@@ -1,180 +1,297 @@
-# acp / Flamecast
+# Flamecast
 
-Local **Agent Client Protocol (ACP)** orchestrator: spawns agent processes, holds **ACP sessions** over NDJSON on stdio, exposes a **REST API**, and ships a small **React** UI to manage connections, send prompts, and resolve permission requests.
+Open-source **ACP (Agent Client Protocol)** orchestrator. Spawns and manages AI coding agents — locally or in Docker containers — via a REST API. Ships a React UI and deploys anywhere via [Alchemy](https://alchemy.run).
 
-For **planned** evolution (sandboxing, durable state via **state managers**, optional Convex), see [`SPEC.md`](SPEC.md).
+---
+
+## Quick start
+
+```bash
+npm install
+npm run dev          # API (port 3001) + Vite UI (port 3000)
+```
+
+Open **http://localhost:3000**. Click **Connect** on an agent to start a session.
 
 ---
 
 ## Stack
 
-| Layer               | Technology                                                                                                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Orchestration       | `Flamecast` + injected **`FlamecastStateManager`** (Drizzle/PGlite via `MemoryFlamecastStateManager` in tests if needed), `@agentclientprotocol/sdk`                            |
-| Agent I/O           | `child_process.spawn`, stdin/stdout as Web Streams (`src/flamecast/transport.ts`)                                                                                               |
-| API                 | [Hono](https://hono.dev/) on Node, `@hono/node-server`, port **3001**, mounted at `/api`                                                                                        |
-| Validation          | [Zod](https://zod.dev/) — shared request/response shapes in `src/shared/connection.ts`                                                                                          |
-| Client              | React 19, [Vite](https://vitejs.dev/) 8, [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query), [Tailwind](https://tailwindcss.com/) v4 |
-| Typesafe API client | `hono/client` — `src/client/lib/api.ts`                                                                                                                                         |
+| Layer | Technology |
+|---|---|
+| Orchestration | `Flamecast` class + pluggable provisioner + `FlamecastStateManager` |
+| Agent transport | Local: `child_process` + stdio. Docker: TCP + ndjson |
+| Infrastructure | [Alchemy](https://alchemy.run) — Docker containers, Cloudflare Workers, DB provisioning |
+| API | [Hono](https://hono.dev/) on Node (`@hono/node-server`), port 3001 |
+| Validation | [Zod](https://zod.dev/) — shared schemas in `src/shared/connection.ts` |
+| Client | React 19, Vite 8, TanStack Router + Query, Tailwind v4 |
+| Typesafe API | `hono/client` — `src/client/lib/api.ts` |
 
 ---
 
-## Server configuration
+## Architecture
 
-The API server reads **`config.yaml`** from the process working directory (repo root when you run `dev:server` / `dev` from there). Set **`ACP_CONFIG_PATH`** to use another file path (resolved relative to `cwd`).
+```
+┌─────────────────────────────────────────────────────┐
+│ Server (src/server/index.ts)                        │
+│   Node + Hono on port 3001                          │
+│   PGLite or Postgres for state                      │
+│   Alchemy initialized at startup for scope mgmt    │
+└─────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────┐
+│ Flamecast (src/flamecast/index.ts)                  │
+│   Pure orchestration — zero infra dependencies      │
+│   Calls provisioner(connectionId, spec, runtime)    │
+│   Gets back AcpTransport streams, speaks ACP        │
+└─────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────┐
+│ Provisioner (src/flamecast/config.ts)               │
+│   runtime.type === "local" → ChildProcess + stdio   │
+│   runtime.type === "docker" → alchemy/docker        │
+│     → docker.Image + docker.Container + TCP         │
+│   runtime.type === "{any}" → alchemy/{type}         │
+└─────────────────────────────────────────────────────┘
+```
 
-| Field          | Values             | Meaning                                                                                                                            |
-| -------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `stateManager` | `psql` _(default)_ | Drizzle + Postgres (`FLAMECAST_POSTGRES_URL`) or embedded PGLite if unset (see **`createDatabase`** in `src/server/db/client.ts`). |
-| `stateManager` | `memory`           | In-memory state only; connection metadata and logs are **not** persisted across restarts.                                          |
+### How it works
 
-If **`config.yaml` is missing**, the server behaves like **`stateManager: psql`** (unchanged from before this file existed).
+1. **Flamecast is pure orchestration.** The `Flamecast` class has zero infrastructure dependencies — no alchemy, no Docker, no Node-specific APIs. It takes a `provisioner` function and calls it.
+
+2. **The provisioner is a function:** `(connectionId, spec, runtime) => Promise<AcpTransport>`. It receives the agent's `runtime` config, creates the sandbox (process, container, etc.), and returns streams for ACP communication.
+
+3. **Non-local runtimes use Alchemy providers.** The provisioner dynamically imports `alchemy/${runtime.type}` — e.g. `alchemy/docker` for Docker containers. Alchemy handles resource lifecycle (create, update, delete) and state tracking automatically.
+
+4. **`alchemy.run.ts`** exists as an experimental control plane definition (DB + Worker + Vite via Alchemy resources) but is **unstable**. The working local dev path is `npm run dev` which uses `src/server/index.ts` directly.
+
+5. **`src/worker.ts`** is a Cloudflare Worker entry point for future deployment. Not production-ready yet.
+
+---
+
+## Agent configuration
+
+Each agent preset carries a `runtime` that tells Flamecast how to sandbox it:
+
+```typescript
+// src/flamecast/presets.ts
+{
+  id: "example",
+  label: "Example agent",
+  spawn: { command: "npx", args: ["tsx", "src/flamecast/agent.ts"] },
+  runtime: { type: "local" },
+}
+
+{
+  id: "example-docker",
+  label: "Example agent (Docker)",
+  spawn: { command: "npx", args: ["tsx", "agent.ts"] },
+  runtime: {
+    type: "docker",
+    image: "flamecast/example-agent",
+    dockerfile: "docker/example-agent.Dockerfile",
+  },
+}
+```
+
+### Runtime types
+
+| Type | What happens | Alchemy provider |
+|---|---|---|
+| `local` | `child_process.spawn` + stdio streams | None — no sandbox |
+| `docker` | Docker container + TCP transport | `alchemy/docker` |
+| `cloudflare` | Cloudflare Container (Durable Object) | `alchemy/cloudflare` (planned) |
+| `{any}` | Dynamically imports `alchemy/{type}` | Any alchemy provider |
+
+### How the provisioner works
+
+```
+POST /connections { agentProcessId: "example-docker" }
+  ↓
+Flamecast looks up preset → runtime: { type: "docker", image: "...", dockerfile: "..." }
+  ↓
+Provisioner called: (connectionId, spec, runtime)
+  ↓
+import("alchemy/docker") → docker.Image() + docker.Container()
+  ↓
+waitForAcp(host, port) — verifies agent responds to ACP initialize
+  ↓
+openTcpTransport(host, port) → returns { input, output } streams
+  ↓
+Flamecast speaks ACP over the streams — same as local, just different transport
+```
+
+### Adding a new runtime
+
+To support a new sandbox provider, add a preset with a matching alchemy provider. For example, running an agent on an EKS Kubernetes cluster via [alchemy/aws-control](https://alchemy.run/providers/aws-control/eks/cluster/):
+
+```typescript
+{
+  id: "my-agent-eks",
+  label: "My agent (EKS)",
+  spawn: { command: "my-agent", args: [] },
+  runtime: {
+    type: "aws-control",   // → import("alchemy/aws-control")
+    image: "my-agent:latest",
+    cluster: "my-eks-cluster",
+    // ...provider-specific config
+  },
+}
+```
+
+The provisioner will `import("alchemy/aws-control")` and use its resources to provision the agent sandbox. Zero Flamecast code changes — just a new preset and an alchemy provider.
 
 ---
 
 ## Repository layout
 
 ```
-config.yaml       # optional; chooses Flamecast state manager (memory vs psql)
+alchemy.run.ts              # Control plane: Postgres + Worker + Vite
+docker/
+  example-agent.Dockerfile  # Example ACP agent container
+  codex-agent.Dockerfile    # Codex ACP container
 src/
-  client/           # Vite app (port 3000); proxies /api → 3001
-    routes/         # TanStack file routes: /, /connections/$id
-    components/ui/  # shadcn-style primitives
-    lib/api.ts      # hc<AppType> client
   server/
-    index.ts        # Hono root, route("/api", api)
-    config.ts       # loadServerConfig(): config.yaml + zod
-    api.ts          # REST handlers → Flamecast
+    index.ts                # Node entry point
+  worker.ts                 # Cloudflare Worker entry point
   flamecast/
-    index.ts        # Flamecast — runtime handles + ACP client
-    state-manager.ts # FlamecastStateManager port (metadata + logs)
+    index.ts                # Flamecast class — pure orchestration
+    api.ts                  # Hono API routes
+    config.ts               # FlamecastOptions, createFlamecast(), default provisioner
+    presets.ts               # Agent presets with runtime config
+    transport.ts            # AcpTransport, openLocalTransport, openTcpTransport
+    agent.ts                # Example ACP agent (stdio + TCP modes)
+    state-manager.ts        # FlamecastStateManager interface
+    db/client.ts            # PGLite / Postgres connection
     state-managers/
-      memory/       # in-memory MemoryFlamecastStateManager
-      psql/         # schema, drizzle.config.ts, migrations/, createPsqlStateManager (Postgres or PGLite)
-    transport.ts    # spawn + stdio → streams; built-in agent presets
-    agent.ts        # example agent process (tsx) for local dev
-  server/db/
-    client.ts       # createDatabase(): Postgres URL or local PGLite + migrate
+      memory/               # In-memory state manager
+      psql/                 # Postgres state manager (PGLite or external)
+  client/                   # React UI
   shared/
-    connection.ts   # Zod schemas + TS types for API + Flamecast
+    connection.ts           # Zod schemas + types
+test/
+  flamecast.test.ts         # Orchestration tests (local + Docker)
+  api.test.ts               # HTTP API contract tests
 ```
 
 ---
 
-## Runtime architecture
+## Configuration
 
-```mermaid
-flowchart LR
-  subgraph browser["Browser :3000"]
-    UI["React + TanStack Query"]
-  end
-  subgraph node["Node :3001"]
-    API["Hono /api"]
-    FC["Flamecast"]
-    CP["ChildProcess + stdio"]
-  end
-  UI <-->|"HTTP /api/*"| API
-  API --> FC
-  FC <-->|"NDJSON ACP"| CP
+No `config.yaml` — configuration is TypeScript via `FlamecastOptions`:
+
+```typescript
+import { createFlamecast } from "./flamecast/config.js";
+
+const flamecast = await createFlamecast({
+  stateManager: { type: "pglite" },    // or "memory", "postgres"
+  // provisioner is optional — defaults to local + Docker routing
+});
 ```
 
-- **Single process** owns all **live** subprocesses: one `Flamecast` instance in `api.ts`. No horizontal scaling. With **`stateManager: psql`**, metadata and logs survive restart on disk; **live** ACP sessions do not.
-- **Agent** is always a **local subprocess** today; Flamecast does not provision containers (see `SPEC.md` Phase 1).
+### State manager options
 
----
+| Type | Description |
+|---|---|
+| `pglite` (default) | Embedded Postgres on disk (`.acp/pglite`) |
+| `memory` | In-process, lost on restart |
+| `postgres` | External Postgres via `{ url }` |
 
-## Flamecast (orchestrator)
+### Environment variables
 
-`Flamecast` (`src/flamecast/index.ts`) is the **runtime authority** for:
-
-| Concern          | Implementation                                                                                                                                                   |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live runtimes    | `Map<id, ManagedConnection>` — **only** `ClientSideConnection`, `ChildProcess`, stream buffer (not logs)                                                         |
-| Connection IDs   | **UUID** strings (`stateManager.allocateConnectionId`)                                                                                                           |
-| Durable snapshot | **`FlamecastStateManager`** — `connections` row + append-only `connection_logs`; source of truth for persisted metadata and logs                                 |
-| Serializable API | `ConnectionInfo`: label, spawn spec, `sessionId`, timestamps, `logs[]` from DB, `pendingPermission` from DB row                                                  |
-| ACP session      | `ClientSideConnection` over `acp.ndJsonStream(stdin, stdout)`                                                                                                    |
-| OS process       | `ChildProcess` from `startAgentProcess` — killed on `DELETE /connections/:id`                                                                                    |
-| Permissions      | Pending request + resolver `Map` in-process; **durable** `pending_permission` on the connection row until **`POST /api/connections/:id/permissions/:requestId`** |
-
-**`ManagedConnection`** pairs:
-
-- **`id` / `sessionId`** — copied for hot paths; session id is kept in sync with the DB after `session/new`.
-- **`runtime`** — `ClientSideConnection | null`, `ChildProcess`, coalesce buffer (not sent to clients).
-
-**Client role (ACP “client” side):** Flamecast implements `acp.Client`: session updates and tool notifications become **log rows** in the state manager; `readTextFile` / `writeTextFile` are stubbed (log + empty response). **`requestPermission`** resolves the ACP JSON-RPC response when the **web UI** (or any client) calls **`POST /api/connections/:id/permissions/:requestId`**.
-
-**Logging:** `pushLog` is async and appends to the state manager (`connection_logs`). **RPC tracing** uses `type: "rpc"` with the same `data` shape as before (`method`, `direction`, `phase`, optional `payload`).
-
-**Database:** `createDatabase()` (`src/server/db/client.ts`) uses **Postgres** when **`FLAMECAST_POSTGRES_URL`** is set; otherwise it logs a short warning and uses **PGLite** under `.acp/pglite` (`ACP_PGLITE_DIR`). Schema lives in `src/flamecast/state-managers/psql/schema.ts`; Drizzle Kit writes SQL to `src/flamecast/state-managers/psql/migrations/`. Run `bun run psql:generate` after schema edits and commit migrations (`drizzle.config.ts` lives next to the schema under `src/flamecast/state-managers/psql/`).
-
-If you previously used the inlined DDL-only setup, remove `.acp/pglite` once so the migrator can create tables cleanly.
-
-**Stream coalescing (logs only):** consecutive agent→client `session/update` notifications with `sessionUpdate` `agent_message_chunk`, `user_message_chunk`, or `agent_thought_chunk` and **text** `content` are merged into a **single** `rpc` row (same shape as one notification, with concatenated `content.text`) until the stream breaks: different `sessionId`, different chunk kind, different optional `messageId`, any non–text chunk, any other `session/update` variant (e.g. `tool_call`), when a `session/prompt` turn finishes (success or throw), or when the connection is killed. The live ACP stream is unchanged. A rare `rpc_coalesce_error` row records join failures and falls back to per-fragment `rpc` rows.
-
----
-
-## Agent processes and transport
-
-- **`registerAgentProcess` / built-in presets** — Stored in `agentProcesses` `Map` (UUID for user-registered; built-ins use stable ids from `getBuiltinAgentProcessPresets()` in `transport.ts`, e.g. example `tsx` agent path, Codex ACP via `npx`).
-- **`create`** — Requires exactly one of `agentProcessId` (preset) or inline `spawn` + optional `label`; optional `cwd` for `newSession` (defaults `process.cwd()`).
-- **Streams** — `getAgentProcess` wires `WritableStream` → stdin, stdout → `ReadableStream<Uint8Array>` for the SDK.
+| Variable | Purpose |
+|---|---|
+| `FLAMECAST_POSTGRES_URL` | External Postgres connection string |
+| `ACP_PGLITE_DIR` | Override PGLite data directory |
 
 ---
 
 ## HTTP API
 
-Base URL in dev: `http://localhost:3001/api` (browser uses `http://localhost:3000/api` via Vite proxy).
+Base URL: `http://localhost:3001/api`
 
-| Method   | Path                                      | Body                                         | Description                                                            |
-| -------- | ----------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
-| `GET`    | `/agent-processes`                        | —                                            | List registerable agent definitions (built-ins + user-registered).     |
-| `POST`   | `/agent-processes`                        | `RegisterAgentProcessBody`                   | Register `{ label, spawn }`; returns `AgentProcessInfo` with new `id`. |
-| `GET`    | `/connections`                            | —                                            | List all connections (snapshots).                                      |
-| `POST`   | `/connections`                            | `CreateConnectionBody`                       | Spawn agent, `initialize`, `newSession`; `201` + `ConnectionInfo`.     |
-| `GET`    | `/connections/:id`                        | —                                            | Snapshot for one connection; `404` if unknown.                         |
-| `POST`   | `/connections/:id/prompt`                 | `{ text }`                                   | Run ACP `prompt`; returns prompt result (e.g. `stopReason`).           |
-| `POST`   | `/connections/:id/permissions/:requestId` | `{ optionId }` or `{ outcome: "cancelled" }` | Resolve pending permission.                                            |
-| `DELETE` | `/connections/:id`                        | —                                            | Kill process, remove connection.                                       |
-
-Schemas and TypeScript types: **`src/shared/connection.ts`**.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check — returns `{ status, connections }` |
+| `GET` | `/agent-processes` | List agent presets |
+| `POST` | `/agent-processes` | Register a custom agent |
+| `GET` | `/connections` | List active connections |
+| `POST` | `/connections` | Create connection (spawn agent) |
+| `GET` | `/connections/:id` | Get connection details + logs |
+| `POST` | `/connections/:id/prompt` | Send prompt to agent |
+| `POST` | `/connections/:id/permissions/:requestId` | Resolve permission request |
+| `DELETE` | `/connections/:id` | Kill connection |
 
 ---
 
-## Web client
+## Deployment
 
-- **Routes:** `/` — list connections, create flow; `/connections/$id` — detail, prompt input, permission card, log scroll area.
-- **Data loading:** React Query `fetchConnection` / list endpoints; connection detail uses **`refetchInterval: 1000`** so logs and permission state update without push.
-- **API helper:** `hc<AppType>("/api")` keeps client aligned with `src/server/api.ts` exports.
+### Local dev (Node)
+
+```bash
+npm run dev          # API + Vite UI
+npm run dev:server   # API only
+npm run dev:client   # Vite only
+```
+
+### Alchemy (Cloudflare + Docker) — unstable
+
+> **Note:** Alchemy deployment and dev mode are still unstable. The Worker bundling, miniflare Container emulation, and Cloudflare Container provisioner are work-in-progress. Use `npm run dev` (Node) for reliable local development.
+
+```bash
+npm run alchemy:dev      # Local: miniflare + Docker Postgres + Vite
+npm run alchemy:deploy   # Deploy to Cloudflare
+npm run alchemy:destroy  # Tear down
+```
+
+`alchemy.run.ts` declares the control plane:
+- **Postgres** in Docker (state manager)
+- **Worker** on Cloudflare (API server)
+- **Vite** (frontend)
+
+---
+
+## Testing
+
+```bash
+npm test    # Integration tests (vitest)
+```
+
+Tests use `alchemy.test()` for isolated scopes with automatic cleanup. Each test creates its own Flamecast instance.
 
 ---
 
 ## Scripts
 
-```bash
-npm install
-npm run dev          # API (tsx watch) + Vite in parallel
-# or separately:
-npm run dev:server   # API only :3001
-npm run dev:client   # Vite only :3000
-```
-
-Open **http://localhost:3000**. Ensure agent binaries (e.g. `npx`, `tsx`) are available if you use presets that need them.
-
-Other scripts: `npm run build`, `npm start` (production build entry — verify `dist` layout for your deploy target), `npm run lint`, `npm run format`.
+| Script | Description |
+|---|---|
+| `npm run dev` | API + Vite in parallel |
+| `npm run dev:server` | API only (port 3001) |
+| `npm run dev:client` | Vite only (port 3000) |
+| `npm test` | Integration tests |
+| `npm run lint` | ESLint |
+| `npm run fmt` | ESLint fix + Prettier |
+| `npm run alchemy:dev` | Local dev via alchemy |
+| `npm run alchemy:deploy` | Deploy to Cloudflare |
+| `npm run psql:generate` | Generate Drizzle migrations |
 
 ---
 
-## Current limitations (by design)
+## Current limitations
 
-- **`stateManager: memory`** — restart clears connections and logs; with **`stateManager: psql`**, metadata and logs persist in PGLite/Postgres.
 - **No auth** — local dev assumption; do not expose raw to the internet.
-- **Single host** — one Node process; no sticky sessions or distributed Flamecast.
-- **Push updates** — UI relies on polling, not SSE/WebSocket (see `SPEC.md` if that changes).
+- **Single host** — one Node process; no distributed Flamecast.
+- **Polling** — UI uses 1s polling, not SSE/WebSocket.
+- **Worker provisioning** — Worker can't spawn local processes; needs Cloudflare Containers (follow-up).
+- **Serverless reconnection** — `SandboxHandle` not yet persisted for reconnect across restarts.
 
 ---
 
-## Related documentation
+## Related docs
 
-- **[`SPEC.md`](SPEC.md)** — phased roadmap (sandbox orchestration, state manager port, optional Convex).
-- **ACP** — protocol and behavior via `@agentclientprotocol/sdk`.
+- **[`PRD.md`](PRD.md)** — product requirements
+- **[`SPEC.md`](SPEC.md)** — architecture spec
+- **ACP** — protocol via `@agentclientprotocol/sdk`
+- **[Alchemy](https://alchemy.run)** — infrastructure-as-code for provisioning
