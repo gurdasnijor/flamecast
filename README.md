@@ -233,7 +233,9 @@ npm run dev:server   # API only
 npm run dev:client   # Vite only
 ```
 
-### Alchemy (Cloudflare + Docker)
+### Alchemy (Cloudflare + Docker) — unstable
+
+> **Note:** Alchemy deployment and dev mode are still unstable. The Worker bundling, miniflare Container emulation, and Cloudflare Container provisioner are work-in-progress. Use `npm run dev` (Node) for reliable local development.
 
 ```bash
 npm run alchemy:dev      # Local: miniflare + Docker Postgres + Vite
