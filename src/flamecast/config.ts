@@ -69,10 +69,6 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 // ---------------------------------------------------------------------------
 
 const DOCKER_AGENTS: Record<string, { image: string; dockerfile: string }> = {
-  "agent.ts": {
-    image: "flamecast/example-agent",
-    dockerfile: "docker/example-agent.Dockerfile",
-  },
   "codex-acp": {
     image: "flamecast/codex-agent",
     dockerfile: "docker/codex-agent.Dockerfile",
@@ -123,10 +119,14 @@ export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flam
   if (opts.provisioner) {
     provisioner = opts.provisioner;
   } else {
-    // Default provisioner uses alchemy/docker — init alchemy for scope management
+    // Default provisioner uses alchemy/docker — init alchemy and wrap in scopes
     const alchemy = (await import("alchemy")).default;
     await alchemy("flamecast", { phase: "up", stage: opts.stage, quiet: true });
-    provisioner = defaultProvisioner;
+    provisioner = async (connectionId, spec) => {
+      return alchemy.run(`connection-${connectionId}`, async () => {
+        return defaultProvisioner(connectionId, spec);
+      });
+    };
   }
 
   const { getBuiltinAgentPresets } = await import("./presets.js");
