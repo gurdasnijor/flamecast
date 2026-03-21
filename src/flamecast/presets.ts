@@ -34,10 +34,10 @@ export function getBuiltinAgentPresets(): AgentPreset[] {
     },
     {
       id: "example-docker",
-      label: "Example agent (Docker)",
+      label: "Example agent (Uses stock docker containers)",
       spawn: { command: "npx", args: ["tsx", "agent.ts"] },
       runtime: {
-        type: "docker",
+        type: "docker", // https://alchemy.run/providers/docker/container/
         image: "flamecast/example-agent",
         dockerfile: "docker/example-agent.Dockerfile",
       },
