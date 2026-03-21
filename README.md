@@ -125,22 +125,23 @@ Flamecast speaks ACP over the streams — same as local, just different transpor
 
 ### Adding a new runtime
 
-To support a new sandbox provider (e.g. Fly.io), add a preset:
+To support a new sandbox provider, add a preset with a matching alchemy provider. For example, running an agent on an EKS Kubernetes cluster via [alchemy/aws-control](https://alchemy.run/providers/aws-control/eks/cluster/):
 
 ```typescript
 {
-  id: "my-agent-fly",
-  label: "My agent (Fly)",
+  id: "my-agent-eks",
+  label: "My agent (EKS)",
   spawn: { command: "my-agent", args: [] },
   runtime: {
-    type: "fly",           // → import("alchemy/fly")
+    type: "aws-control",   // → import("alchemy/aws-control")
     image: "my-agent:latest",
+    cluster: "my-eks-cluster",
     // ...provider-specific config
   },
 }
 ```
 
-The provisioner will `import("alchemy/fly")` and call `provider.Container(...)`. Zero Flamecast code changes — just a new preset and an alchemy provider.
+The provisioner will `import("alchemy/aws-control")` and use its resources to provision the agent sandbox. Zero Flamecast code changes — just a new preset and an alchemy provider.
 
 ---
 
