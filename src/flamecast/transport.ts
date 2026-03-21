@@ -45,13 +45,18 @@ export function getBuiltinAgentProcessPresets(): BuiltinAgentPreset[] {
   return [
     {
       id: "example",
-      label: "Example agent (tsx)",
+      label: "Example agent",
       spawn: { command: cmd, args: ["tsx", "src/flamecast/agent.ts"] },
     },
     {
       id: "codex",
       label: "Codex ACP",
       spawn: { command: cmd, args: ["@zed-industries/codex-acp"] },
+    },
+    {
+      id: "codex-docker",
+      label: "Codex ACP (Docker)",
+      spawn: { command: "codex-acp", args: [] },
     },
   ];
 }
