@@ -30,9 +30,16 @@ const DATABASE_URL = `postgres://flamecast:flamecast@localhost:5432/flamecast`;
 // Agent container — Cloudflare Container (uses local Docker in dev)
 // ---------------------------------------------------------------------------
 
+const agentImage = await docker.Image("agent-image", {
+  name: "flamecast/example-agent",
+  tag: app.stage,
+  build: { context: ".", dockerfile: "docker/example-agent.Dockerfile" },
+  skipPush: true,
+});
+
 const agentContainer = await CfContainer<AgentContainer>("agent-container", {
   className: "AgentContainer",
-  image: "flamecast/example-agent:latest",
+  image: `flamecast/example-agent:${app.stage}`,
 });
 
 // ---------------------------------------------------------------------------
