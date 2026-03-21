@@ -42,6 +42,7 @@ export const server = await Worker("flamecast-api", {
   },
   bundle: {
     conditions: ["node"],
+    supported: { "top-level-await": true },
   },
 });
 
