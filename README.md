@@ -31,40 +31,114 @@ Open **http://localhost:3000**. Click **Connect** on an agent to start a session
 
 ## Architecture
 
+Flamecast separates **control plane** (where the server and database run) from **data plane** (where agents run). Both are managed by [Alchemy](https://alchemy.run) — an infrastructure-as-code library that provisions resources declaratively.
+
 ```
 ┌─────────────────────────────────────────────────────┐
-│ alchemy.run.ts (control plane — deploy time)        │
-│   Postgres (Docker) + Worker + Vite                 │
+│ Control plane (alchemy.run.ts — deploy time)        │
+│   Database + API server + Frontend                  │
+│   Provisioned by Alchemy. DB, server, and frontend  │
+│   are swappable resources — PGLite, Postgres,       │
+│   Docker, Cloudflare Worker, etc.                   │
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐
-│ Flamecast (data plane — request time)               │
-│   Provisioner → local ChildProcess or Docker container │
-│   ACP sessions over ndjson (stdio or TCP)           │
+│ Data plane (provisioner — request time)             │
+│   Per-connection agent sandboxes                    │
+│   Each agent preset has a runtime config that       │
+│   determines its sandbox: local process, Docker     │
+│   container, or any alchemy provider.               │
+│                                                     │
+│   Provisioner dynamically imports alchemy/{type}    │
+│   to create the sandbox. Flamecast just gets back   │
+│   an AcpTransport (streams) and speaks ACP over it. │
 └─────────────────────────────────────────────────────┘
 ```
 
-**Flamecast is pure orchestration** — zero infrastructure dependencies. It takes a provisioner function and calls it. The provisioner decides whether to spawn a local process or create a Docker container.
+### How it works
 
-**Two entry points:**
-- `src/server/index.ts` — Node (local dev, `npm run dev`)
-- `src/worker.ts` — Cloudflare Worker (`alchemy deploy`)
+1. **Flamecast is pure orchestration.** The `Flamecast` class has zero infrastructure dependencies — no alchemy, no Docker, no Node-specific APIs. It takes a `provisioner` function and calls it.
 
-Both use the same Flamecast class and API routes.
+2. **The provisioner is a function:** `(connectionId, spec, runtime) => Promise<AcpTransport>`. It receives the agent's `runtime` config, creates the sandbox (process, container, etc.), and returns streams for ACP communication.
+
+3. **Non-local runtimes use Alchemy providers.** The provisioner dynamically imports `alchemy/${runtime.type}` — e.g. `alchemy/docker` for Docker containers. Alchemy handles resource lifecycle (create, update, delete) and state tracking automatically.
+
+4. **Two entry points** share the same Flamecast class and API routes:
+   - `src/server/index.ts` — Node (local dev via `npm run dev`)
+   - `src/worker.ts` — Cloudflare Worker (deploy via `alchemy deploy`)
 
 ---
 
-## Agent presets and runtimes
+## Agent configuration
 
-Each agent preset has a `runtime` that determines how it runs:
+Each agent preset carries a `runtime` that tells Flamecast how to sandbox it:
 
-| Preset | Runtime | How it works |
+```typescript
+// src/flamecast/presets.ts
+{
+  id: "example",
+  label: "Example agent",
+  spawn: { command: "npx", args: ["tsx", "src/flamecast/agent.ts"] },
+  runtime: { type: "local" },
+}
+
+{
+  id: "example-docker",
+  label: "Example agent (Docker)",
+  spawn: { command: "npx", args: ["tsx", "agent.ts"] },
+  runtime: {
+    type: "docker",
+    image: "flamecast/example-agent",
+    dockerfile: "docker/example-agent.Dockerfile",
+  },
+}
+```
+
+### Runtime types
+
+| Type | What happens | Alchemy provider |
 |---|---|---|
-| Example agent | `{ type: "local" }` | `child_process.spawn` + stdio |
-| Codex ACP | `{ type: "local" }` | `npx @zed-industries/codex-acp` |
-| Example agent (Docker) | `{ type: "docker", image, dockerfile }` | Docker container + TCP transport |
+| `local` | `child_process.spawn` + stdio streams | None — no sandbox |
+| `docker` | Docker container + TCP transport | `alchemy/docker` |
+| `cloudflare` | Cloudflare Container (Durable Object) | `alchemy/cloudflare` (planned) |
+| `{any}` | Dynamically imports `alchemy/{type}` | Any alchemy provider |
 
-The provisioner dynamically imports `alchemy/${runtime.type}` for non-local runtimes. Adding a new provider (Cloudflare Containers, ECS, Fly) requires zero Flamecast code changes — just a new preset with a matching `runtime.type`.
+### How the provisioner works
+
+```
+POST /connections { agentProcessId: "example-docker" }
+  ↓
+Flamecast looks up preset → runtime: { type: "docker", image: "...", dockerfile: "..." }
+  ↓
+Provisioner called: (connectionId, spec, runtime)
+  ↓
+import("alchemy/docker") → docker.Image() + docker.Container()
+  ↓
+waitForAcp(host, port) — verifies agent responds to ACP initialize
+  ↓
+openTcpTransport(host, port) → returns { input, output } streams
+  ↓
+Flamecast speaks ACP over the streams — same as local, just different transport
+```
+
+### Adding a new runtime
+
+To support a new sandbox provider (e.g. Fly.io), add a preset:
+
+```typescript
+{
+  id: "my-agent-fly",
+  label: "My agent (Fly)",
+  spawn: { command: "my-agent", args: [] },
+  runtime: {
+    type: "fly",           // → import("alchemy/fly")
+    image: "my-agent:latest",
+    // ...provider-specific config
+  },
+}
+```
+
+The provisioner will `import("alchemy/fly")` and call `provider.Container(...)`. Zero Flamecast code changes — just a new preset and an alchemy provider.
 
 ---
 
