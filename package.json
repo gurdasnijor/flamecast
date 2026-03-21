@@ -60,6 +60,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.30.0",
     "@eslint/js": "^10.0.1",
     "@tanstack/router-devtools": "^1.166.9",
     "@tanstack/router-plugin": "^1.166.14",
