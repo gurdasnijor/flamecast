@@ -8,7 +8,6 @@ RUN npm install -g @zed-industries/codex-acp
 COPY docker/tcp-bridge.sh /usr/local/bin/tcp-bridge
 RUN chmod +x /usr/local/bin/tcp-bridge
 
-ENV HOME=/app
 EXPOSE 9100
 
-CMD ["tcp-bridge", "codex-acp"]
+CMD ["sh", "-c", "rm -rf /root/.codex/skills && exec tcp-bridge codex-acp"]
