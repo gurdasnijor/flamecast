@@ -11,6 +11,7 @@ const db = await PGLite("flamecast-db");
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
   entrypoint: "./src/worker.ts",
+  compatibilityFlags: ["nodejs_compat"],
   bindings: {
     DATABASE_URL: db.connectionString,
   },
