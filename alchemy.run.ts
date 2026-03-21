@@ -39,9 +39,6 @@ export const server = await Worker("flamecast-api", {
   dev: {
     port: 3001,
   },
-  bundle: {
-    external: ["npm-run-path", "unicorn-magic", "execa"],
-  },
 });
 
 // ---------------------------------------------------------------------------
