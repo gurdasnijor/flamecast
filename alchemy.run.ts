@@ -1,19 +1,38 @@
 import alchemy from "alchemy";
-import { Worker } from "alchemy/cloudflare";
-import { PGLite } from "./src/flamecast/resources/pglite.js";
+import { Worker, Vite } from "alchemy/cloudflare";
+import * as docker from "alchemy/docker";
 
 const app = await alchemy("flamecast-infra");
 
-// Database
-const db = await PGLite("flamecast-db");
+// ---------------------------------------------------------------------------
+// Database — Postgres in Docker
+// ---------------------------------------------------------------------------
 
-// Server
+const db = await docker.Container("flamecast-db", {
+  image: "postgres:16",
+  name: `flamecast-db-${app.stage}`,
+  environment: {
+    POSTGRES_USER: "flamecast",
+    POSTGRES_PASSWORD: "flamecast",
+    POSTGRES_DB: "flamecast",
+  },
+  ports: [{ external: 5432, internal: 5432 }],
+  restart: "unless-stopped",
+  start: true,
+});
+
+const DATABASE_URL = `postgres://flamecast:flamecast@localhost:5432/flamecast`;
+
+// ---------------------------------------------------------------------------
+// API server
+// ---------------------------------------------------------------------------
+
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
   entrypoint: "./src/worker.ts",
   compatibilityFlags: ["nodejs_compat"],
   bindings: {
-    DATABASE_URL: db.connectionString,
+    DATABASE_URL,
   },
   url: true,
   dev: {
@@ -21,7 +40,18 @@ export const server = await Worker("flamecast-api", {
   },
 });
 
-console.log(`Flamecast API: ${server.url}`);
+// ---------------------------------------------------------------------------
+// Frontend
+// ---------------------------------------------------------------------------
+
+export const client = await Vite("flamecast-client", {
+  name: `flamecast-client-${app.stage}`,
+  bindings: {
+    VITE_API_URL: Worker.DevUrl,
+  },
+});
+
+console.log(`API: ${server.url}`);
 
 await app.finalize();
 
