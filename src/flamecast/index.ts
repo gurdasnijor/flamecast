@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import * as acp from "@agentclientprotocol/sdk";
-import alchemy, { type Scope } from "alchemy";
 import type {
   AgentProcessInfo,
   AgentSpawn,
@@ -44,7 +43,6 @@ interface SessionTextChunkLogBuffer {
 interface ManagedConnection {
   id: string;
   sessionId: string;
-  scope: Scope;
   runtime: {
     connection: acp.ClientSideConnection | null;
     sessionTextChunkLogBuffer: SessionTextChunkLogBuffer | null;
@@ -54,8 +52,6 @@ interface ManagedConnection {
 export type FlamecastConstructorOptions = {
   stateManager: FlamecastStateManager;
   provisioner: Provisioner;
-  /** Alchemy scope for per-connection lifecycle management. */
-  alchemyScope: Scope;
 };
 
 // ---------------------------------------------------------------------------
@@ -68,12 +64,10 @@ export class Flamecast {
   private agentProcesses = new Map<string, { label: string; spawn: AgentSpawn }>();
   private readonly stateManager: FlamecastStateManager;
   private readonly provisioner: Provisioner;
-  private readonly alchemyScope: Scope;
 
   constructor(opts: FlamecastConstructorOptions) {
     this.stateManager = opts.stateManager;
     this.provisioner = opts.provisioner;
-    this.alchemyScope = opts.alchemyScope;
     for (const preset of getBuiltinAgentProcessPresets()) {
       this.agentProcesses.set(preset.id, {
         label: preset.label,
@@ -137,20 +131,12 @@ export class Flamecast {
       pendingPermission: null,
     });
 
-    let scope!: Scope;
-    const transport = await this.alchemyScope.run(async () => {
-      return alchemy.run(`connection-${id}`, async (s) => {
-        scope = s;
-        return this.provisioner(id, spawn);
-      });
-    });
-
+    const transport = await this.provisioner(id, spawn);
     const stream = acp.ndJsonStream(transport.input, transport.output);
 
     const managed: ManagedConnection = {
       id,
       sessionId: "",
-      scope,
       runtime: {
         connection: null,
         sessionTextChunkLogBuffer: null,
@@ -262,7 +248,6 @@ export class Flamecast {
       this.permissionResolvers.delete(meta.pendingPermission.requestId);
     }
     await this.flushSessionTextChunkLogBuffer(managed);
-    await this.alchemyScope.run(() => alchemy.destroy(managed.scope));
     await this.pushLog(managed, "killed", {});
     await this.stateManager.finalizeConnection(id, "killed");
     this.runtimes.delete(id);

@@ -75,20 +75,29 @@ async function resolveStateManager(config?: StateManagerConfig): Promise<Flameca
 
 /**
  * Create a Flamecast instance from config options.
- * Resolves state manager, initializes Alchemy.
+ * Resolves state manager, initializes Alchemy, wraps provisioner in scopes.
+ *
+ * Alchemy scope management is handled HERE — not inside Flamecast.
+ * The provisioner passed to Flamecast is already wrapped with scope lifecycle.
+ * Flamecast just calls provisioner(id, spec) and gets a transport.
  */
 export async function createFlamecast(opts: FlamecastOptions = {}): Promise<Flamecast> {
   const stateManager = await resolveStateManager(opts.stateManager);
 
-  const scope = await alchemy("flamecast", { phase: "up", stage: opts.stage, quiet: true });
+  await alchemy("flamecast", { phase: "up", stage: opts.stage, quiet: true });
 
-  // Default provisioner: local ChildProcess via stdio
-  const provisioner: Provisioner =
+  // The user's provisioner (or default local ChildProcess)
+  const userProvisioner: Provisioner =
     opts.provisioner ??
     (async (_connectionId, spec) => {
       const { openLocalTransport } = await import("./transport.js");
       return openLocalTransport(spec);
     });
 
-  return new Flamecast({ stateManager, provisioner, alchemyScope: scope });
+  // Wrap in an Alchemy scope per connection so any resources created
+  // inside (docker.Container, etc.) get lifecycle-managed automatically.
+  const provisioner: Provisioner = (connectionId, spec) =>
+    alchemy.run(`connection-${connectionId}`, async () => userProvisioner(connectionId, spec));
+
+  return new Flamecast({ stateManager, provisioner });
 }
