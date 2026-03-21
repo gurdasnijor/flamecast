@@ -2,11 +2,22 @@ import { Hono } from "hono";
 import { createFlamecast } from "./flamecast/config.js";
 import { createApi } from "./flamecast/api.js";
 
-const flamecast = await createFlamecast({
-  stateManager: { type: "memory" },
-});
+let app: Hono | null = null;
 
-const app = new Hono();
-app.route("/api", createApi(flamecast));
+async function getApp() {
+  if (!app) {
+    const flamecast = await createFlamecast({
+      stateManager: { type: "memory" },
+    });
+    app = new Hono();
+    app.route("/api", createApi(flamecast));
+  }
+  return app;
+}
 
-export default app;
+export default {
+  async fetch(request: Request) {
+    const handler = await getApp();
+    return handler.fetch(request);
+  },
+};
