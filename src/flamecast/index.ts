@@ -15,15 +15,13 @@ import type { FlamecastStateManager } from "./state-manager.js";
 import type { AcpTransport, BuiltinAgentPreset } from "./transport.js";
 import type { Provisioner } from "./config.js";
 
-// Re-exports for consumers
+// Type re-exports (safe for Worker bundling — no runtime deps)
 export type { AgentProcessInfo, ConnectionInfo, PendingPermission } from "../shared/connection.js";
 export type { ConnectionMeta, FlamecastStateManager } from "./state-manager.js";
-export { MemoryFlamecastStateManager } from "./state-managers/memory/index.js";
-export { createPsqlStateManager } from "./state-managers/psql/index.js";
 export type { PsqlAppDb } from "./state-managers/psql/types.js";
-export { createFlamecast } from "./config.js";
 export type { FlamecastOptions, StateManagerConfig, Provisioner } from "./config.js";
-export { createApi, type AppType } from "./api.js";
+export type { AppType } from "./api.js";
+export type { AcpTransport, BuiltinAgentPreset } from "./transport.js";
 
 // ---------------------------------------------------------------------------
 // Internal types

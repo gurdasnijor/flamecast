@@ -1,9 +1,7 @@
-import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import { Flamecast } from "./flamecast/index.js";
 import { createApi } from "./flamecast/api.js";
 import { MemoryFlamecastStateManager } from "./flamecast/state-managers/memory/index.js";
-import type { server } from "../alchemy.run";
 
 const flamecast = new Flamecast({
   stateManager: new MemoryFlamecastStateManager(),
