@@ -102,7 +102,11 @@ function SessionDetailPage() {
       markdownSegments.filter(
         (segment) =>
           segment.kind === "tool" &&
-          !shouldHidePendingToolCall(segment.toolCallId, segment.status, session?.pendingPermission),
+          !shouldHidePendingToolCall(
+            segment.toolCallId,
+            segment.status,
+            session?.pendingPermission,
+          ),
       ),
     [markdownSegments, session?.pendingPermission],
   );
@@ -112,7 +116,7 @@ function SessionDetailPage() {
   );
   const latestVisibleToolCallId = session?.pendingPermission
     ? null
-    : renderableToolSegments.at(-1)?.toolCallId ?? null;
+    : (renderableToolSegments.at(-1)?.toolCallId ?? null);
 
   useEffect(() => {
     setExpandedPaths((current) => (current.size > 0 ? current : getInitialExpandedPaths(fileTree)));
@@ -263,10 +267,18 @@ function SessionDetailPage() {
                       );
                     }
                     if (seg.kind === "tool") {
-                      if (shouldHidePendingToolCall(seg.toolCallId, seg.status, session.pendingPermission)) {
+                      if (
+                        shouldHidePendingToolCall(
+                          seg.toolCallId,
+                          seg.status,
+                          session.pendingPermission,
+                        )
+                      ) {
                         return null;
                       }
-                      const isHistoricalToolCall = latestVisibleToolCallId == null || seg.toolCallId !== latestVisibleToolCallId;
+                      const isHistoricalToolCall =
+                        latestVisibleToolCallId == null ||
+                        seg.toolCallId !== latestVisibleToolCallId;
                       const isExpanded = isHistoricalToolCall
                         ? expandedHistoricalToolCallIds.has(seg.toolCallId)
                         : !collapsedCurrentToolCallIds.has(seg.toolCallId);
@@ -540,7 +552,10 @@ function ToolCallCard({
   const hasDiffs = diffs.length > 0;
 
   return (
-    <Collapsible open={hasDiffs ? expanded : true} onOpenChange={hasDiffs ? onExpandedChange : undefined}>
+    <Collapsible
+      open={hasDiffs ? expanded : true}
+      onOpenChange={hasDiffs ? onExpandedChange : undefined}
+    >
       <Card className="border-border/70 bg-muted/20">
         <CardHeader className="gap-2 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -554,9 +569,7 @@ function ToolCallCard({
             </div>
             <div className="flex items-center gap-2">
               {status ? (
-                <Badge variant={status === "completed" ? "default" : "outline"}>
-                  {status}
-                </Badge>
+                <Badge variant={status === "completed" ? "default" : "outline"}>{status}</Badge>
               ) : null}
               {hasDiffs ? (
                 <CollapsibleTrigger asChild>
@@ -787,7 +800,10 @@ function shouldHidePendingToolCall(
     return false;
   }
 
-  return pendingPermission.toolCallId === toolCallId && (status === "pending" || status === "in_progress");
+  return (
+    pendingPermission.toolCallId === toolCallId &&
+    (status === "pending" || status === "in_progress")
+  );
 }
 
 function getLogVariant(type: string): "default" | "secondary" | "destructive" | "outline" {

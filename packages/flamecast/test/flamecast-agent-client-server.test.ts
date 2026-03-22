@@ -256,12 +256,7 @@ describe("example agent", () => {
       Reflect.set(
         cancellingAgent,
         "simulateTurn",
-        (
-          _sessionId: string,
-          _promptText: string,
-          _session: unknown,
-          signal: AbortSignal,
-        ) =>
+        (_sessionId: string, _promptText: string, _session: unknown, signal: AbortSignal) =>
           new Promise<void>((_resolve, reject) => {
             signal.addEventListener(
               "abort",
@@ -295,7 +290,9 @@ describe("example agent", () => {
       ).rejects.toMatchObject({ code: "ENOENT" });
       expect(noDelay).toHaveBeenCalled();
       expect(noModelDelay).toHaveBeenCalled();
-      expect(sessionUpdates.some((update) => update.update.sessionUpdate === "tool_call")).toBe(true);
+      expect(sessionUpdates.some((update) => update.update.sessionUpdate === "tool_call")).toBe(
+        true,
+      );
       expect(
         sessionUpdates.some(
           (update) =>
@@ -305,9 +302,7 @@ describe("example agent", () => {
             update.update.kind === "other",
         ),
       ).toBe(true);
-      expect(
-        requestPermission.mock.calls[1]?.[0].toolCall,
-      ).toEqual(
+      expect(requestPermission.mock.calls[1]?.[0].toolCall).toEqual(
         expect.objectContaining({
           title: "Add a line to the existing demo file",
           content: [
@@ -318,9 +313,7 @@ describe("example agent", () => {
           ],
         }),
       );
-      expect(
-        requestPermission.mock.calls[2]?.[0].toolCall,
-      ).toEqual(
+      expect(requestPermission.mock.calls[2]?.[0].toolCall).toEqual(
         expect.objectContaining({
           title: "Undo the extra line change",
         }),
