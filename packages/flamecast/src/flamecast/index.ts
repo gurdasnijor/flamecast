@@ -177,6 +177,7 @@ export class Flamecast {
   private readonly runtimeProviders: RuntimeProviderRegistry;
   private readonly storageConfig?: StorageConfig;
   private readonly runtimes = new Map<string, ManagedSession>();
+  private readonly promptQueues = new Map<string, Promise<void>>();
   private readonly permissionResolvers = new Map<string, PermissionResolver>();
   private readonly app = createServerApp(this);
   private storage: FlamecastStorage | null = null;
@@ -277,7 +278,10 @@ export class Flamecast {
         this.createRpcLog(acp.AGENT_METHODS.initialize, "agent_to_client", "response", initResult),
       );
 
-      const newSessionParams: acp.NewSessionRequest = { cwd, mcpServers: [] };
+      const newSessionParams: acp.NewSessionRequest = {
+        cwd,
+        mcpServers: opts.mcpServers ?? [],
+      };
       managed.pendingLogs.push(
         this.createRpcLog(
           acp.AGENT_METHODS.session_new,
@@ -360,35 +364,38 @@ export class Flamecast {
     if (!managed.runtime.connection) {
       throw new Error(`Session "${id}" is not initialized`);
     }
+    const connection = managed.runtime.connection;
 
     const promptParams: acp.PromptRequest = {
       sessionId: managed.id,
       prompt: [{ type: "text", text }],
     };
 
-    await this.pushRpcLog(
-      managed,
-      acp.AGENT_METHODS.session_prompt,
-      "client_to_agent",
-      "request",
-      promptParams,
-    );
-
-    try {
-      const result = await managed.runtime.connection.prompt(promptParams);
-      await this.flushSessionTextChunkLogBuffer(managed);
+    return this.runInPromptQueue(id, async () => {
       await this.pushRpcLog(
         managed,
         acp.AGENT_METHODS.session_prompt,
-        "agent_to_client",
-        "response",
-        result,
+        "client_to_agent",
+        "request",
+        promptParams,
       );
-      return result;
-    } catch (error) {
-      await this.flushSessionTextChunkLogBuffer(managed);
-      throw error;
-    }
+
+      try {
+        const result = await connection.prompt(promptParams);
+        await this.flushSessionTextChunkLogBuffer(managed);
+        await this.pushRpcLog(
+          managed,
+          acp.AGENT_METHODS.session_prompt,
+          "agent_to_client",
+          "response",
+          result,
+        );
+        return result;
+      } catch (error) {
+        await this.flushSessionTextChunkLogBuffer(managed);
+        throw error;
+      }
+    });
   }
 
   async terminateSession(id: string): Promise<void> {
@@ -405,6 +412,7 @@ export class Flamecast {
     await this.pushLog(managed, "killed", {});
     await this.requireStorage().finalizeSession(id, "terminated");
     this.runtimes.delete(id);
+    this.promptQueues.delete(id);
   }
 
   async respondToPermission(
@@ -452,6 +460,28 @@ export class Flamecast {
       throw new Error("Flamecast storage is not ready");
     }
     return this.storage;
+  }
+
+  private async runInPromptQueue<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.promptQueues.get(id) ?? null;
+    let resolveCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    this.promptQueues.set(id, current);
+
+    if (previous) {
+      await previous;
+    }
+
+    try {
+      return await work();
+    } finally {
+      resolveCurrent();
+      if (this.promptQueues.get(id) === current) {
+        this.promptQueues.delete(id);
+      }
+    }
   }
 
   private async resolveSessionDefinition(opts: CreateSessionBody): Promise<{
