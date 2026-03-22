@@ -273,7 +273,8 @@ export class Flamecast {
     }
 
     const startedAt = new Date().toISOString();
-    const startedRuntime = await provider.start({ runtime, spawn });
+    const sessionId = randomUUID();
+    const startedRuntime = await provider.start({ runtime, spawn, sessionId });
     const managed: ManagedSession = {
       id: "",
       workspaceRoot: cwd,
@@ -516,7 +517,7 @@ export class Flamecast {
       return;
     }
 
-    await new Promise<void>((resolve, reject) => {
+    const closePromise = new Promise<void>((resolve, reject) => {
       try {
         if (server.close.length === 0) {
           server.close();
@@ -535,6 +536,13 @@ export class Flamecast {
         reject(error);
       }
     });
+
+    await Promise.race([
+      closePromise,
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error("server close timed out")), 10_000),
+      ),
+    ]);
   }
 
   private async ensureReady(): Promise<void> {
