@@ -59,6 +59,24 @@ async function pollForPermission(
   throw new Error(`No pending permission after ${timeoutMs}ms`);
 }
 
+async function allowNextPermission(
+  client: ReturnType<typeof createClient>,
+  agentId: string,
+  timeoutMs: number,
+) {
+  const pending = await pollForPermission(client, agentId, timeoutMs);
+  const allow = pending.options.find((option: { optionId: string }) => option.optionId === "allow");
+  if (!allow) throw new Error("No allow option");
+
+  const permRes = await client.agents[":agentId"].permissions[":requestId"].$post({
+    param: { agentId, requestId: pending.requestId },
+    json: { optionId: allow.optionId },
+  });
+  expect(permRes.status).toBe(200);
+
+  return pending;
+}
+
 describe("api contract", () => {
   test("list agent templates", async (scope: unknown) => {
     const flamecast = new Flamecast({ storage: "memory" });
@@ -127,21 +145,23 @@ describe("api contract", () => {
         json: { text: "Hello from API contract test!" },
       });
 
-      const pending = await pollForPermission(client, agentId, 15_000);
+      const pending = await allowNextPermission(client, agentId, 15_000);
       expect(pending).toBeDefined();
+      expect(pending.title).toBe("Preparing a real workspace edit");
       const proposedPath = pending.diffs?.[0]?.path;
       expect(proposedPath).toBeTruthy();
 
-      const allow = pending.options.find(
-        (option: { optionId: string }) => option.optionId === "allow",
-      );
-      if (!allow) throw new Error("No allow option");
+      const appendPending = await allowNextPermission(client, agentId, 15_000);
+      expect(appendPending.title).toBe("Add a line to the existing demo file");
+      expect(appendPending.diffs?.[0]?.path).toBe(proposedPath);
 
-      const permRes = await client.agents[":agentId"].permissions[":requestId"].$post({
-        param: { agentId, requestId: pending.requestId },
-        json: { optionId: allow.optionId },
-      });
-      expect(permRes.status).toBe(200);
+      const undoPending = await allowNextPermission(client, agentId, 15_000);
+      expect(undoPending.title).toBe("Undo the extra line change");
+      expect(undoPending.diffs?.[0]?.path).toBe(proposedPath);
+
+      const cleanupPending = await allowNextPermission(client, agentId, 15_000);
+      expect(cleanupPending.title).toBe("cleanup");
+      expect(cleanupPending.diffs?.[0]?.path).toBe(proposedPath);
 
       const promptRes = await promptPromise;
       expect(promptRes.status).toBe(200);
@@ -150,7 +170,7 @@ describe("api contract", () => {
       if (!proposedPath) {
         throw new Error("Expected a proposed edit path");
       }
-      await expect(readFile(proposedPath, "utf8")).resolves.toContain("Hello from API contract test!");
+      await expect(readFile(proposedPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
       const killRes = await client.agents[":agentId"].$delete({ param: { agentId } });
       expect(killRes.status).toBe(200);

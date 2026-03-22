@@ -37,6 +37,18 @@ async function pollForPermission(flamecast: Flamecast, sessionId: string, timeou
   throw new Error(`No pending permission after ${timeoutMs}ms`);
 }
 
+async function allowNextPermission(flamecast: Flamecast, sessionId: string, timeoutMs: number) {
+  const pending = await pollForPermission(flamecast, sessionId, timeoutMs);
+  const allow = pending.options.find((option) => option.optionId === "allow");
+  if (!allow) throw new Error("No allow option found");
+
+  await flamecast.respondToPermission(sessionId, pending.requestId, {
+    optionId: allow.optionId,
+  });
+
+  return pending;
+}
+
 function hasDockerDaemon(): boolean {
   const dockerInfo = spawnSync("docker", ["info"], { stdio: "ignore" });
   if (!dockerInfo.error) {
@@ -64,18 +76,24 @@ async function runSessionLifecycle(
     sessionId = session.id;
     const promptPromise = flamecast.promptSession(sessionId, "Hello from integration test!");
 
-    const pending = await pollForPermission(flamecast, sessionId, 15_000);
+    const pending = await allowNextPermission(flamecast, sessionId, 15_000);
     expect(pending).toBeDefined();
     expect(pending.options.length).toBeGreaterThanOrEqual(2);
+    expect(pending.title).toBe("Preparing a real workspace edit");
     const proposedPath = pending.diffs?.[0]?.path;
     expect(proposedPath).toBeTruthy();
 
-    const allow = pending.options.find((option) => option.optionId === "allow");
-    if (!allow) throw new Error("No allow option found");
+    const appendPending = await allowNextPermission(flamecast, sessionId, 15_000);
+    expect(appendPending.title).toBe("Add a line to the existing demo file");
+    expect(appendPending.diffs?.[0]?.path).toBe(proposedPath);
 
-    await flamecast.respondToPermission(sessionId, pending.requestId, {
-      optionId: allow.optionId,
-    });
+    const undoPending = await allowNextPermission(flamecast, sessionId, 15_000);
+    expect(undoPending.title).toBe("Undo the extra line change");
+    expect(undoPending.diffs?.[0]?.path).toBe(proposedPath);
+
+    const cleanupPending = await allowNextPermission(flamecast, sessionId, 15_000);
+    expect(cleanupPending.title).toBe("cleanup");
+    expect(cleanupPending.diffs?.[0]?.path).toBe(proposedPath);
 
     const result = await promptPromise;
     expect(result.stopReason).toBe("end_turn");
@@ -85,7 +103,7 @@ async function runSessionLifecycle(
     if (!proposedPath) {
       throw new Error("Expected a proposed edit path");
     }
-    await expect(readFile(proposedPath, "utf8")).resolves.toContain("Hello from integration test!");
+    await expect(readFile(proposedPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     await flamecast.terminateSession(sessionId);
     sessionId = null;

@@ -1,5 +1,8 @@
 /* oxlint-disable no-type-assertion/no-type-assertion */
 import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import readline from "node:readline/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -175,6 +178,15 @@ describe("example agent", () => {
         outcome: { outcome: "selected", optionId: "allow" },
       })
       .mockResolvedValueOnce({
+        outcome: { outcome: "selected", optionId: "allow" },
+      })
+      .mockResolvedValueOnce({
+        outcome: { outcome: "selected", optionId: "allow" },
+      })
+      .mockResolvedValueOnce({
+        outcome: { outcome: "selected", optionId: "allow" },
+      })
+      .mockResolvedValueOnce({
         outcome: { outcome: "selected", optionId: "reject" },
       })
       .mockResolvedValueOnce({
@@ -186,114 +198,155 @@ describe("example agent", () => {
     const readTextFile = vi.fn(async () => {
       throw new Error("missing");
     });
-    const writeTextFile = vi.fn(async () => ({}));
-    const connection = {
-      sessionUpdate: vi.fn(async (params: acp.SessionNotification) => {
-        sessionUpdates.push(params);
-      }),
-      readTextFile,
-      requestPermission,
-      writeTextFile,
-    };
-    const agent = new ExampleAgent(connection as unknown as acp.AgentSideConnection);
-    const noDelay = vi.fn(async () => {});
-    const noModelDelay = vi.fn(async () => {});
+    const workspaceDir = await mkdtemp(path.join(tmpdir(), "example-agent-"));
 
-    Reflect.set(agent, "delayBetweenStreamChunks", noDelay);
-    Reflect.set(agent, "simulateModelInteraction", noModelDelay);
+    try {
+      const writeTextFile = vi.fn(async (params: acp.WriteTextFileRequest) => {
+        await writeFile(params.path, params.content, "utf8");
+        return {};
+      });
+      const connection = {
+        sessionUpdate: vi.fn(async (params: acp.SessionNotification) => {
+          sessionUpdates.push(params);
+        }),
+        readTextFile,
+        requestPermission,
+        writeTextFile,
+      };
+      const agent = new ExampleAgent(connection as unknown as acp.AgentSideConnection);
+      const noDelay = vi.fn(async () => {});
+      const noModelDelay = vi.fn(async () => {});
 
-    expect(
-      await agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} }),
-    ).toMatchObject({
-      protocolVersion: acp.PROTOCOL_VERSION,
-    });
-    expect(await agent.authenticate({ tokens: {} })).toEqual({});
-    expect(await agent.setSessionMode({ sessionId: "session-1", mode: "default" })).toEqual({});
-    await expect(
-      agent.prompt({ sessionId: "missing", prompt: [{ type: "text", text: "hello" }] }),
-    ).rejects.toThrow("Session missing not found");
+      Reflect.set(agent, "delayBetweenStreamChunks", noDelay);
+      Reflect.set(agent, "simulateModelInteraction", noModelDelay);
 
-    const created = await agent.newSession({ cwd: process.cwd(), mcpServers: [] });
-    const allowResult = await agent.prompt({
-      sessionId: created.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-    const rejectResult = await agent.prompt({
-      sessionId: created.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-    const cancelledResult = await agent.prompt({
-      sessionId: created.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
+      expect(
+        await agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} }),
+      ).toMatchObject({
+        protocolVersion: acp.PROTOCOL_VERSION,
+      });
+      expect(await agent.authenticate({ tokens: {} })).toEqual({});
+      expect(await agent.setSessionMode({ sessionId: "session-1", mode: "default" })).toEqual({});
+      await expect(
+        agent.prompt({ sessionId: "missing", prompt: [{ type: "text", text: "hello" }] }),
+      ).rejects.toThrow("Session missing not found");
 
-    await expect(
-      agent.prompt({
+      const created = await agent.newSession({ cwd: workspaceDir, mcpServers: [] });
+      const allowResult = await agent.prompt({
         sessionId: created.sessionId,
         prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toThrow("Unexpected permission outcome");
+      });
+      const rejectResult = await agent.prompt({
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      const cancelledResult = await agent.prompt({
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
 
-    const cancellingAgent = new ExampleAgent(connection as unknown as acp.AgentSideConnection);
-    Reflect.set(
-      cancellingAgent,
-      "simulateTurn",
-      (
-        _sessionId: string,
-        _promptText: string,
-        _session: unknown,
-        signal: AbortSignal,
-      ) =>
-        new Promise<void>((_resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => {
-              reject(new Error("aborted"));
-            },
-            { once: true },
-          );
+      await expect(
+        agent.prompt({
+          sessionId: created.sessionId,
+          prompt: [{ type: "text", text: "hello" }],
         }),
-    );
+      ).rejects.toThrow("Unexpected permission outcome");
 
-    const cancellingSession = await cancellingAgent.newSession({
-      cwd: process.cwd(),
-      mcpServers: [],
-    });
-    const cancelledPrompt = cancellingAgent.prompt({
-      sessionId: cancellingSession.sessionId,
-      prompt: [{ type: "text", text: "cancel" }],
-    });
-    await cancellingAgent.cancel({
-      id: "cancel-1",
-      sessionId: cancellingSession.sessionId,
-    } as unknown as acp.CancelNotification);
+      const cancellingAgent = new ExampleAgent(connection as unknown as acp.AgentSideConnection);
+      Reflect.set(
+        cancellingAgent,
+        "simulateTurn",
+        (
+          _sessionId: string,
+          _promptText: string,
+          _session: unknown,
+          signal: AbortSignal,
+        ) =>
+          new Promise<void>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("aborted"));
+              },
+              { once: true },
+            );
+          }),
+      );
 
-    expect(allowResult).toEqual({ stopReason: "end_turn" });
-    expect(rejectResult).toEqual({ stopReason: "end_turn" });
-    expect(cancelledResult).toEqual({ stopReason: "end_turn" });
-    expect(await cancelledPrompt).toEqual({ stopReason: "cancelled" });
-    expect(noDelay).toHaveBeenCalled();
-    expect(noModelDelay).toHaveBeenCalled();
-    expect(sessionUpdates.some((update) => update.update.sessionUpdate === "tool_call")).toBe(true);
-    expect(readTextFile).toHaveBeenCalled();
-    expect(writeTextFile).toHaveBeenCalledTimes(1);
-    expect(writeTextFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: expect.stringContaining(`.flamecast-agent-edit-${created.sessionId}.md`),
-      }),
-    );
-    expect(requestPermission).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolCall: expect.objectContaining({
+      const cancellingSession = await cancellingAgent.newSession({
+        cwd: workspaceDir,
+        mcpServers: [],
+      });
+      const cancelledPrompt = cancellingAgent.prompt({
+        sessionId: cancellingSession.sessionId,
+        prompt: [{ type: "text", text: "cancel" }],
+      });
+      await cancellingAgent.cancel({
+        id: "cancel-1",
+        sessionId: cancellingSession.sessionId,
+      } as unknown as acp.CancelNotification);
+
+      expect(allowResult).toEqual({ stopReason: "end_turn" });
+      expect(rejectResult).toEqual({ stopReason: "end_turn" });
+      expect(cancelledResult).toEqual({ stopReason: "end_turn" });
+      expect(await cancelledPrompt).toEqual({ stopReason: "cancelled" });
+      await expect(
+        readFile(path.join(workspaceDir, `.flamecast-agent-edit-${created.sessionId}.md`), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(noDelay).toHaveBeenCalled();
+      expect(noModelDelay).toHaveBeenCalled();
+      expect(sessionUpdates.some((update) => update.update.sessionUpdate === "tool_call")).toBe(true);
+      expect(
+        sessionUpdates.some(
+          (update) =>
+            update.update.sessionUpdate === "tool_call" &&
+            update.update.toolCallId === "call_5" &&
+            update.update.title === "cleanup" &&
+            update.update.kind === "other",
+        ),
+      ).toBe(true);
+      expect(
+        requestPermission.mock.calls[1]?.[0].toolCall,
+      ).toEqual(
+        expect.objectContaining({
+          title: "Add a line to the existing demo file",
           content: [
             expect.objectContaining({
               type: "diff",
-              path: expect.stringContaining(`.flamecast-agent-edit-${created.sessionId}.md`),
+              oldText: expect.not.stringContaining("# Flamecast Approval Demo"),
             }),
           ],
         }),
-      }),
-    );
+      );
+      expect(
+        requestPermission.mock.calls[2]?.[0].toolCall,
+      ).toEqual(
+        expect.objectContaining({
+          title: "Undo the extra line change",
+        }),
+      );
+      expect(readTextFile).toHaveBeenCalled();
+      expect(writeTextFile).toHaveBeenCalledTimes(3);
+      expect(writeTextFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: expect.stringContaining(`.flamecast-agent-edit-${created.sessionId}.md`),
+        }),
+      );
+      expect(requestPermission).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCall: expect.objectContaining({
+            content: [
+              expect.objectContaining({
+                type: "diff",
+                path: expect.stringContaining(`.flamecast-agent-edit-${created.sessionId}.md`),
+              }),
+            ],
+          }),
+        }),
+      );
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   test("covers private chunking helpers and uint8 stream conversion", async () => {

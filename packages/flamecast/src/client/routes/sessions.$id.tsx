@@ -524,6 +524,8 @@ function ProposedDiffList({
 
 function DiffPreview({ diff, workspaceRoot }: { diff: SessionDiff; workspaceRoot?: string }) {
   const lines = buildDiffLines(diff.oldText ?? null, diff.newText);
+  const diffKind =
+    diff.oldText == null ? "new file" : diff.newText.length === 0 ? "deleted" : "modified";
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70">
@@ -531,7 +533,7 @@ function DiffPreview({ diff, workspaceRoot }: { diff: SessionDiff; workspaceRoot
         <code className="text-xs text-foreground">
           {formatWorkspacePath(diff.path, workspaceRoot)}
         </code>
-        <Badge variant="outline">{diff.oldText == null ? "new file" : "modified"}</Badge>
+        <Badge variant="outline">{diffKind}</Badge>
       </div>
       {lines.length === 0 ? (
         <div className="px-4 py-3 text-xs text-muted-foreground">No textual changes.</div>
