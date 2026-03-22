@@ -101,7 +101,7 @@ describe("api contract", () => {
 
     try {
       const createRes = await client.sessions.$post({
-        json: { spawn: { command: "npx", args: ["tsx", "src/flamecast/agent.ts"] } },
+        json: { spawn: { command: "pnpm", args: ["exec", "tsx", "src/flamecast/agent.ts"] } },
       });
       expect(createRes.status).toBe(201);
       const session = SessionSchema.parse(await createRes.json());

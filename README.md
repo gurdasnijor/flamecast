@@ -7,8 +7,8 @@ Flamecast is an open-source, self-hostable control plane for ACP-compatible agen
 ## Quick start
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open **http://localhost:3000**. The home page lists the registered agent templates; click **Start session** on one to launch a session.
@@ -87,14 +87,14 @@ Built-in templates live in `src/flamecast/agent-templates.ts`:
 {
   id: "example",
   name: "Example agent",
-  spawn: { command: "npx", args: ["tsx", "src/flamecast/agent.ts"] },
+  spawn: { command: "pnpm", args: ["exec", "tsx", "src/flamecast/agent.ts"] },
   runtime: { provider: "local" },
 }
 
 {
   id: "example-docker",
   name: "Example agent (Uses stock docker containers)",
-  spawn: { command: "npx", args: ["tsx", "agent.ts"] },
+  spawn: { command: "pnpm", args: ["exec", "tsx", "agent.ts"] },
   runtime: {
     provider: "docker",
     image: "flamecast/example-agent",
@@ -124,8 +124,8 @@ You can also create a one-off session without registering a template first:
 ```json
 {
   "spawn": {
-    "command": "npx",
-    "args": ["tsx", "src/flamecast/agent.ts"]
+    "command": "pnpm",
+    "args": ["exec", "tsx", "src/flamecast/agent.ts"]
   },
   "name": "Scratch agent"
 }
@@ -286,24 +286,24 @@ Base URL: `http://localhost:3001/api`
 ### Local dev (Node)
 
 ```bash
-npm run dev
-npm run dev:server
-npm run dev:client
+pnpm dev
+pnpm dev:server
+pnpm dev:client
 ```
 
 ### Alchemy / Worker path
 
 `alchemy.run.ts` and `src/worker.ts` are still experimental. The Worker entry point can serve the API, but the built-in `local` and `docker` providers are intentionally stubbed there and will throw unless you configure a provider that works in that environment.
 
-Use `npm run dev` for the stable local development flow.
+Use `pnpm dev` for the stable local development flow.
 
 ---
 
 ## Testing
 
 ```bash
-npm test
-npm run check
+pnpm test
+pnpm check
 ```
 
 Tests create isolated Flamecast instances and exercise the API surface end-to-end.
@@ -314,16 +314,16 @@ Tests create isolated Flamecast instances and exercise the API surface end-to-en
 
 | Script | Description |
 |---|---|
-| `npm run dev` | API + Vite in parallel |
-| `npm run dev:server` | API only |
-| `npm run dev:client` | Vite only |
-| `npm test` | Integration tests |
-| `npm run check` | Lint + format + build + API coverage |
-| `npm run fmt` | ESLint fix + Prettier |
-| `npm run alchemy:dev` | Local dev via Alchemy |
-| `npm run alchemy:deploy` | Deploy via Alchemy |
-| `npm run alchemy:destroy` | Tear down Alchemy resources |
-| `npm run psql:generate` | Generate Drizzle migrations |
+| `pnpm dev` | API + Vite in parallel |
+| `pnpm dev:server` | API only |
+| `pnpm dev:client` | Vite only |
+| `pnpm test` | Integration tests |
+| `pnpm check` | Lint + format + build + API coverage |
+| `pnpm fmt` | ESLint fix + Biome format |
+| `pnpm alchemy:dev` | Local dev via Alchemy |
+| `pnpm alchemy:deploy` | Deploy via Alchemy |
+| `pnpm alchemy:destroy` | Tear down Alchemy resources |
+| `pnpm psql:generate` | Generate Drizzle migrations |
 
 ---
 

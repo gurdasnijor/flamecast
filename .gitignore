@@ -10,6 +10,11 @@
 
 # deps
 node_modules/
+package-lock.json
+yarn.lock
+bun.lock
+bun.lockb
+npm-shrinkwrap.json
 
 # env
 .env

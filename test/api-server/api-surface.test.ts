@@ -14,7 +14,7 @@ import type { FlamecastApi } from "../../src/flamecast/api.js";
 const sampleAgentTemplate: AgentTemplate = {
   id: "codex",
   name: "Codex ACP",
-  spawn: { command: "npx", args: ["@zed-industries/codex-acp"] },
+  spawn: { command: "pnpm", args: ["dlx", "@zed-industries/codex-acp"] },
   runtime: { provider: "local" },
 };
 

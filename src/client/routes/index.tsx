@@ -117,7 +117,7 @@ function SessionsPage() {
                       <Label htmlFor="agent-command">Command</Label>
                       <Input
                         id="agent-command"
-                        placeholder="npx"
+                        placeholder="pnpm"
                         value={newCommand}
                         onChange={(e) => setNewCommand(e.target.value)}
                       />
@@ -126,7 +126,7 @@ function SessionsPage() {
                       <Label htmlFor="agent-args">Arguments</Label>
                       <Input
                         id="agent-args"
-                        placeholder="tsx src/agent.ts"
+                        placeholder="exec tsx src/agent.ts"
                         value={newArgs}
                         onChange={(e) => setNewArgs(e.target.value)}
                       />

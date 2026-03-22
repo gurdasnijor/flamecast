@@ -89,7 +89,7 @@ describe("flamecast", () => {
 
     try {
       await runSessionLifecycle(flamecast, {
-        spawn: { command: "npx", args: ["tsx", "src/flamecast/agent.ts"] },
+        spawn: { command: "pnpm", args: ["exec", "tsx", "src/flamecast/agent.ts"] },
       });
     } finally {
       await alchemy.destroy(scope);

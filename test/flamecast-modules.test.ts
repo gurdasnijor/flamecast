@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 describe("agent templates", () => {
-  test("returns built-ins and respects the windows npx shim", () => {
+  test("returns built-ins and respects the windows pnpm shim", () => {
     const unixTemplates = getBuiltinAgentTemplates();
 
     expect(unixTemplates.map((template) => template.id)).toEqual([
@@ -54,7 +54,8 @@ describe("agent templates", () => {
       "example-docker",
       "example-docker-2",
     ]);
-    expect(unixTemplates[0]?.spawn.command).toBe("npx");
+    expect(unixTemplates[0]?.spawn.command).toBe("pnpm");
+    expect(unixTemplates[0]?.spawn.args).toEqual(["exec", "tsx", "src/flamecast/agent.ts"]);
     expect(localRuntime()).toEqual({ provider: "local" });
 
     Object.defineProperty(process, "platform", {
@@ -63,7 +64,7 @@ describe("agent templates", () => {
     });
 
     const windowsTemplates = getBuiltinAgentTemplates();
-    expect(windowsTemplates[0]?.spawn.command).toBe("npx.cmd");
+    expect(windowsTemplates[0]?.spawn.command).toBe("pnpm.cmd");
   });
 });
 

@@ -1,6 +1,7 @@
 {
   "name": "acp",
   "type": "module",
+  "packageManager": "pnpm@10.26.2",
   "scripts": {
     "dev": "tsx watch src/server/index.ts & vite",
     "dev:client": "vite",
@@ -8,7 +9,7 @@
     "build": "vite build",
     "start": "node dist/index.js",
     "knip": "knip --no-config-hints",
-    "ci:lint": "npm run lint && npm run format:check && npm run biome:lint",
+    "ci:lint": "pnpm lint && pnpm format:check && pnpm biome:lint",
     "biome:lint": "biome lint .",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
@@ -16,10 +17,10 @@
     "format:check": "biome format .",
     "fmt": "eslint . --fix --max-warnings 0 && biome format . --write",
     "psql:generate": "drizzle-kit generate --config src/flamecast/state-managers/psql/drizzle.config.ts",
-    "test": "npm run test:api",
+    "test": "pnpm test:api",
     "test:api": "vitest run --config vitest.integration.config.ts",
     "test:api:coverage": "vitest run --coverage --config vitest.integration.config.ts",
-    "check": "npm run ci:lint && npm run build && npm run test:api:coverage",
+    "check": "pnpm ci:lint && pnpm build && pnpm test:api:coverage",
     "alchemy:deploy": "alchemy deploy",
     "alchemy:dev": "alchemy dev",
     "alchemy:destroy": "alchemy destroy"
