@@ -20,6 +20,11 @@ import { Separator } from "@/client/components/ui/separator";
 import { Skeleton } from "@/client/components/ui/skeleton";
 import { Switch } from "@/client/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/client/components/ui/tabs";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/client/components/ui/collapsible";
 import { Streamdown } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import {
@@ -47,6 +52,12 @@ function SessionDetailPage() {
   const [prompt, setPrompt] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [expandedHistoricalToolCallIds, setExpandedHistoricalToolCallIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [collapsedCurrentToolCallIds, setCollapsedCurrentToolCallIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [showAllFiles, setShowAllFiles] = useState(false);
   const queryClient = useQueryClient();
 
@@ -86,10 +97,32 @@ function SessionDetailPage() {
     () => sessionLogsToSegments(session?.logs ?? []),
     [session?.logs],
   );
+  const renderableToolSegments = useMemo(
+    () =>
+      markdownSegments.filter(
+        (segment) =>
+          segment.kind === "tool" &&
+          !shouldHidePendingToolCall(segment.toolCallId, segment.status, session?.pendingPermission),
+      ),
+    [markdownSegments, session?.pendingPermission],
+  );
+  const renderableToolCallIds = useMemo(
+    () => renderableToolSegments.map((segment) => segment.toolCallId).filter(Boolean),
+    [renderableToolSegments],
+  );
+  const latestVisibleToolCallId = session?.pendingPermission
+    ? null
+    : renderableToolSegments.at(-1)?.toolCallId ?? null;
 
   useEffect(() => {
     setExpandedPaths((current) => (current.size > 0 ? current : getInitialExpandedPaths(fileTree)));
   }, [fileTree]);
+
+  useEffect(() => {
+    const visibleToolCallIds = new Set(renderableToolCallIds);
+    setExpandedHistoricalToolCallIds((current) => filterToolCallIds(current, visibleToolCallIds));
+    setCollapsedCurrentToolCallIds((current) => filterToolCallIds(current, visibleToolCallIds));
+  }, [renderableToolCallIds]);
 
   useEffect(() => {
     if (selectedPath && fileEntryMap.get(selectedPath)?.type === "file") {
@@ -233,14 +266,31 @@ function SessionDetailPage() {
                       if (shouldHidePendingToolCall(seg.toolCallId, seg.status, session.pendingPermission)) {
                         return null;
                       }
+                      const isHistoricalToolCall = latestVisibleToolCallId == null || seg.toolCallId !== latestVisibleToolCallId;
+                      const isExpanded = isHistoricalToolCall
+                        ? expandedHistoricalToolCallIds.has(seg.toolCallId)
+                        : !collapsedCurrentToolCallIds.has(seg.toolCallId);
                       return (
-                        <Fragment key={index}>
+                        <Fragment key={seg.toolCallId || index}>
                           {index > 0 ? <Separator /> : null}
                           <ToolCallCard
+                            toolCallId={seg.toolCallId}
                             title={seg.title}
                             status={seg.status}
                             diffs={seg.diffs}
                             workspaceRoot={session.fileSystem?.root}
+                            expanded={isExpanded}
+                            onExpandedChange={(open) => {
+                              if (isHistoricalToolCall) {
+                                setExpandedHistoricalToolCallIds((current) =>
+                                  updateToolCallIdSet(current, seg.toolCallId, open),
+                                );
+                                return;
+                              }
+                              setCollapsedCurrentToolCallIds((current) =>
+                                updateToolCallIdSet(current, seg.toolCallId, !open),
+                              );
+                            }}
                           />
                         </Fragment>
                       );
@@ -471,34 +521,69 @@ function EmptyPreview({ message }: { message: string }) {
 }
 
 function ToolCallCard({
+  toolCallId,
   title,
   status,
   diffs,
   workspaceRoot,
+  expanded,
+  onExpandedChange,
 }: {
+  toolCallId: string;
   title: string;
   status: string;
   diffs: SessionDiff[];
   workspaceRoot?: string;
+  expanded: boolean;
+  onExpandedChange: (open: boolean) => void;
 }) {
+  const hasDiffs = diffs.length > 0;
+
   return (
-    <Card className="border-border/70 bg-muted/20">
-      <CardHeader className="gap-2 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
-          {status ? (
-            <Badge variant={status === "completed" ? "default" : "outline"}>
-              {status}
-            </Badge>
-          ) : null}
-        </div>
-      </CardHeader>
-      {diffs.length > 0 ? (
-        <CardContent className="space-y-3 pt-0">
-          <ProposedDiffList diffs={diffs} workspaceRoot={workspaceRoot} />
-        </CardContent>
-      ) : null}
-    </Card>
+    <Collapsible open={hasDiffs ? expanded : true} onOpenChange={hasDiffs ? onExpandedChange : undefined}>
+      <Card className="border-border/70 bg-muted/20">
+        <CardHeader className="gap-2 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1">
+              <CardTitle className="text-sm font-medium">{title}</CardTitle>
+              {hasDiffs ? (
+                <CardDescription className="text-xs">
+                  {expanded ? "Diff visible" : "Diff hidden"}
+                </CardDescription>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              {status ? (
+                <Badge variant={status === "completed" ? "default" : "outline"}>
+                  {status}
+                </Badge>
+              ) : null}
+              {hasDiffs ? (
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`${expanded ? "Hide" : "Show"} diff for ${toolCallId}`}
+                  >
+                    {expanded ? "Hide diff" : "Show diff"}
+                    <ChevronDownIcon
+                      className={cn("size-4 transition-transform", expanded && "rotate-180")}
+                    />
+                  </Button>
+                </CollapsibleTrigger>
+              ) : null}
+            </div>
+          </div>
+        </CardHeader>
+        {hasDiffs ? (
+          <CollapsibleContent>
+            <CardContent className="space-y-3 pt-0">
+              <ProposedDiffList diffs={diffs} workspaceRoot={workspaceRoot} />
+            </CardContent>
+          </CollapsibleContent>
+        ) : null}
+      </Card>
+    </Collapsible>
   );
 }
 
@@ -560,6 +645,33 @@ function DiffPreview({ diff, workspaceRoot }: { diff: SessionDiff; workspaceRoot
       )}
     </div>
   );
+}
+
+function updateToolCallIdSet(current: Set<string>, toolCallId: string, present: boolean) {
+  const next = new Set(current);
+  if (present) {
+    next.add(toolCallId);
+  } else {
+    next.delete(toolCallId);
+  }
+  return areSetsEqual(current, next) ? current : next;
+}
+
+function filterToolCallIds(current: Set<string>, visibleToolCallIds: Set<string>) {
+  const next = new Set([...current].filter((toolCallId) => visibleToolCallIds.has(toolCallId)));
+  return areSetsEqual(current, next) ? current : next;
+}
+
+function areSetsEqual(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const value of left) {
+    if (!right.has(value)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function StickToBottomFab() {
