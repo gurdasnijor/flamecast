@@ -3,6 +3,7 @@ import type {
   AgentTemplate,
   CreateSessionBody,
   FilePreview,
+  McpServer,
   PermissionResponseBody,
   PromptBody,
   RegisterAgentTemplateBody,
@@ -38,6 +39,13 @@ const sampleFilePreview: FilePreview = {
   content: "console.log('preview');\n",
   truncated: false,
   maxChars: 20_000,
+};
+
+const sampleMcpServer: McpServer = {
+  type: "http",
+  name: "chat-sdk",
+  url: "https://connector.test/mcp",
+  headers: [{ name: "x-flamecast-chat-token", value: "secret" }],
 };
 
 function createFlamecastStub(overrides: Partial<FlamecastApi> = {}): FlamecastApi {
@@ -180,18 +188,21 @@ describe("API server surface", () => {
   it("creates agents via the current session runtime flow", async () => {
     const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
+    const body = {
+      agentTemplateId: sampleAgentTemplate.id,
+      cwd: "/tmp/flamecast",
+      mcpServers: [sampleMcpServer],
+    } satisfies CreateSessionBody;
 
     const response = await app.request("/api/agents", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentTemplateId: sampleAgentTemplate.id,
-        cwd: "/tmp/flamecast",
-      } satisfies CreateSessionBody),
+      body: JSON.stringify(body),
     });
 
     expect(response.status).toBe(201);
     expect(await readJson(response)).toEqual(sampleSession);
+    expect(flamecast.createSession).toHaveBeenCalledWith(body);
   });
 
   it("rejects invalid agent payloads", async () => {

@@ -91,6 +91,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Run Chat SDK plugin tests
+        run: pnpm --filter @flamecast/plugin-chat-sdk test
+
       - name: Run Flamecast coverage
         run: pnpm run test:api:coverage
         env:
