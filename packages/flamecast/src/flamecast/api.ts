@@ -30,8 +30,7 @@ function toStringMessage(error: unknown): string {
 }
 
 export function createApi(flamecast: FlamecastApi) {
-  // Route renames land before the data model split: each managed agent currently maps 1:1 to a
-  // single session, so the agent endpoints still return the existing session snapshot payload.
+  // The agent routes are public API sugar over the current single-session runtime model.
   const getAgentSnapshot = async (c: Context, agentId: string) => {
     try {
       const includeFileSystem = c.req.query("includeFileSystem") === "true";
