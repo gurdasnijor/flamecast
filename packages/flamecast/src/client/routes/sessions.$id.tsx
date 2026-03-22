@@ -29,7 +29,7 @@ import {
   FolderTreeIcon,
   SendIcon,
 } from "lucide-react";
-import type { FileSystemEntry, SessionDiff } from "../../shared/session";
+import type { FileSystemEntry, PendingPermission, SessionDiff } from "../../shared/session";
 
 export const Route = createFileRoute("/sessions/$id")({
   component: SessionDetailPage,
@@ -230,6 +230,9 @@ function SessionDetailPage() {
                       );
                     }
                     if (seg.kind === "tool") {
+                      if (shouldHidePendingToolCall(seg.toolCallId, seg.status, session.pendingPermission)) {
+                        return null;
+                      }
                       return (
                         <Fragment key={index}>
                           {index > 0 ? <Separator /> : null}
@@ -659,6 +662,18 @@ function formatWorkspacePath(path: string, workspaceRoot?: string) {
   }
 
   return path.startsWith(`${workspaceRoot}/`) ? path.slice(workspaceRoot.length + 1) : path;
+}
+
+function shouldHidePendingToolCall(
+  toolCallId: string,
+  status: string,
+  pendingPermission: PendingPermission | null,
+) {
+  if (!pendingPermission) {
+    return false;
+  }
+
+  return pendingPermission.toolCallId === toolCallId && (status === "pending" || status === "in_progress");
 }
 
 function getLogVariant(type: string): "default" | "secondary" | "destructive" | "outline" {
