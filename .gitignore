@@ -34,3 +34,5 @@ coverage/
 .acp/
 .alchemy/
 src/client/routeTree.gen.ts
+
+.flamecast/
