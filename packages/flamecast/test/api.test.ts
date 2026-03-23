@@ -4,10 +4,13 @@ import alchemy from "alchemy";
 import "alchemy/test/vitest";
 import { Hono } from "hono";
 import { hc } from "hono/client";
-import { z } from "zod";
 import { Flamecast } from "../src/flamecast/index.js";
 import { createApi, type AppType } from "../src/flamecast/api.js";
-import { PendingPermissionSchema, SessionSchema } from "../src/shared/session.js";
+import {
+  PendingPermissionSchema,
+  PromptResultSchema,
+  SessionSchema,
+} from "../src/shared/session.js";
 
 type AlchemyTestFactory = (meta: ImportMeta, opts: { prefix: string }) => typeof describe;
 
@@ -23,10 +26,6 @@ if (!isAlchemyTestFactory(maybeAlchemyTest)) {
 
 const test = maybeAlchemyTest(import.meta, { prefix: "test" });
 const exampleAgentEntrypoint = fileURLToPath(new URL("../src/flamecast/agent.ts", import.meta.url));
-
-const PromptResultSchema = z.object({
-  stopReason: z.string(),
-});
 
 function createClient(flamecast: Flamecast) {
   const api = createApi(flamecast);
@@ -58,7 +57,7 @@ async function pollForPermission(
 
 describe("api contract", () => {
   test("list agent templates", async (scope: unknown) => {
-    const flamecast = new Flamecast({ storage: "memory" });
+    const flamecast = new Flamecast({});
     const client = createClient(flamecast);
 
     try {
@@ -73,7 +72,7 @@ describe("api contract", () => {
   });
 
   test("list agents (empty)", async (scope: unknown) => {
-    const flamecast = new Flamecast({ storage: "memory" });
+    const flamecast = new Flamecast({});
     const client = createClient(flamecast);
 
     try {
@@ -86,7 +85,7 @@ describe("api contract", () => {
   });
 
   test("404 for unknown agent", async (scope: unknown) => {
-    const flamecast = new Flamecast({ storage: "memory" });
+    const flamecast = new Flamecast({});
     const client = createClient(flamecast);
 
     try {
@@ -98,7 +97,7 @@ describe("api contract", () => {
   });
 
   test("full lifecycle through HTTP", async (scope: unknown) => {
-    const flamecast = new Flamecast({ storage: "memory" });
+    const flamecast = new Flamecast({});
     const client = createClient(flamecast);
 
     try {
