@@ -3,6 +3,8 @@ import { Flamecast } from "@flamecast/sdk";
 import { createPsqlStorage } from "@flamecast/storage-psql";
 
 export async function main() {
+  // Pass { url: process.env.POSTGRES_URL } to use an external Postgres instance.
+  // Defaults to embedded PGLite on disk (won't work on serverless platforms like Vercel/CF).
   const flamecast = new Flamecast({
     storage: await createPsqlStorage(),
   });

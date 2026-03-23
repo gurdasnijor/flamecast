@@ -3,7 +3,7 @@ import {
   index,
   integer,
   jsonb,
-  pgTable,
+  pgSchema,
   serial,
   text,
   timestamp,
@@ -14,7 +14,9 @@ import type {
   PendingPermission,
 } from "@flamecast/sdk/shared/session";
 
-export const sessions = pgTable("sessions", {
+export const flamecastSchema = pgSchema("flamecast");
+
+export const sessions = flamecastSchema.table("sessions", {
   id: text("id").primaryKey(),
   agentName: text("agent_name").notNull(),
   spawn: jsonb("spawn").$type<AgentSpawn>().notNull(),
@@ -24,7 +26,7 @@ export const sessions = pgTable("sessions", {
   status: text("status").notNull().default("active"),
 });
 
-export const sessionLogs = pgTable(
+export const sessionLogs = flamecastSchema.table(
   "session_logs",
   {
     id: serial("id").primaryKey(),
@@ -38,7 +40,7 @@ export const sessionLogs = pgTable(
   (t) => [index("idx_session_logs_session").on(t.sessionId, t.id)],
 );
 
-export const agentTemplates = pgTable(
+export const agentTemplates = flamecastSchema.table(
   "agent_templates",
   {
     id: text("id").primaryKey(),
