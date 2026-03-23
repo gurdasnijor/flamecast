@@ -6,8 +6,10 @@ import {
   type ChatSdkMessage,
 } from "./connector.js";
 import {
-  InMemoryThreadAgentBindingStore,
+  SqlThreadAgentBindingStore,
   type ChatSdkThread,
+  type CreateSqlThreadAgentBindingStoreOptions,
+  type SqlThreadAgentBindingDatabase,
   type ThreadAgentBinding,
 } from "./bindings.js";
 import {
@@ -23,7 +25,7 @@ import {
 // Keep the barrel visible to V8 coverage so package-level coverage reporting stays honest.
 const pluginEntrypoint = {
   ChatSdkConnector,
-  InMemoryThreadAgentBindingStore,
+  SqlThreadAgentBindingStore,
   createFlamecastAgentClient,
   createConnectorMcpServer,
   extractMessageText,
@@ -34,16 +36,18 @@ export {
   ChatSdkConnector,
   extractMessageText,
   createFlamecastAgentClient,
-  InMemoryThreadAgentBindingStore,
+  SqlThreadAgentBindingStore,
   createConnectorMcpServer,
   type ChatSdkClient,
   type ChatSdkConnectorOptions,
   type ChatSdkMessage,
   type ChatSdkThread,
+  type CreateSqlThreadAgentBindingStoreOptions,
   type FlamecastAgent,
   type FlamecastAgentClient,
   type FlamecastCreateAgentBody,
   type FlamecastPromptResult,
   type FlamecastSpawn,
+  type SqlThreadAgentBindingDatabase,
   type ThreadAgentBinding,
 };

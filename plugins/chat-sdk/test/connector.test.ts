@@ -1,37 +1,45 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { PGlite } from "@electric-sql/pglite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { sql } from "drizzle-orm";
+import { drizzle as drizzlePgLite } from "drizzle-orm/pglite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ChatSdkConnector,
+  SqlThreadAgentBindingStore,
   type ChatSdkClient,
   type ChatSdkMessage,
   type ChatSdkThread,
   type FlamecastAgentClient,
   type FlamecastCreateAgentBody,
-  createFlamecastAgentClient,
-  InMemoryThreadAgentBindingStore,
   createConnectorMcpServer,
+  createFlamecastAgentClient,
   extractMessageText,
 } from "../src/index.js";
 import * as pluginEntry from "../src/index.js";
 
 type MentionHandler = (thread: ChatSdkThread, message: ChatSdkMessage) => Promise<void> | void;
 
+const cleanups: Array<() => Promise<void>> = [];
+
 function createThread(
   id: string,
   overrides: Partial<{
     post: ChatSdkThread["post"];
-    startTyping: NonNullable<ChatSdkThread["startTyping"]>;
-    subscribe: NonNullable<ChatSdkThread["subscribe"]>;
-    unsubscribe: NonNullable<ChatSdkThread["unsubscribe"]>;
+    startTyping: ChatSdkThread["startTyping"];
+    subscribe: ChatSdkThread["subscribe"];
+    unsubscribe: ChatSdkThread["unsubscribe"];
   }> = {},
 ): ChatSdkThread {
   return {
     id,
     post: overrides.post ?? vi.fn(async () => ({ id: `sent-${id}` })),
-    startTyping: overrides.startTyping ?? vi.fn(async () => undefined),
-    subscribe: overrides.subscribe ?? vi.fn(async () => undefined),
-    unsubscribe: overrides.unsubscribe ?? vi.fn(async () => undefined),
+    startTyping: "startTyping" in overrides ? overrides.startTyping : vi.fn(async () => undefined),
+    subscribe: "subscribe" in overrides ? overrides.subscribe : vi.fn(async () => undefined),
+    unsubscribe: "unsubscribe" in overrides ? overrides.unsubscribe : vi.fn(async () => undefined),
   };
 }
 
@@ -99,75 +107,214 @@ function createAppFetch(handler: (request: Request) => Promise<Response>): typeo
   };
 }
 
-afterEach(() => {
+async function createBindingsStore(): Promise<SqlThreadAgentBindingStore> {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "flamecast-chat-sdk-"));
+  const store = await SqlThreadAgentBindingStore.create({
+    pgliteDataDir: dataDir,
+  });
+  cleanups.push(async () => {
+    await store.close().catch(() => undefined);
+    await rm(dataDir, { recursive: true, force: true });
+  });
+  return store;
+}
+
+async function connectMcp(connector: ChatSdkConnector, token: string) {
+  const client = new Client({ name: "connector-test", version: "1.0.0" }, { capabilities: {} });
+  const transport = new StreamableHTTPClientTransport(new URL("http://connector.test/mcp"), {
+    fetch: createAppFetch(connector.fetch),
+    requestInit: {
+      headers: {
+        "x-flamecast-chat-token": token,
+      },
+    },
+  });
+
+  await client.connect(transport);
+  return { client, transport };
+}
+
+afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+
+  while (cleanups.length > 0) {
+    const cleanup = cleanups.pop();
+    await cleanup?.();
+  }
 });
 
-describe("InMemoryThreadAgentBindingStore", () => {
-  it("stores, updates, deletes, and clears bindings", () => {
-    const store = new InMemoryThreadAgentBindingStore();
-    const firstThread = createThread("thread-1");
+describe("SqlThreadAgentBindingStore", () => {
+  it("stores, updates, deletes, and clears bindings", async () => {
+    const store = await createBindingsStore();
 
-    expect(store.getByThreadId("missing")).toBeNull();
-    expect(store.getByAgentId("missing")).toBeNull();
-    expect(store.getByAuthToken("missing")).toBeNull();
-    expect(store.deleteByThreadId("missing")).toBeNull();
+    expect(await store.getByThreadId("missing")).toBeNull();
+    expect(await store.getByAgentId("missing")).toBeNull();
+    expect(await store.getByAuthToken("missing")).toBeNull();
+    expect(await store.deleteByThreadId("missing")).toBeNull();
 
-    store.set({
+    await store.set({
       threadId: "thread-1",
       agentId: "agent-1",
       authToken: "token-1",
-      thread: firstThread,
     });
 
-    expect(store.list()).toHaveLength(1);
-    expect(store.getByThreadId("thread-1")?.thread).toBe(firstThread);
-    expect(store.getByAgentId("agent-1")?.threadId).toBe("thread-1");
-    expect(store.getByAuthToken("token-1")?.agentId).toBe("agent-1");
+    expect(await store.list()).toEqual([
+      {
+        threadId: "thread-1",
+        agentId: "agent-1",
+        authToken: "token-1",
+      },
+    ]);
+    expect(await store.getByThreadId("thread-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+    expect(await store.getByAgentId("agent-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+    expect(await store.getByAuthToken("token-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
 
-    const nextThread = createThread("thread-1");
-    store.set({
+    await store.set({
       threadId: "thread-1",
       agentId: "agent-2",
       authToken: "token-2",
-      thread: nextThread,
     });
 
-    expect(store.getByAgentId("agent-1")).toBeNull();
-    expect(store.getByAuthToken("token-1")).toBeNull();
-    expect(store.getByThreadId("thread-1")?.thread).toBe(nextThread);
+    expect(await store.getByAgentId("agent-1")).toBeNull();
+    expect(await store.getByAuthToken("token-1")).toBeNull();
+    expect(await store.getByThreadId("thread-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-2",
+      authToken: "token-2",
+    });
 
-    expect(store.deleteByThreadId("thread-1")?.agentId).toBe("agent-2");
-    expect(store.list()).toEqual([]);
+    expect(await store.deleteByThreadId("thread-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-2",
+      authToken: "token-2",
+    });
+    expect(await store.list()).toEqual([]);
 
-    store.set({
+    await store.set({
       threadId: "thread-2",
       agentId: "agent-3",
       authToken: "token-3",
-      thread: createThread("thread-2"),
     });
-    store.clear();
-    expect(store.list()).toEqual([]);
+    await store.clear();
+    expect(await store.list()).toEqual([]);
   });
 
-  it("returns null when secondary indexes point at a missing thread record", () => {
-    const store = new InMemoryThreadAgentBindingStore();
-    store.set({
+  it("persists bindings across PGlite-backed store instances", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "flamecast-chat-sdk-"));
+    cleanups.push(async () => {
+      await rm(dataDir, { recursive: true, force: true });
+    });
+
+    const firstStore = await SqlThreadAgentBindingStore.create({
+      pgliteDataDir: dataDir,
+    });
+    await firstStore.set({
       threadId: "thread-1",
       agentId: "agent-1",
       authToken: "token-1",
-      thread: createThread("thread-1"),
+    });
+    await firstStore.close();
+
+    const secondStore = await SqlThreadAgentBindingStore.create({
+      pgliteDataDir: dataDir,
+    });
+    cleanups.push(async () => {
+      await secondStore.close().catch(() => undefined);
     });
 
-    const byThreadId = Reflect.get(store, "byThreadId");
-    if (!(byThreadId instanceof Map)) {
-      throw new Error("Expected byThreadId to be a Map");
-    }
-    byThreadId.delete("thread-1");
+    await expect(secondStore.getByThreadId("thread-1")).resolves.toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+  });
 
-    expect(store.getByAgentId("agent-1")).toBeNull();
-    expect(store.getByAuthToken("token-1")).toBeNull();
+  it("defaults its PGlite directory under the current working directory", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "flamecast-chat-sdk-cwd-"));
+    vi.spyOn(process, "cwd").mockReturnValue(cwd);
+    cleanups.push(async () => {
+      await rm(cwd, { recursive: true, force: true });
+    });
+
+    const store = await SqlThreadAgentBindingStore.create();
+    cleanups.push(async () => {
+      await store.close().catch(() => undefined);
+    });
+
+    await store.set({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+
+    await expect(store.getByThreadId("thread-1")).resolves.toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+  });
+
+  it("accepts provided drizzle databases without taking ownership of their lifecycle", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "flamecast-chat-sdk-db-"));
+    const client = await PGlite.create(dataDir);
+    cleanups.push(async () => {
+      await client.close().catch(() => undefined);
+      await rm(dataDir, { recursive: true, force: true });
+    });
+
+    const database = drizzlePgLite({ client });
+    const store = await SqlThreadAgentBindingStore.create({
+      database: {
+        async execute(statement) {
+          const result = await database.execute(statement);
+          return result.rows;
+        },
+      },
+    });
+
+    await store.set({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+    await expect(store.getByAgentId("agent-1")).resolves.toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: "token-1",
+    });
+
+    await store.close();
+    await expect(database.execute(sql`select 1 as ok`)).resolves.toMatchObject({
+      rows: [{ ok: 1 }],
+    });
+  });
+
+  it("rejects malformed SQL rows", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce([{ thread_id: 1, agent_id: "agent-1", auth_token: "token-1" }]);
+    const database = {
+      execute,
+    };
+    const store = await SqlThreadAgentBindingStore.create({ database });
+
+    await expect(store.getByThreadId("thread-1")).rejects.toThrow(
+      "Expected thread_id to be a string",
+    );
   });
 });
 
@@ -198,6 +345,7 @@ describe("createFlamecastAgentClient", () => {
     expect(pluginEntry.ChatSdkConnector).toBe(ChatSdkConnector);
     expect(pluginEntry.createFlamecastAgentClient).toBe(createFlamecastAgentClient);
     expect(pluginEntry.extractMessageText).toBe(extractMessageText);
+    expect(pluginEntry.SqlThreadAgentBindingStore).toBe(SqlThreadAgentBindingStore);
   });
 
   it("creates agents, prompts agents, and terminates agents", async () => {
@@ -382,7 +530,7 @@ describe("createFlamecastAgentClient", () => {
 
 describe("ChatSdkConnector", () => {
   it("creates agents on first mention, reuses them for follow-ups, and ignores empty messages", async () => {
-    const bindings = new InMemoryThreadAgentBindingStore();
+    const bindings = await createBindingsStore();
     const chat = createChatStub();
     const flamecast = createFlamecastStub();
     const connector = new ChatSdkConnector({
@@ -417,7 +565,11 @@ describe("ChatSdkConnector", () => {
       ],
     });
     expect(flamecast.promptAgent).toHaveBeenCalledWith("agent-1", "hello");
-    expect(bindings.getByThreadId("thread-1")?.agentId).toBe("agent-1");
+    expect(await bindings.getByThreadId("thread-1")).toEqual({
+      threadId: "thread-1",
+      agentId: "agent-1",
+      authToken: expect.any(String),
+    });
 
     await chat.emitSubscribed(firstThread, { text: "same-thread" });
 
@@ -428,11 +580,25 @@ describe("ChatSdkConnector", () => {
     expect(flamecast.createAgent).toHaveBeenCalledTimes(1);
     expect(flamecast.promptAgent).toHaveBeenNthCalledWith(2, "agent-1", "same-thread");
     expect(flamecast.promptAgent).toHaveBeenNthCalledWith(3, "agent-1", "follow-up");
-    expect(bindings.getByThreadId("thread-1")?.thread).toBe(refreshedThread);
+
+    const binding = await bindings.getByThreadId("thread-1");
+    if (!binding) {
+      throw new Error("Expected binding to exist");
+    }
+
+    const { client, transport } = await connectMcp(connector, binding.authToken);
+    await client.callTool({
+      name: "reply",
+      arguments: { text: "hello from MCP" },
+    });
+
+    expect(firstThread.post).not.toHaveBeenCalled();
+    expect(refreshedThread.post).toHaveBeenCalledWith("hello from MCP");
+    await transport.close();
   });
 
   it("stops cleanly and continues cleanup when one agent termination fails", async () => {
-    const bindings = new InMemoryThreadAgentBindingStore();
+    const bindings = await createBindingsStore();
     const chat = createChatStub();
     const flamecast = createFlamecastStub();
     flamecast.terminateAgent.mockRejectedValueOnce(new Error("boom"));
@@ -456,17 +622,16 @@ describe("ChatSdkConnector", () => {
 
     expect(flamecast.terminateAgent).toHaveBeenCalledWith("agent-1");
     expect(flamecast.terminateAgent).toHaveBeenCalledWith("agent-2");
-    expect(bindings.list()).toEqual([]);
+    expect(await bindings.list()).toEqual([]);
     expect(flamecast.createAgent).toHaveBeenCalledTimes(2);
   });
 
   it("serves health and webhook routes", async () => {
-    const bindings = new InMemoryThreadAgentBindingStore();
-    bindings.set({
+    const bindings = await createBindingsStore();
+    await bindings.set({
       threadId: "thread-1",
       agentId: "agent-1",
       authToken: "token-1",
-      thread: createThread("thread-1"),
     });
     const chat = createChatStub();
     const connector = new ChatSdkConnector({
@@ -505,7 +670,7 @@ describe("ChatSdkConnector", () => {
     const connector = new ChatSdkConnector({
       chat: createChatStub().chat,
       flamecast: createFlamecastStub(),
-      bindings: new InMemoryThreadAgentBindingStore(),
+      bindings: await createBindingsStore(),
       agent: {
         spawn: { command: "node" },
         cwd: "/workspace",
@@ -531,84 +696,12 @@ describe("ChatSdkConnector", () => {
     expect(await unknown.json()).toEqual({ error: "Unknown MCP auth token" });
   });
 
-  it("routes MCP reply, typing, subscribe, and unsubscribe tools to the bound thread", async () => {
-    const bindings = new InMemoryThreadAgentBindingStore();
-    const flamecast = createFlamecastStub();
-    const subscribedThread = createThread("thread-1");
-    bindings.set({
+  it("rejects MCP requests when the binding exists but the thread is not active", async () => {
+    const bindings = await createBindingsStore();
+    await bindings.set({
       threadId: "thread-1",
       agentId: "agent-1",
       authToken: "token-1",
-      thread: subscribedThread,
-    });
-
-    const connector = new ChatSdkConnector({
-      chat: createChatStub().chat,
-      flamecast,
-      bindings,
-      agent: {
-        spawn: { command: "node" },
-        cwd: "/workspace",
-      },
-      mcpEndpoint: "http://connector.test/mcp",
-    });
-
-    const client = new Client({ name: "connector-test", version: "1.0.0" }, { capabilities: {} });
-    const transport = new StreamableHTTPClientTransport(new URL("http://connector.test/mcp"), {
-      fetch: createAppFetch(connector.fetch),
-      requestInit: {
-        headers: {
-          "x-flamecast-chat-token": "token-1",
-        },
-      },
-    });
-
-    await client.connect(transport);
-    const tools = await client.listTools();
-
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      "chat.reply",
-      "chat.subscribe",
-      "chat.typing.start",
-      "chat.unsubscribe",
-    ]);
-
-    await client.callTool({
-      name: "chat.reply",
-      arguments: { text: "hello from MCP" },
-    });
-    await client.callTool({
-      name: "chat.typing.start",
-      arguments: {},
-    });
-    await client.callTool({
-      name: "chat.subscribe",
-      arguments: {},
-    });
-    await client.callTool({
-      name: "chat.unsubscribe",
-      arguments: {},
-    });
-
-    expect(subscribedThread.post).toHaveBeenCalledWith("hello from MCP");
-    expect(subscribedThread.startTyping).toHaveBeenCalledTimes(1);
-    expect(subscribedThread.subscribe).toHaveBeenCalledTimes(1);
-    expect(subscribedThread.unsubscribe).toHaveBeenCalledTimes(1);
-    expect(flamecast.terminateAgent).toHaveBeenCalledWith("agent-1");
-    expect(bindings.getByThreadId("thread-1")).toBeNull();
-
-    await transport.close();
-  });
-
-  it("treats missing typing support as a no-op", async () => {
-    const bindings = new InMemoryThreadAgentBindingStore();
-    bindings.set({
-      threadId: "thread-1",
-      agentId: "agent-1",
-      authToken: "token-1",
-      thread: createThread("thread-1", {
-        startTyping: undefined,
-      }),
     });
     const connector = new ChatSdkConnector({
       chat: createChatStub().chat,
@@ -621,20 +714,105 @@ describe("ChatSdkConnector", () => {
       mcpEndpoint: "http://connector.test/mcp",
     });
 
-    const client = new Client({ name: "connector-test", version: "1.0.0" }, { capabilities: {} });
-    const transport = new StreamableHTTPClientTransport(new URL("http://connector.test/mcp"), {
-      fetch: createAppFetch(connector.fetch),
-      requestInit: {
-        headers: {
-          "x-flamecast-chat-token": "token-1",
-        },
+    const response = await connector.fetch(
+      new Request("http://connector.test/mcp", {
+        method: "POST",
+        headers: { "x-flamecast-chat-token": "token-1" },
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Thread is not active in this connector process",
+    });
+  });
+
+  it("routes MCP reply, typing, subscribe, and unsubscribe tools to the bound thread", async () => {
+    const bindings = await createBindingsStore();
+    const flamecast = createFlamecastStub();
+    const subscribedThread = createThread("thread-1");
+    const connector = new ChatSdkConnector({
+      chat: createChatStub().chat,
+      flamecast,
+      bindings,
+      agent: {
+        spawn: { command: "node" },
+        cwd: "/workspace",
       },
+      mcpEndpoint: "http://connector.test/mcp",
     });
 
-    await client.connect(transport);
+    connector.start();
+    await connector.handleNewMention(subscribedThread, { text: "hello" });
+    const binding = await bindings.getByThreadId("thread-1");
+    if (!binding) {
+      throw new Error("Expected binding to exist");
+    }
+
+    const { client, transport } = await connectMcp(connector, binding.authToken);
+    const tools = await client.listTools();
+
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "reply",
+      "subscribe",
+      "typing.start",
+      "unsubscribe",
+    ]);
+
+    await client.callTool({
+      name: "reply",
+      arguments: { text: "hello from MCP" },
+    });
+    await client.callTool({
+      name: "typing.start",
+      arguments: {},
+    });
+    await client.callTool({
+      name: "subscribe",
+      arguments: {},
+    });
+    await client.callTool({
+      name: "unsubscribe",
+      arguments: {},
+    });
+
+    expect(subscribedThread.post).toHaveBeenCalledWith("hello from MCP");
+    expect(subscribedThread.startTyping).toHaveBeenCalledTimes(1);
+    expect(subscribedThread.subscribe).toHaveBeenCalledTimes(2);
+    expect(subscribedThread.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(flamecast.terminateAgent).toHaveBeenCalledWith("agent-1");
+    expect(await bindings.getByThreadId("thread-1")).toBeNull();
+
+    await transport.close();
+  });
+
+  it("treats missing typing support as a no-op", async () => {
+    const bindings = await createBindingsStore();
+    const thread = createThread("thread-1", {
+      startTyping: undefined,
+    });
+    const connector = new ChatSdkConnector({
+      chat: createChatStub().chat,
+      flamecast: createFlamecastStub(),
+      bindings,
+      agent: {
+        spawn: { command: "node" },
+        cwd: "/workspace",
+      },
+      mcpEndpoint: "http://connector.test/mcp",
+    });
+
+    connector.start();
+    await connector.handleNewMention(thread, { text: "hello" });
+    const binding = await bindings.getByThreadId("thread-1");
+    if (!binding) {
+      throw new Error("Expected binding to exist");
+    }
+
+    const { client, transport } = await connectMcp(connector, binding.authToken);
     await expect(
       client.callTool({
-        name: "chat.typing.start",
+        name: "typing.start",
         arguments: {},
       }),
     ).resolves.toBeTruthy();

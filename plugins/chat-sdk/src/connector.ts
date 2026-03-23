@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
-import type {
-  ChatSdkThread,
-  InMemoryThreadAgentBindingStore,
-  ThreadAgentBinding,
-} from "./bindings.js";
+import type { ChatSdkThread, SqlThreadAgentBindingStore, ThreadAgentBinding } from "./bindings.js";
 import {
   createConnectorMcpServer,
   type FlamecastAgentClient,
@@ -34,7 +30,7 @@ export type ChatSdkClient = {
 export type ChatSdkConnectorOptions = {
   chat: ChatSdkClient;
   flamecast: FlamecastAgentClient;
-  bindings: InMemoryThreadAgentBindingStore;
+  bindings: SqlThreadAgentBindingStore;
   agent: Omit<FlamecastCreateAgentBody, "mcpServers">;
   mcpEndpoint: string | URL;
   mcpHeaderName?: string;
@@ -46,12 +42,13 @@ export type { ChatSdkThread } from "./bindings.js";
 export class ChatSdkConnector {
   private readonly chat: ChatSdkClient;
   private readonly flamecast: FlamecastAgentClient;
-  private readonly bindings: InMemoryThreadAgentBindingStore;
+  private readonly bindings: SqlThreadAgentBindingStore;
   private readonly agent: Omit<FlamecastCreateAgentBody, "mcpServers">;
   private readonly mcpEndpoint: URL;
   private readonly mcpHeaderName: string;
   private readonly mcpServerName?: string;
   private readonly app = new Hono();
+  private readonly threads = new Map<string, ChatSdkThread>();
   private handlersInstalled = false;
   private active = false;
 
@@ -67,10 +64,10 @@ export class ChatSdkConnector {
     this.mcpServerName = options.mcpServerName;
     this.fetch = async (request: Request) => this.app.fetch(request);
 
-    this.app.get("/health", (c) =>
+    this.app.get("/health", async (c) =>
       c.json({
         status: "ok",
-        bindings: this.bindings.list().length,
+        bindings: (await this.bindings.list()).length,
       }),
     );
     this.app.post("/webhooks/:platform", async (c) =>
@@ -94,13 +91,14 @@ export class ChatSdkConnector {
 
   async stop(): Promise<void> {
     this.active = false;
-    const bindings = this.bindings.list();
+    const bindings = await this.bindings.list();
     await Promise.all(
       bindings.map(async (binding) => {
         await this.flamecast.terminateAgent(binding.agentId).catch(() => undefined);
       }),
     );
-    this.bindings.clear();
+    await this.bindings.clear();
+    this.threads.clear();
   }
 
   async handleNewMention(thread: ChatSdkThread, message: ChatSdkMessage): Promise<void> {
@@ -133,15 +131,24 @@ export class ChatSdkConnector {
       return this.jsonError("Missing MCP auth token", 401);
     }
 
-    const binding = this.bindings.getByAuthToken(token);
+    const binding = await this.bindings.getByAuthToken(token);
     if (!binding) {
       return this.jsonError("Unknown MCP auth token", 401);
     }
 
+    const thread = this.threads.get(binding.threadId);
+    if (!thread) {
+      return this.jsonError("Thread is not active in this connector process", 409);
+    }
+
     return handleChatMcpRequest(request, {
       binding,
+      thread,
       bindings: this.bindings,
       flamecast: this.flamecast,
+      forgetThread: (threadId) => {
+        this.threads.delete(threadId);
+      },
     });
   }
 
@@ -158,16 +165,12 @@ export class ChatSdkConnector {
       return;
     }
 
-    let binding = this.bindings.getByThreadId(thread.id);
+    this.threads.set(thread.id, thread);
+
+    let binding = await this.bindings.getByThreadId(thread.id);
     if (!binding) {
       await thread.subscribe?.();
       binding = await this.createBinding(thread);
-    } else if (binding.thread !== thread) {
-      binding = {
-        ...binding,
-        thread,
-      };
-      this.bindings.set(binding);
     }
 
     await this.flamecast.promptAgent(binding.agentId, text);
@@ -188,9 +191,8 @@ export class ChatSdkConnector {
       threadId: thread.id,
       agentId: agent.id,
       authToken,
-      thread,
     };
-    this.bindings.set(binding);
+    await this.bindings.set(binding);
     return binding;
   }
 

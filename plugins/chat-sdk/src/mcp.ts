@@ -1,13 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
-import type { InMemoryThreadAgentBindingStore, ThreadAgentBinding } from "./bindings.js";
+import type { ChatSdkThread, SqlThreadAgentBindingStore, ThreadAgentBinding } from "./bindings.js";
 import type { FlamecastAgentClient } from "./flamecast.js";
 
 type ChatToolsContext = {
   binding: ThreadAgentBinding;
-  bindings: InMemoryThreadAgentBindingStore;
+  thread: ChatSdkThread;
+  bindings: SqlThreadAgentBindingStore;
   flamecast: Pick<FlamecastAgentClient, "terminateAgent">;
+  forgetThread: (threadId: string) => void;
 };
 
 export function createChatToolsServer(context: ChatToolsContext): McpServer {
@@ -17,17 +19,17 @@ export function createChatToolsServer(context: ChatToolsContext): McpServer {
   });
 
   server.registerTool(
-    "chat.reply",
+    "reply",
     {
       title: "Reply to chat",
       description:
-        "Send a visible reply to the currently bound chat thread. If you intend to reply after more than trivial reasoning, call chat.typing.start before thinking through the final response.",
+        "Send a visible reply to the currently bound chat thread. If you intend to reply after more than trivial reasoning, call typing.start before thinking through the final response.",
       inputSchema: {
         text: z.string().min(1),
       },
     },
     async ({ text }) => {
-      await context.binding.thread.post(text);
+      await context.thread.post(text);
       return {
         content: [{ type: "text", text: "Reply sent." }],
       };
@@ -35,14 +37,14 @@ export function createChatToolsServer(context: ChatToolsContext): McpServer {
   );
 
   server.registerTool(
-    "chat.typing.start",
+    "typing.start",
     {
       title: "Start typing",
       description:
-        "Show a typing indicator in the currently bound thread before longer reasoning when you expect to send a chat.reply.",
+        "Show a typing indicator in the currently bound thread before longer reasoning when you expect to send a reply.",
     },
     async () => {
-      await context.binding.thread.startTyping?.();
+      await context.thread.startTyping?.();
       return {
         content: [{ type: "text", text: "Typing indicator started." }],
       };
@@ -50,13 +52,13 @@ export function createChatToolsServer(context: ChatToolsContext): McpServer {
   );
 
   server.registerTool(
-    "chat.subscribe",
+    "subscribe",
     {
       title: "Subscribe to thread",
       description: "Keep listening to follow-up messages in the currently bound chat thread.",
     },
     async () => {
-      await context.binding.thread.subscribe?.();
+      await context.thread.subscribe?.();
       return {
         content: [{ type: "text", text: "Subscribed to thread." }],
       };
@@ -64,16 +66,17 @@ export function createChatToolsServer(context: ChatToolsContext): McpServer {
   );
 
   server.registerTool(
-    "chat.unsubscribe",
+    "unsubscribe",
     {
       title: "Unsubscribe from thread",
       description:
         "Stop listening to the currently bound chat thread and terminate the dedicated Flamecast agent for it.",
     },
     async () => {
-      await context.binding.thread.unsubscribe?.();
+      await context.thread.unsubscribe?.();
       await context.flamecast.terminateAgent(context.binding.agentId);
-      context.bindings.deleteByThreadId(context.binding.threadId);
+      await context.bindings.deleteByThreadId(context.binding.threadId);
+      context.forgetThread(context.binding.threadId);
       return {
         content: [{ type: "text", text: "Unsubscribed from thread." }],
       };
