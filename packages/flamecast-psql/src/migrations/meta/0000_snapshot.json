@@ -1,12 +1,12 @@
 {
-  "id": "b8fe3953-0664-43a1-a2d0-c2bb9891375d",
-  "prevId": "34a216b8-1f83-4276-a476-9cc2d166ce32",
+  "id": "689149ef-ca7f-4428-971a-155c960ade17",
+  "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.agent_templates": {
+    "flamecast.agent_templates": {
       "name": "agent_templates",
-      "schema": "",
+      "schema": "flamecast",
       "columns": {
         "id": {
           "name": "id",
@@ -37,14 +37,14 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": "false"
+          "default": false
         },
         "sort_order": {
           "name": "sort_order",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": "0"
+          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -96,9 +96,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.session_logs": {
+    "flamecast.session_logs": {
       "name": "session_logs",
-      "schema": "",
+      "schema": "flamecast",
       "columns": {
         "id": {
           "name": "id",
@@ -159,6 +159,7 @@
           "name": "session_logs_session_id_sessions_id_fk",
           "tableFrom": "session_logs",
           "tableTo": "sessions",
+          "schemaTo": "flamecast",
           "columnsFrom": ["session_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -171,9 +172,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.sessions": {
+    "flamecast.sessions": {
       "name": "sessions",
-      "schema": "",
+      "schema": "flamecast",
       "columns": {
         "id": {
           "name": "id",
@@ -229,7 +230,9 @@
     }
   },
   "enums": {},
-  "schemas": {},
+  "schemas": {
+    "flamecast": "flamecast"
+  },
   "sequences": {},
   "roles": {},
   "policies": {},

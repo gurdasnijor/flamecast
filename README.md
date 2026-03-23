@@ -233,24 +233,27 @@ export default flamecast.fetch;
 
 ### Storage options
 
-| Value | Description |
-|---|---|
-| custom `FlamecastStorage` | Bring your own storage implementation |
+The SDK defaults to an in-memory backend. Use `@flamecast/storage-psql` for SQL-backed persistence:
 
-The SDK defaults to an in-memory backend. `apps/server` provides a `createServerStorage()` helper that resolves PGLite and Postgres configurations:
+```ts
+import { createPsqlStorage } from "@flamecast/storage-psql";
 
-| Value | Description |
+// Postgres
+const storage = await createPsqlStorage({ url: "postgres://localhost/flamecast" });
+
+// Embedded PGLite (default)
+const storage = await createPsqlStorage();
+```
+
+| Option | Description |
 |---|---|
-| `"pglite"` | Embedded Postgres on disk |
-| `{ type: "pglite", dataDir }` | Embedded Postgres with explicit data directory |
-| `{ type: "postgres", url }` | External Postgres |
-| custom `FlamecastStorage` | Bring your own storage implementation |
+| `url` | Postgres connection string |
+| `dataDir` | PGLite data directory (default: `<cwd>/.flamecast/pglite`) |
 
 ### Environment variables
 
 | Variable | Purpose |
 |---|---|
-| `FLAMECAST_POSTGRES_URL` | External Postgres connection string |
 | `FLAMECAST_PGLITE_DIR` | Override the default PGLite data directory (`<cwd>/.flamecast/pglite`) |
 
 ---
