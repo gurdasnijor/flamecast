@@ -37,7 +37,6 @@ describe("flamecast createSession MCP configuration", () => {
 
     const { Flamecast } = await import("../src/flamecast/index.js?create-session-mcp");
     const flamecast = new Flamecast({
-      storage: "memory",
       runtimeProviders: {
         local: {
           start: vi.fn(async () => ({

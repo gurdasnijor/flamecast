@@ -296,7 +296,7 @@ describe("flamecast orchestration internals", () => {
   });
 
   test("queues concurrent prompts per session", async () => {
-    const flamecast = new Flamecast({ storage: "memory" });
+    const flamecast = new Flamecast();
     const storage = attachStorage(flamecast);
     await storage.createSession(createMeta("session-1"));
 
