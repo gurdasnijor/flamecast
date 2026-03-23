@@ -153,6 +153,17 @@ export const PromptResultSchema = z.object({
 });
 export type PromptResult = z.infer<typeof PromptResultSchema>;
 
+export const AgentSnapshotQuerySchema = z.object({
+  includeFileSystem: z.enum(["true", "false"]).optional(),
+  showAllFiles: z.enum(["true", "false"]).optional(),
+});
+export type AgentSnapshotQuery = z.infer<typeof AgentSnapshotQuerySchema>;
+
+export const FilePreviewQuerySchema = z.object({
+  path: z.string().optional(),
+});
+export type FilePreviewQuery = z.infer<typeof FilePreviewQuerySchema>;
+
 export const PermissionResponseBodySchema = z.union([
   z.object({ optionId: z.string() }),
   z.object({ outcome: z.literal("cancelled") }),

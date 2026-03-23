@@ -8,7 +8,7 @@ import {
   type ChatSdkThread,
   type FlamecastAgentClient,
   type FlamecastCreateAgentBody,
-  FlamecastHttpClient,
+  createFlamecastAgentClient,
   InMemoryThreadAgentBindingStore,
   createConnectorMcpServer,
   extractMessageText,
@@ -193,27 +193,48 @@ describe("extractMessageText", () => {
   });
 });
 
-describe("FlamecastHttpClient", () => {
+describe("createFlamecastAgentClient", () => {
   it("re-exports the plugin entrypoint surface", () => {
     expect(pluginEntry.ChatSdkConnector).toBe(ChatSdkConnector);
-    expect(pluginEntry.FlamecastHttpClient).toBe(FlamecastHttpClient);
+    expect(pluginEntry.createFlamecastAgentClient).toBe(createFlamecastAgentClient);
     expect(pluginEntry.extractMessageText).toBe(extractMessageText);
   });
 
   it("creates agents, prompts agents, and terminates agents", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-    fetchImpl.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: "agent-1" }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    fetchImpl.mockResolvedValueOnce(
-      new Response(JSON.stringify({ stopReason: "end_turn" }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    fetchImpl.mockResolvedValueOnce(new Response(null, { status: 200 }));
-    const client = new FlamecastHttpClient({
+    const requests: Array<{ method: string; url: string }> = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      requests.push({ method: request.method, url: request.url });
+      const index = requests.length;
+
+      if (index === 1) {
+        return new Response(
+          JSON.stringify({
+            id: "agent-1",
+            agentName: "Agent",
+            spawn: { command: "node", args: ["agent.js"] },
+            startedAt: "2026-03-23T00:00:00.000Z",
+            lastUpdatedAt: "2026-03-23T00:00:00.000Z",
+            status: "active",
+            logs: [],
+            pendingPermission: null,
+            fileSystem: null,
+          }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (index === 2) {
+        return new Response(JSON.stringify({ stopReason: "end_turn" }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(null, { status: 200 });
+    });
+    const client = createFlamecastAgentClient({
       baseUrl: "http://flamecast.test",
       fetch: fetchImpl,
     });
@@ -231,28 +252,14 @@ describe("FlamecastHttpClient", () => {
     });
     await client.terminateAgent("agent-1");
 
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      1,
-      new URL("/api/agents", "http://flamecast.test"),
-      expect.objectContaining({
-        method: "POST",
-      }),
-    );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      2,
-      new URL("/api/agents/agent-1/prompt", "http://flamecast.test"),
-      expect.objectContaining({
-        method: "POST",
-      }),
-    );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      3,
-      new URL("/api/agents/agent-1", "http://flamecast.test"),
-      { method: "DELETE" },
-    );
+    expect(requests).toEqual([
+      { method: "POST", url: "http://flamecast.test/api/agents" },
+      { method: "POST", url: "http://flamecast.test/api/agents/agent-1/prompt" },
+      { method: "DELETE", url: "http://flamecast.test/api/agents/agent-1" },
+    ]);
   });
 
-  it("surfaces JSON and non-JSON error responses", async () => {
+  it("surfaces the shared client error messages and supports the global fetch fallback", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     fetchImpl.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "agent failed" }), {
@@ -263,7 +270,7 @@ describe("FlamecastHttpClient", () => {
     fetchImpl.mockResolvedValueOnce(
       new Response("bad gateway", { status: 502, statusText: "Bad Gateway" }),
     );
-    const client = new FlamecastHttpClient({
+    const client = createFlamecastAgentClient({
       baseUrl: "http://flamecast.test",
       fetch: fetchImpl,
     });
@@ -273,29 +280,47 @@ describe("FlamecastHttpClient", () => {
         spawn: { command: "node" },
         cwd: "/workspace",
       }),
-    ).rejects.toThrow("agent failed");
-    await expect(client.terminateAgent("agent-1")).rejects.toThrow("Bad Gateway");
-  });
+    ).rejects.toThrow("Failed to create session");
+    await expect(client.terminateAgent("agent-1")).rejects.toThrow("Failed to terminate session");
 
-  it("uses the global fetch fallback and default MCP header metadata", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-    fetchImpl.mockResolvedValueOnce(
+    const globalFetch = vi.fn<typeof fetch>();
+    globalFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ stopReason: "end_turn" }), {
         headers: { "content-type": "application/json" },
       }),
     );
-    vi.stubGlobal("fetch", fetchImpl);
+    globalFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ stopReason: "end_turn" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", globalFetch);
 
-    const client = new FlamecastHttpClient({
-      baseUrl: "http://flamecast.test",
+    const fallbackClient = createFlamecastAgentClient({
+      baseUrl: "http://flamecast.test/api/",
+    });
+    const alreadyApiClient = createFlamecastAgentClient({
+      baseUrl: "http://flamecast.test/api",
     });
 
-    expect(await client.promptAgent("agent 1", "hello")).toEqual({
+    expect(await fallbackClient.promptAgent("agent 1", "hello")).toEqual({
       stopReason: "end_turn",
     });
-    expect(fetchImpl).toHaveBeenCalledWith(
-      new URL("/api/agents/agent%201/prompt", "http://flamecast.test"),
-      expect.objectContaining({ method: "POST" }),
+    expect(await alreadyApiClient.promptAgent("agent 2", "hello again")).toEqual({
+      stopReason: "end_turn",
+    });
+
+    const firstRequest = globalFetch.mock.calls[0]?.[0];
+    const secondRequest = globalFetch.mock.calls[1]?.[0];
+    const firstNormalized =
+      firstRequest instanceof Request ? firstRequest.url : String(firstRequest);
+    const secondNormalized =
+      secondRequest instanceof Request ? secondRequest.url : String(secondRequest);
+    expect(decodeURIComponent(firstNormalized)).toBe(
+      "http://flamecast.test/api/agents/agent 1/prompt",
+    );
+    expect(decodeURIComponent(secondNormalized)).toBe(
+      "http://flamecast.test/api/agents/agent 2/prompt",
     );
     expect(createConnectorMcpServer("https://connector.test/mcp", "secret")).toEqual({
       type: "http",
@@ -319,17 +344,39 @@ describe("FlamecastHttpClient", () => {
     });
   });
 
-  it("falls back to a synthesized status message for non-json errors without status text", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-    fetchImpl.mockResolvedValueOnce(new Response("bad gateway", { status: 502, statusText: "" }));
-    const client = new FlamecastHttpClient({
+  it("passes template-based agent creation through without synthesizing spawn args", async () => {
+    const requests: Request[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      requests.push(request);
+      return new Response(
+        JSON.stringify({
+          id: "agent-template",
+          agentName: "Template agent",
+          spawn: { command: "node", args: [] },
+          startedAt: "2026-03-23T00:00:00.000Z",
+          lastUpdatedAt: "2026-03-23T00:00:00.000Z",
+          status: "active",
+          logs: [],
+          pendingPermission: null,
+          fileSystem: null,
+        }),
+        {
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    const client = createFlamecastAgentClient({
       baseUrl: "http://flamecast.test",
       fetch: fetchImpl,
     });
 
-    await expect(client.terminateAgent("agent-1")).rejects.toThrow(
-      "Request failed with status 502",
-    );
+    await expect(client.createAgent({ agentTemplateId: "codex" })).resolves.toEqual({
+      id: "agent-template",
+    });
+
+    expect(requests).toHaveLength(1);
+    await expect(requests[0]?.json()).resolves.toEqual({ agentTemplateId: "codex" });
   });
 });
 

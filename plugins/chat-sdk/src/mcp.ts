@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import type { InMemoryThreadAgentBindingStore, ThreadAgentBinding } from "./bindings.js";
-import type { FlamecastAgentClient } from "./flamecast-client.js";
+import type { FlamecastAgentClient } from "./flamecast.js";
 
 type ChatToolsContext = {
   binding: ThreadAgentBinding;

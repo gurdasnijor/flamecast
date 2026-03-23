@@ -58,11 +58,11 @@ route these paths to it:
 import { serve } from "@hono/node-server";
 import {
   ChatSdkConnector,
-  FlamecastHttpClient,
+  createFlamecastAgentClient,
   InMemoryThreadAgentBindingStore,
 } from "@flamecast/plugin-chat-sdk";
 
-const flamecast = new FlamecastHttpClient({
+const flamecast = createFlamecastAgentClient({
   baseUrl: "http://127.0.0.1:3001",
 });
 
@@ -100,8 +100,8 @@ Expected collaborators:
 - `src/connector.ts`
   Main orchestration. Installs Chat SDK handlers, manages thread bindings, and
   bridges HTTP webhook traffic and MCP requests.
-- `src/flamecast-client.ts`
-  Thin typed HTTP client for Flamecast plus the helper that builds the MCP
+- `src/flamecast.ts`
+  Thin adapter over `@flamecast/sdk/client` plus the helper that builds the MCP
   server descriptor attached during agent creation.
 - `src/mcp.ts`
   Registers the chat MCP tools and serves the StreamableHTTP transport.

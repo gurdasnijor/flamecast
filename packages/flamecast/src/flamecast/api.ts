@@ -3,7 +3,9 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import type { Flamecast } from "./index.js";
 import {
+  AgentSnapshotQuerySchema,
   CreateSessionBodySchema,
+  FilePreviewQuerySchema,
   PermissionResponseBodySchema,
   PromptBodySchema,
   RegisterAgentTemplateBodySchema,
@@ -36,10 +38,14 @@ function toStringMessage(error: unknown): string {
 
 export function createApi(flamecast: FlamecastApi) {
   // The agent routes are public API sugar over the current single-session runtime model.
-  const getAgentSnapshot = async (c: Context, agentId: string) => {
+  const getAgentSnapshot = async (
+    c: Context,
+    agentId: string,
+    query: { includeFileSystem?: "true" | "false"; showAllFiles?: "true" | "false" },
+  ) => {
     try {
-      const includeFileSystem = c.req.query("includeFileSystem") === "true";
-      const showAllFiles = c.req.query("showAllFiles") === "true";
+      const includeFileSystem = query.includeFileSystem === "true";
+      const showAllFiles = query.showAllFiles === "true";
       const session = await flamecast.getSession(agentId, {
         ...(includeFileSystem ? { includeFileSystem: true } : {}),
         ...(showAllFiles ? { showAllFiles: true } : {}),
@@ -80,8 +86,14 @@ export function createApi(flamecast: FlamecastApi) {
         return c.json({ error: toStringMessage(error) }, 400);
       }
     })
-    .get("/agents/:agentId", async (c) => getAgentSnapshot(c, c.req.param("agentId")))
-    .get("/agents/:agentId/", async (c) => getAgentSnapshot(c, c.req.param("agentId")))
+    .get("/agents/:agentId", zValidator("query", AgentSnapshotQuerySchema), async (c) => {
+      const query = c.req.valid("query");
+      return getAgentSnapshot(c, c.req.param("agentId"), query);
+    })
+    .get("/agents/:agentId/", zValidator("query", AgentSnapshotQuerySchema), async (c) => {
+      const query = c.req.valid("query");
+      return getAgentSnapshot(c, c.req.param("agentId"), query);
+    })
     .get("/agents/:agentId/events", async (c) => {
       const agentId = c.req.param("agentId");
       try {
@@ -115,8 +127,8 @@ export function createApi(flamecast: FlamecastApi) {
         }
       });
     })
-    .get("/agents/:agentId/file", async (c) => {
-      const path = c.req.query("path");
+    .get("/agents/:agentId/file", zValidator("query", FilePreviewQuerySchema), async (c) => {
+      const { path } = c.req.valid("query");
       if (!path) {
         return c.json({ error: "Missing path" }, 400);
       }

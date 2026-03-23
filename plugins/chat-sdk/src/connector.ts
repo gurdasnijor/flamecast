@@ -9,7 +9,7 @@ import {
   createConnectorMcpServer,
   type FlamecastAgentClient,
   type FlamecastCreateAgentBody,
-} from "./flamecast-client.js";
+} from "./flamecast.js";
 import { handleChatMcpRequest } from "./mcp.js";
 
 export type ChatSdkMessage = {
