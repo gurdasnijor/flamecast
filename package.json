@@ -22,7 +22,8 @@
     "check": "pnpm ci:lint && pnpm build && pnpm test:api:coverage && pnpm knip",
     "alchemy:deploy": "turbo run alchemy:deploy --filter=@acp/flamecast",
     "alchemy:dev": "turbo run alchemy:dev --filter=@acp/flamecast",
-    "alchemy:destroy": "turbo run alchemy:destroy --filter=@acp/flamecast"
+    "alchemy:destroy": "turbo run alchemy:destroy --filter=@acp/flamecast",
+    "clean": "git clean -ffdX"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.30.0",
