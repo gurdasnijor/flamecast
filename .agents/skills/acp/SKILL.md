@@ -2,8 +2,8 @@
 name: Acp
 description: Use when implementing or integrating agents and clients that communicate via the Agent Client Protocol. Reach for this skill when building AI coding agents, editor integrations, or tools that need to standardize communication between code editors/IDEs and AI agents.
 metadata:
-    mintlify-proj: acp
-    version: "1.0"
+  mintlify-proj: acp
+  version: "1.0"
 ---
 
 # Agent Client Protocol (ACP) Skill
@@ -15,6 +15,7 @@ The Agent Client Protocol (ACP) is a standardized JSON-RPC 2.0-based protocol fo
 ACP supports both local agents (running as subprocesses via stdio) and remote agents (via HTTP/WebSocket). The protocol handles initialization, session management, prompt turns, tool execution, file system access, and extensibility through custom methods and metadata fields.
 
 **Key files and concepts:**
+
 - JSON-RPC 2.0 message format (requests, responses, notifications)
 - Transport: stdio (required), HTTP (draft)
 - Core methods: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update`
@@ -39,27 +40,29 @@ Reach for this skill when:
 
 ### Core Message Types
 
-| Type | Direction | Purpose |
-|------|-----------|---------|
-| `initialize` | Client → Agent | Negotiate protocol version and capabilities |
-| `session/new` | Client → Agent | Create new conversation session |
-| `session/load` | Client → Agent | Resume existing session (if supported) |
-| `session/prompt` | Client → Agent | Send user message with content |
-| `session/cancel` | Client → Agent | Cancel ongoing operations (notification) |
-| `session/update` | Agent → Client | Stream output, tool calls, plans (notification) |
-| `session/request_permission` | Agent → Client | Request user approval for tool execution |
-| `fs/read_text_file` | Agent → Client | Read file from client's filesystem |
-| `fs/write_text_file` | Agent → Client | Write file to client's filesystem |
-| `terminal/create` | Agent → Client | Create terminal for command execution |
+| Type                         | Direction      | Purpose                                         |
+| ---------------------------- | -------------- | ----------------------------------------------- |
+| `initialize`                 | Client → Agent | Negotiate protocol version and capabilities     |
+| `session/new`                | Client → Agent | Create new conversation session                 |
+| `session/load`               | Client → Agent | Resume existing session (if supported)          |
+| `session/prompt`             | Client → Agent | Send user message with content                  |
+| `session/cancel`             | Client → Agent | Cancel ongoing operations (notification)        |
+| `session/update`             | Agent → Client | Stream output, tool calls, plans (notification) |
+| `session/request_permission` | Agent → Client | Request user approval for tool execution        |
+| `fs/read_text_file`          | Agent → Client | Read file from client's filesystem              |
+| `fs/write_text_file`         | Agent → Client | Write file to client's filesystem               |
+| `terminal/create`            | Agent → Client | Create terminal for command execution           |
 
 ### Capability Flags
 
 **Client capabilities** (advertise in `initialize`):
+
 - `fs.readTextFile` - Can read files
 - `fs.writeTextFile` - Can write files
 - `terminal` - Can create and manage terminals
 
 **Agent capabilities** (respond in `initialize`):
+
 - `loadSession` - Supports `session/load`
 - `promptCapabilities.image` - Accepts image content
 - `promptCapabilities.audio` - Accepts audio content
@@ -69,13 +72,13 @@ Reach for this skill when:
 
 ### Content Types
 
-| Type | Use Case | Capability Required |
-|------|----------|-------------------|
-| `text` | Plain text messages | None (baseline) |
-| `image` | Visual context (base64) | `promptCapabilities.image` |
-| `audio` | Audio data (base64) | `promptCapabilities.audio` |
-| `resource` | Embedded file content | `promptCapabilities.embeddedContext` |
-| `resource_link` | Reference to external resource | None |
+| Type            | Use Case                       | Capability Required                  |
+| --------------- | ------------------------------ | ------------------------------------ |
+| `text`          | Plain text messages            | None (baseline)                      |
+| `image`         | Visual context (base64)        | `promptCapabilities.image`           |
+| `audio`         | Audio data (base64)            | `promptCapabilities.audio`           |
+| `resource`      | Embedded file content          | `promptCapabilities.embeddedContext` |
+| `resource_link` | Reference to external resource | None                                 |
 
 ### Tool Call Kinds
 
@@ -89,29 +92,29 @@ Reach for this skill when:
 
 ### When to Use Session Modes vs. Config Options
 
-| Scenario | Use | Reason |
-|----------|-----|--------|
-| Simple on/off toggles | Config Options | Preferred, more flexible |
-| Model selection | Config Options | Preferred, more flexible |
-| Reasoning levels | Config Options | Preferred, more flexible |
-| Legacy compatibility | Session Modes | Modes deprecated, use for backwards compat only |
+| Scenario              | Use            | Reason                                          |
+| --------------------- | -------------- | ----------------------------------------------- |
+| Simple on/off toggles | Config Options | Preferred, more flexible                        |
+| Model selection       | Config Options | Preferred, more flexible                        |
+| Reasoning levels      | Config Options | Preferred, more flexible                        |
+| Legacy compatibility  | Session Modes  | Modes deprecated, use for backwards compat only |
 
 ### When to Request Permission vs. Auto-Execute
 
-| Scenario | Approach | Reason |
-|----------|----------|--------|
-| Destructive operations (delete, modify) | Request permission | User safety |
-| Reading files | Auto-execute | Non-destructive, agent needs context |
-| Executing code | Request permission | Security risk |
-| Fetching external data | Auto-execute | Non-destructive |
+| Scenario                                | Approach           | Reason                               |
+| --------------------------------------- | ------------------ | ------------------------------------ |
+| Destructive operations (delete, modify) | Request permission | User safety                          |
+| Reading files                           | Auto-execute       | Non-destructive, agent needs context |
+| Executing code                          | Request permission | Security risk                        |
+| Fetching external data                  | Auto-execute       | Non-destructive                      |
 
 ### Transport Selection
 
-| Transport | Use When | Support |
-|-----------|----------|---------|
-| stdio | Local agents, subprocess model | Required for all agents |
-| HTTP | Remote agents, cloud deployment | Optional, check `mcpCapabilities.http` |
-| SSE | Legacy remote agents | Deprecated by MCP spec |
+| Transport | Use When                        | Support                                |
+| --------- | ------------------------------- | -------------------------------------- |
+| stdio     | Local agents, subprocess model  | Required for all agents                |
+| HTTP      | Remote agents, cloud deployment | Optional, check `mcpCapabilities.http` |
+| SSE       | Legacy remote agents            | Deprecated by MCP spec                 |
 
 ## Workflow
 
@@ -185,7 +188,7 @@ Reach for this skill when:
 - **MCP server connection**: Agents must connect to all MCP servers specified by the client; failure to do so limits available tools.
 - **Permission response timing**: Clients must respond to `session/request_permission` before the agent can proceed; don't leave requests hanging.
 - **Deprecated session modes**: Session modes are deprecated in favor of config options; support both for backwards compatibility but prefer config options.
-- **_meta field safety**: Implementations must not make assumptions about values in `_meta` fields; treat them as opaque extensions.
+- **\_meta field safety**: Implementations must not make assumptions about values in `_meta` fields; treat them as opaque extensions.
 - **Tool call updates are partial**: When sending `tool_call_update`, only include fields that changed; omitted fields retain previous values.
 
 ## Verification Checklist
@@ -214,6 +217,7 @@ Before submitting agent or client implementations:
 **Comprehensive navigation:** https://agentclientprotocol.com/llms.txt
 
 **Critical documentation pages:**
+
 - [Protocol Overview](https://agentclientprotocol.com/protocol/overview) — Core message flow and baseline methods
 - [Initialization](https://agentclientprotocol.com/protocol/initialization) — Version and capability negotiation
 - [Prompt Turn](https://agentclientprotocol.com/protocol/prompt-turn) — Complete conversation lifecycle with tool calls
