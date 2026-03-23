@@ -2,9 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentTemplate,
   CreateSessionBody,
-  FilePreview,
-  PermissionResponseBody,
-  PromptBody,
   RegisterAgentTemplateBody,
   Session,
 } from "../../src/shared/session.js";
@@ -33,13 +30,6 @@ const sampleSession: Session = {
 
 const sampleAgentId = sampleSession.id;
 
-const sampleFilePreview: FilePreview = {
-  path: "src/app.tsx",
-  content: "console.log('preview');\n",
-  truncated: false,
-  maxChars: 20_000,
-};
-
 function createFlamecastStub(overrides: Partial<FlamecastApi> = {}): FlamecastApi {
   return {
     terminateSession: vi.fn(async () => undefined),
@@ -48,28 +38,14 @@ function createFlamecastStub(overrides: Partial<FlamecastApi> = {}): FlamecastAp
       async (_id: string, _opts?: { includeFileSystem?: boolean; showAllFiles?: boolean }) =>
         sampleSession,
     ),
-    getFilePreview: vi.fn(async (_id: string, _path: string) => sampleFilePreview),
     listSessions: vi.fn(async () => [sampleSession]),
     listAgentTemplates: vi.fn(async () => [sampleAgentTemplate]),
-    promptSession: vi.fn(async (_id: string, _text: string) => ({
-      stopReason: "end_turn" as const,
-    })),
     registerAgentTemplate: vi.fn(async (body: RegisterAgentTemplateBody) => ({
       id: "registered-template",
       name: body.name,
       spawn: body.spawn,
       runtime: body.runtime ?? { provider: "local" },
     })),
-    respondToPermission: vi.fn(
-      async (_id: string, _requestId: string, _body: PermissionResponseBody) => undefined,
-    ),
-    subscribe: vi.fn((_sessionId: string, _callback: (event: unknown) => void) => () => {}),
-    getQueueState: vi.fn(async (_id: string) => ({
-      processing: false,
-      items: [],
-      size: 0,
-    })),
-    cancelQueuedPrompt: vi.fn(async (_id: string, _queueId: string) => undefined),
     ...overrides,
   };
 }
@@ -299,43 +275,12 @@ describe("API server surface", () => {
     });
   });
 
-  it("fetches a file preview", async () => {
+  it("returns 404 for file preview route (removed)", async () => {
     const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
 
-    const response = await app.request(
-      `/api/agents/${sampleAgentId}/file?path=${encodeURIComponent(sampleFilePreview.path)}`,
-    );
-
-    expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual(sampleFilePreview);
-    expect(flamecast.getFilePreview).toHaveBeenCalledWith(sampleAgentId, sampleFilePreview.path);
-  });
-
-  it("returns 400 when file preview path is missing", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/file`);
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "Missing path" });
-  });
-
-  it("returns 400 for file preview errors", async () => {
-    const flamecast = createFlamecastStub({
-      getFilePreview: vi.fn(async () => {
-        throw new Error("preview failed");
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(
-      `/api/agents/${sampleAgentId}/file?path=${encodeURIComponent(sampleFilePreview.path)}`,
-    );
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "preview failed" });
+    const response = await app.request(`/api/agents/${sampleAgentId}/file?path=test.txt`);
+    expect(response.status).toBe(404);
   });
 
   it("returns 404 for unknown agents", async () => {
@@ -350,146 +295,6 @@ describe("API server surface", () => {
 
     expect(response.status).toBe(404);
     expect(await readJson(response)).toEqual({ error: "Agent not found" });
-  });
-
-  it("sends prompts", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "hello" } satisfies PromptBody),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ stopReason: "end_turn" });
-  });
-
-  it("rejects invalid prompt payloads", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it("returns prompt errors from Error values", async () => {
-    const flamecast = createFlamecastStub({
-      promptSession: vi.fn(async () => {
-        throw new Error("prompt blocked");
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "hello" } satisfies PromptBody),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "prompt blocked" });
-  });
-
-  it("returns prompt errors from non-Error values", async () => {
-    const flamecast = createFlamecastStub({
-      promptSession: vi.fn(async () => {
-        throw "prompt failed";
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "hello" } satisfies PromptBody),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "Unknown error" });
-  });
-
-  it("responds to permission requests", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request("/api/agents/session-1/permissions/request-1", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ optionId: "allow" } satisfies PermissionResponseBody),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ ok: true });
-  });
-
-  it("supports cancelled permission responses", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request("/api/agents/session-1/permissions/request-1", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ outcome: "cancelled" } satisfies PermissionResponseBody),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ ok: true });
-  });
-
-  it("rejects invalid permission payloads", async () => {
-    const flamecast = createFlamecastStub();
-    const app = createServerApp(flamecast);
-
-    const response = await app.request("/api/agents/session-1/permissions/request-1", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ optionId: 123 }),
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it("returns permission errors from Error values", async () => {
-    const flamecast = createFlamecastStub({
-      respondToPermission: vi.fn(async () => {
-        throw new Error("permission expired");
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request("/api/agents/session-1/permissions/request-1", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ optionId: "allow" } satisfies PermissionResponseBody),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "permission expired" });
-  });
-
-  it("returns permission errors from non-Error values", async () => {
-    const flamecast = createFlamecastStub({
-      respondToPermission: vi.fn(async () => {
-        throw "permission failed";
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request("/api/agents/session-1/permissions/request-1", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ optionId: "allow" } satisfies PermissionResponseBody),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ error: "Unknown error" });
   });
 
   it("terminates an agent", async () => {
@@ -539,109 +344,52 @@ describe("API server surface", () => {
     expect(response.status).toBe(404);
     expect(flamecast.getSession).not.toHaveBeenCalled();
   });
-});
 
-describe("SSE events endpoint", () => {
-  it("returns 404 for non-existent session", async () => {
-    const flamecast = createFlamecastStub({
-      getSession: vi.fn(async () => {
-        throw new Error("not found");
-      }),
-    });
+  it("does not expose the removed prompt route", async () => {
+    const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
 
-    const response = await app.request(`/api/agents/unknown-id/events`);
+    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hello" }),
+    });
 
     expect(response.status).toBe(404);
-    expect(await readJson(response)).toEqual({ error: "Agent not found" });
   });
 
-  it("opens SSE stream for valid session", async () => {
+  it("does not expose the removed events route", async () => {
     const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
 
     const response = await app.request(`/api/agents/${sampleAgentId}/events`);
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-  });
-});
-
-describe("prompt queue endpoints", () => {
-  it("returns 202 when prompt is queued", async () => {
-    const flamecast = createFlamecastStub({
-      promptSession: vi.fn(async () => ({
-        queued: true as const,
-        queueId: "q1",
-        position: 1,
-      })),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "hello" }),
-    });
-
-    expect(response.status).toBe(202);
-    const body = await readJson(response);
-    expect(body).toEqual({ queued: true, queueId: "q1", position: 1 });
+    expect(response.status).toBe(404);
   });
 
-  it("returns 200 when prompt executes immediately", async () => {
+  it("does not expose the removed permissions route", async () => {
     const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
 
-    const response = await app.request(`/api/agents/${sampleAgentId}/prompt`, {
+    const response = await app.request(`/api/agents/${sampleAgentId}/permissions/request-1`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "hello" }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ optionId: "allow" }),
     });
-
-    expect(response.status).toBe(200);
-  });
-
-  it("GET /queue returns queue state", async () => {
-    const flamecast = createFlamecastStub({
-      getQueueState: vi.fn(async () => ({
-        processing: true,
-        items: [
-          {
-            queueId: "q1",
-            text: "pending",
-            enqueuedAt: "2026-03-21T00:00:00.000Z",
-            position: 1,
-          },
-        ],
-        size: 1,
-      })),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/queue`);
-
-    expect(response.status).toBe(200);
-    const body = await readJson(response);
-    expect(body.processing).toBe(true);
-    expect(body.size).toBe(1);
-    expect(body.items).toHaveLength(1);
-  });
-
-  it("GET /queue returns 404 for unknown agent", async () => {
-    const flamecast = createFlamecastStub({
-      getQueueState: vi.fn(async () => {
-        throw new Error("not found");
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/unknown/queue`);
 
     expect(response.status).toBe(404);
   });
 
-  it("DELETE /queue/:queueId cancels queued prompt", async () => {
+  it("does not expose the removed queue route", async () => {
+    const flamecast = createFlamecastStub();
+    const app = createServerApp(flamecast);
+
+    const response = await app.request(`/api/agents/${sampleAgentId}/queue`);
+
+    expect(response.status).toBe(404);
+  });
+
+  it("does not expose the removed queue cancel route", async () => {
     const flamecast = createFlamecastStub();
     const app = createServerApp(flamecast);
 
@@ -649,23 +397,6 @@ describe("prompt queue endpoints", () => {
       method: "DELETE",
     });
 
-    expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ ok: true });
-    expect(flamecast.cancelQueuedPrompt).toHaveBeenCalledWith(sampleAgentId, "q1");
-  });
-
-  it("DELETE /queue/:queueId returns 400 on error", async () => {
-    const flamecast = createFlamecastStub({
-      cancelQueuedPrompt: vi.fn(async () => {
-        throw new Error('Queued prompt "q1" not found');
-      }),
-    });
-    const app = createServerApp(flamecast);
-
-    const response = await app.request(`/api/agents/${sampleAgentId}/queue/q1`, {
-      method: "DELETE",
-    });
-
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
   });
 });
