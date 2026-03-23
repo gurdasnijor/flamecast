@@ -599,18 +599,21 @@ describe("bootstrap entrypoints", () => {
       readonly listen = listen;
     }
 
-    vi.doMock("@flamecast/sdk", () => ({
-      Flamecast: FlamecastMock,
-    }));
-    vi.doMock("@flamecast/storage-psql", () => ({
-      createPsqlStorage: vi.fn(async () => ({})),
-    }));
-
     try {
       vi.resetModules();
+
+      vi.doMock("@flamecast/sdk", () => ({
+        Flamecast: FlamecastMock,
+      }));
+      vi.doMock("@flamecast/storage-psql", () => ({
+        createPsqlStorage: vi.fn(async () => ({})),
+      }));
+
       process.argv[1] = fileURLToPath(serverPath);
-      await import("../../../apps/server/src/index.ts");
-      await Promise.resolve();
+      const serverModule = await import("../../../apps/server/src/index.ts");
+      // main() is called via void (fire-and-forget) in the module body;
+      // await the exported main() to ensure the listen mock is invoked.
+      await serverModule.main();
     } finally {
       process.argv[1] = originalArgv1;
     }
