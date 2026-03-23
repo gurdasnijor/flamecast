@@ -2,14 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabase } from "../src/storage/db/client.js";
-import { createPsqlStorage } from "../src/storage/psql/index.js";
+import { createDatabase } from "../src/db.js";
+import { createStorageFromDb } from "../src/storage.js";
 
 describe("storage alignment", () => {
   it("stores managed and user templates in pglite-backed storage", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "flamecast-storage-"));
-    const { db, close } = await createDatabase({ pgliteDataDir: dataDir });
-    const storage = createPsqlStorage(db);
+    const { db, close } = await createDatabase({ dataDir });
+    const storage = createStorageFromDb(db);
 
     try {
       await storage.seedAgentTemplates([
@@ -72,8 +72,8 @@ describe("storage alignment", () => {
 
   it("stores sessions and logs in the renamed pglite schema", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "flamecast-sessions-"));
-    const { db, close } = await createDatabase({ pgliteDataDir: dataDir });
-    const storage = createPsqlStorage(db);
+    const { db, close } = await createDatabase({ dataDir });
+    const storage = createStorageFromDb(db);
 
     try {
       await storage.createSession({

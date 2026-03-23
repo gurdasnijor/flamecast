@@ -547,8 +547,8 @@ describe("bootstrap entrypoints", () => {
     vi.doMock("@flamecast/sdk", () => ({
       Flamecast: FlamecastMock,
     }));
-    vi.doMock("../../../apps/server/src/storage/index.js", () => ({
-      createServerStorage: vi.fn(async () => ({})),
+    vi.doMock("@flamecast/storage-psql", () => ({
+      createPsqlStorage: vi.fn(async () => ({})),
     }));
 
     try {
@@ -576,8 +576,8 @@ describe("bootstrap entrypoints", () => {
     vi.doMock("@flamecast/sdk", () => ({
       Flamecast: FlamecastMock,
     }));
-    vi.doMock("../../../apps/server/src/storage/index.js", () => ({
-      createServerStorage: vi.fn(async () => ({})),
+    vi.doMock("@flamecast/storage-psql", () => ({
+      createPsqlStorage: vi.fn(async () => ({})),
     }));
 
     const serverModule = await import("../../../apps/server/src/index.ts?server");
@@ -602,8 +602,8 @@ describe("bootstrap entrypoints", () => {
     vi.doMock("@flamecast/sdk", () => ({
       Flamecast: FlamecastMock,
     }));
-    vi.doMock("../../../apps/server/src/storage/index.js", () => ({
-      createServerStorage: vi.fn(async () => ({})),
+    vi.doMock("@flamecast/storage-psql", () => ({
+      createPsqlStorage: vi.fn(async () => ({})),
     }));
 
     try {

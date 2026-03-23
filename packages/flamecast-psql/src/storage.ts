@@ -4,8 +4,6 @@ import type { FlamecastStorage, SessionMeta } from "@flamecast/sdk";
 import { agentTemplates, sessionLogs, sessions } from "./schema.js";
 import type { PsqlAppDb } from "./types.js";
 
-export type { PsqlAppDb } from "./types.js";
-
 function rowToMeta(row: typeof sessions.$inferSelect | undefined): SessionMeta | null {
   if (!row) return null;
   const status = row.status === "killed" ? "killed" : "active";
@@ -30,7 +28,7 @@ function rowToTemplate(row: typeof agentTemplates.$inferSelect): AgentTemplate {
 }
 
 /** SQL-backed state manager (Postgres `Pool` or embedded **PGLite** file) via Drizzle. */
-export function createPsqlStorage(db: PsqlAppDb): FlamecastStorage {
+export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
   return {
     async seedAgentTemplates(templates: AgentTemplate[]) {
       const managedTemplateIds = templates.map((template) => template.id);
