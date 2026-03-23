@@ -153,6 +153,7 @@ export class Flamecast {
       cwd,
       runtime,
       startedAt,
+      mcpServers: opts.mcpServers,
     });
 
     return this.snapshotSession(sessionId);
@@ -195,7 +196,6 @@ export class Flamecast {
     return this.runtimeClient.promptSession(id, text);
   }
 
-<<<<<<< HEAD
   async getQueueState(id: string): Promise<PromptQueueState> {
     await this.ensureReady();
     return this.runtimeClient.getQueueState(id);
@@ -204,44 +204,6 @@ export class Flamecast {
   async cancelQueuedPrompt(id: string, queueId: string): Promise<void> {
     await this.ensureReady();
     return this.runtimeClient.cancelQueuedPrompt(id, queueId);
-=======
-    const managed = this.resolveRuntime(id);
-    if (!managed.runtime.connection) {
-      throw new Error(`Session "${id}" is not initialized`);
-    }
-    const connection = managed.runtime.connection;
-
-    const promptParams: acp.PromptRequest = {
-      sessionId: managed.id,
-      prompt: [{ type: "text", text }],
-    };
-
-    return this.runInPromptQueue(id, async () => {
-      await this.pushRpcLog(
-        managed,
-        acp.AGENT_METHODS.session_prompt,
-        "client_to_agent",
-        "request",
-        promptParams,
-      );
-
-      try {
-        const result = await connection.prompt(promptParams);
-        await this.flushSessionTextChunkLogBuffer(managed);
-        await this.pushRpcLog(
-          managed,
-          acp.AGENT_METHODS.session_prompt,
-          "agent_to_client",
-          "response",
-          result,
-        );
-        return result;
-      } catch (error) {
-        await this.flushSessionTextChunkLogBuffer(managed);
-        throw error;
-      }
-    });
->>>>>>> 40d59c2 (feat: add external chat sdk connector)
   }
 
   async terminateSession(id: string): Promise<void> {
@@ -255,23 +217,8 @@ export class Flamecast {
     await this.runtimeClient.terminateSession(id);
   }
 
-<<<<<<< HEAD
   subscribe(sessionId: string, callback: (event: SessionLog) => void): () => void {
     return this.runtimeClient.subscribe(sessionId, callback);
-=======
-    const managed = this.resolveRuntime(id);
-    const meta = await this.requireStorage().getSessionMeta(id);
-    if (meta?.pendingPermission) {
-      this.permissionResolvers.delete(meta.pendingPermission.requestId);
-    }
-
-    await this.flushSessionTextChunkLogBuffer(managed);
-    await managed.terminate();
-    await this.pushLog(managed, "killed", {});
-    await this.requireStorage().finalizeSession(id, "terminated");
-    this.runtimes.delete(id);
-    this.promptQueues.delete(id);
->>>>>>> 40d59c2 (feat: add external chat sdk connector)
   }
 
   async respondToPermission(
@@ -373,28 +320,6 @@ export class Flamecast {
       throw new Error("Flamecast storage is not ready");
     }
     return this.storage;
-  }
-
-  private async runInPromptQueue<T>(id: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.promptQueues.get(id) ?? null;
-    let resolveCurrent!: () => void;
-    const current = new Promise<void>((resolve) => {
-      resolveCurrent = resolve;
-    });
-    this.promptQueues.set(id, current);
-
-    if (previous) {
-      await previous;
-    }
-
-    try {
-      return await work();
-    } finally {
-      resolveCurrent();
-      if (this.promptQueues.get(id) === current) {
-        this.promptQueues.delete(id);
-      }
-    }
   }
 
   private async resolveSessionDefinition(opts: CreateSessionBody): Promise<{

@@ -366,6 +366,7 @@ describe("createFlamecastAgentClient", () => {
             status: "active",
             logs: [],
             pendingPermission: null,
+            promptQueue: null,
             fileSystem: null,
           }),
           {
@@ -507,6 +508,7 @@ describe("createFlamecastAgentClient", () => {
           status: "active",
           logs: [],
           pendingPermission: null,
+          promptQueue: null,
           fileSystem: null,
         }),
         {

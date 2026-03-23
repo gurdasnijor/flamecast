@@ -4,6 +4,7 @@ import type {
   AgentTemplateRuntime,
   FilePreview,
   FileSystemSnapshot,
+  McpServer,
   PermissionResponseBody,
   PromptQueueState,
   QueuedPromptResponse,
@@ -17,6 +18,7 @@ export interface RuntimeClient {
     cwd: string;
     runtime: AgentTemplateRuntime;
     startedAt: string;
+    mcpServers?: McpServer[];
   }): Promise<{ sessionId: string }>;
 
   promptSession(

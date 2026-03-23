@@ -9,6 +9,7 @@ import {
   type AgentTemplateRuntime,
   type FilePreview,
   type FileSystemSnapshot,
+  type McpServer,
   type PendingPermission,
   type PendingPermissionOption,
   type PermissionResponseBody,
@@ -77,6 +78,7 @@ export class LocalRuntimeClient implements RuntimeClient {
     cwd: string;
     runtime: AgentTemplateRuntime;
     startedAt: string;
+    mcpServers?: McpServer[];
   }): Promise<{ sessionId: string }> {
     const cwd = await realpath(resolve(opts.cwd));
     const provider = this.runtimeProviders[opts.runtime.provider];
@@ -134,7 +136,10 @@ export class LocalRuntimeClient implements RuntimeClient {
       );
 
       const agentCwd = startedRuntime.agentCwd ?? cwd;
-      const newSessionParams: acp.NewSessionRequest = { cwd: agentCwd, mcpServers: [] };
+      const newSessionParams: acp.NewSessionRequest = {
+        cwd: agentCwd,
+        mcpServers: opts.mcpServers ?? [],
+      };
       managed.pendingLogs.push(
         this.createRpcLog(
           acp.AGENT_METHODS.session_new,

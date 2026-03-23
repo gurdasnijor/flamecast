@@ -295,16 +295,20 @@ describe("flamecast orchestration internals", () => {
     expect(Reflect.get(flamecast, "shutdownPromise")).toBe(replacement);
   });
 
-  test("serializes concurrent prompts per session", async () => {
+  test("queues concurrent prompts per session", async () => {
     const flamecast = new Flamecast({ storage: "memory" });
     const storage = attachStorage(flamecast);
     await storage.createSession(createMeta("session-1"));
 
     let releaseFirst = () => {};
     let signalFirstStarted = () => {};
+    let signalSecondStarted = () => {};
     let promptCallCount = 0;
     const firstStarted = new Promise<void>((resolve) => {
       signalFirstStarted = resolve;
+    });
+    const secondStarted = new Promise<void>((resolve) => {
+      signalSecondStarted = resolve;
     });
     const prompt = vi.fn(async (_params: acp.PromptRequest) => {
       promptCallCount += 1;
@@ -313,6 +317,9 @@ describe("flamecast orchestration internals", () => {
         await new Promise<void>((resolve) => {
           releaseFirst = resolve;
         });
+      }
+      if (promptCallCount === 2) {
+        signalSecondStarted();
       }
       return { stopReason: "end_turn" as const };
     });
@@ -329,7 +336,12 @@ describe("flamecast orchestration internals", () => {
     releaseFirst();
 
     await expect(firstPrompt).resolves.toEqual({ stopReason: "end_turn" });
-    await expect(secondPrompt).resolves.toEqual({ stopReason: "end_turn" });
+    await expect(secondPrompt).resolves.toMatchObject({
+      queued: true,
+      position: 1,
+      queueId: expect.any(String),
+    });
+    await secondStarted;
     expect(prompt).toHaveBeenNthCalledWith(1, {
       sessionId: "session-1",
       prompt: [{ type: "text", text: "first" }],
@@ -338,7 +350,6 @@ describe("flamecast orchestration internals", () => {
       sessionId: "session-1",
       prompt: [{ type: "text", text: "second" }],
     });
-    expect(Reflect.get(flamecast, "promptQueues") as Map<string, Promise<void>>).toEqual(new Map());
   });
 
   test("covers private helpers, client wiring, permission handling, prompt errors, and shutdown", async () => {

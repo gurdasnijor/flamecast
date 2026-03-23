@@ -3,6 +3,7 @@ import type {
   CreateSessionBody,
   McpServer,
   PromptResult,
+  QueuedPromptResponse,
   Session,
 } from "@flamecast/sdk/shared/session";
 
@@ -14,7 +15,7 @@ export type FlamecastCreateAgentBody = Omit<CreateSessionBody, "spawn"> & {
   spawn?: FlamecastSpawn;
 };
 export type FlamecastAgent = Pick<Session, "id">;
-export type FlamecastPromptResult = PromptResult;
+export type FlamecastPromptResult = PromptResult | QueuedPromptResponse;
 
 export type FlamecastAgentClient = {
   createAgent(body: FlamecastCreateAgentBody): Promise<FlamecastAgent>;
