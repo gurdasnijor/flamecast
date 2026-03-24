@@ -10,15 +10,16 @@ export type PsqlStorageOptions = {
 };
 
 /**
- * Create a {@link FlamecastStorage} backed by PostgreSQL (or embedded PGLite).
+ * Create a {@link FlamecastStorage} backed by PostgreSQL.
+ *
+ * Connects via the standard Postgres wire protocol. Works with any
+ * Postgres-compatible server: PlanetScale, Neon, pglite-server, etc.
  *
  * @example
  * ```ts
- * // Postgres
- * const storage = await createPsqlStorage({ url: "postgres://localhost/flamecast" });
- *
- * // PGLite (default)
- * const storage = await createPsqlStorage();
+ * const storage = await createPsqlStorage({
+ *   url: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+ * });
  * ```
  */
 export async function createPsqlStorage(
