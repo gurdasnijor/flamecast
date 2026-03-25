@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { dirname, basename } from "node:path";
-import { readFile } from "node:fs/promises";
+import { dirname, basename, join } from "node:path";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import Docker from "dockerode";
 import type { Runtime } from "@flamecast/sdk/runtime";
 import type { SessionHostStartRequest } from "@flamecast/sdk/shared/session-host-protocol";
@@ -85,7 +86,7 @@ export class DockerRuntime implements Runtime {
           PortBindings: { [`${CONTAINER_PORT}/tcp`]: [{ HostPort: "0" }] },
           AutoRemove: true,
         },
-        Env: [`SESSION_HOST_PORT=${CONTAINER_PORT}`, "RUNTIME_SETUP_ENABLED=1"],
+        Env: [`SESSION_HOST_PORT=${CONTAINER_PORT}`],
       });
 
       await container.start();
@@ -202,7 +203,7 @@ export class DockerRuntime implements Runtime {
    *   3. Fall back to the constructor-provided image
    */
   private async resolveImage(body: DockerStartBody): Promise<string> {
-    const { image, dockerfile } = body;
+    const { image, dockerfile, setup } = body;
 
     if (image) {
       try {
@@ -219,6 +220,35 @@ export class DockerRuntime implements Runtime {
     if (dockerfile) {
       const tag = await this.dockerfileTag(dockerfile);
       return this.buildImage(dockerfile, tag);
+    }
+
+    // Setup script → extend base image with a RUN layer, cached by content hash.
+    if (setup) {
+      const content = `FROM ${this.fallbackImage}\nRUN ${setup}\n`;
+      const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
+      const tag = `flamecast-session-${hash}:latest`;
+
+      const cached = this.builtImages.get(hash);
+      if (cached) {
+        try {
+          await this.docker.getImage(cached).inspect();
+          return cached;
+        } catch {
+          this.builtImages.delete(hash);
+        }
+      }
+
+      console.log(`[DockerRuntime] Building image ${tag} (setup layer on ${this.fallbackImage})`);
+      const tmpDir = await mkdtemp(join(tmpdir(), "flamecast-build-"));
+      try {
+        await writeFile(join(tmpDir, "Dockerfile"), content);
+        await this.buildImage(join(tmpDir, "Dockerfile"), tag);
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      }
+
+      this.builtImages.set(hash, tag);
+      return tag;
     }
 
     // Validate the fallback image exists before returning it.
