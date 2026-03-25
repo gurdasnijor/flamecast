@@ -13,7 +13,8 @@
     "@flamecast/runtime-docker": "workspace:*",
     "@flamecast/runtime-e2b": "workspace:*",
     "@flamecast/sdk": "workspace:*",
-    "@flamecast/storage-psql": "workspace:*"
+    "@flamecast/storage-psql": "workspace:*",
+    "dotenv": "^17.3.1"
   },
   "devDependencies": {
     "@hono/node-server": "^1.19.11"
