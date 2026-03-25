@@ -1,10 +1,10 @@
 import type { AgentSpawn, AgentTemplateRuntime } from "../shared/session.js";
 import type { FlamecastStorage } from "./storage.js";
-import type { Runtime } from "./runtime.js";
 import type {
+  Runtime,
   SessionHostStartRequest,
   SessionHostStartResponse,
-} from "../shared/session-host-protocol.js";
+} from "@flamecast/protocol";
 
 interface ManagedSession {
   id: string;
