@@ -244,18 +244,18 @@ async function handleControl(ws: WebSocket, msg: WsControlMessage): Promise<void
       case "file.preview": {
         if (!sessionWorkspace) throw new Error("No active session");
         try {
-          const content = await readFile(resolve(sessionWorkspace, msg.path), "utf8");
-          ws.send(
-            JSON.stringify({
-              type: "event",
-              timestamp: new Date().toISOString(),
-              event: {
-                type: "file.preview",
-                data: { path: msg.path, content },
-                timestamp: new Date().toISOString(),
-              },
-            }),
-          );
+          const raw = await readFile(resolve(sessionWorkspace, msg.path), "utf8");
+          const maxChars = 100_000;
+          const truncated = raw.length > maxChars;
+          const content = truncated ? raw.slice(0, maxChars) : raw;
+          const response: WsServerMessage = {
+            type: "file.preview",
+            path: msg.path,
+            content,
+            truncated,
+            maxChars,
+          };
+          ws.send(JSON.stringify(response));
         } catch {
           ws.send(
             JSON.stringify({
