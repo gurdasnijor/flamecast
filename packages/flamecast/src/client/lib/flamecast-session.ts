@@ -169,6 +169,18 @@ export class FlamecastSession {
           JSON.stringify(sessionEvent.data).slice(0, 200),
         );
         this.eventBuffer.push(sessionEvent);
+
+        // File previews arrive wrapped in an event envelope from session-host
+        if (sessionEvent.type === "file.preview" && sessionEvent.data) {
+          const path = typeof sessionEvent.data.path === "string" ? sessionEvent.data.path : "";
+          const content = typeof sessionEvent.data.content === "string" ? sessionEvent.data.content : "";
+          const resolver = this.filePreviewResolvers.get(path);
+          if (resolver) {
+            this.filePreviewResolvers.delete(path);
+            resolver({ content, truncated: false, maxChars: 0 });
+          }
+        }
+
         for (const listener of this.listeners) {
           try {
             listener(sessionEvent);
@@ -177,6 +189,7 @@ export class FlamecastSession {
           }
         }
       } else if (msg.type === "file.preview") {
+        // Direct file preview message (not wrapped in event envelope)
         const resolver = this.filePreviewResolvers.get(msg.path);
         if (resolver) {
           this.filePreviewResolvers.delete(msg.path);

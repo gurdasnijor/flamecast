@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* oxlint-disable no-type-assertion/no-type-assertion */
 import { spawn, exec, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
@@ -17,30 +16,13 @@ import type {
   SessionHostStartResponse,
   SessionHostHealthResponse,
 } from "@flamecast/protocol/session-host";
+import type { WsServerMessage, WsControlMessage } from "@flamecast/protocol/ws";
+import { WsControlMessageSchema } from "@flamecast/protocol/ws/zod";
+import { SessionHostStartRequestSchema } from "@flamecast/protocol/session-host/zod";
 
 // ---- Config from environment ----
 
 const SESSION_HOST_PORT = parseInt(process.env.SESSION_HOST_PORT ?? "8787", 10);
-
-// ---- Types ----
-
-type WsMessage =
-  | {
-      type: "event";
-      timestamp: string;
-      event: { type: string; data: Record<string, unknown>; timestamp: string };
-    }
-  | { type: "connected"; sessionId: string }
-  | { type: "error"; message: string };
-
-type ControlMessage =
-  | { action: "prompt"; text: string }
-  | { action: "permission.respond"; requestId: string; body: Record<string, unknown> }
-  | { action: "cancel"; queueId?: string }
-  | { action: "terminate" }
-  | { action: "ping" }
-  | { action: "fs.snapshot"; path?: string }
-  | { action: "file.preview"; path: string };
 
 // ---- Session state (one session at a time) ----
 
@@ -54,7 +36,7 @@ const permissionResolvers = new Map<string, (response: acp.RequestPermissionResp
 
 // ---- Broadcast helpers ----
 
-function broadcast(msg: WsMessage): void {
+function broadcast(msg: WsServerMessage): void {
   const data = JSON.stringify(msg);
   for (const ws of clients) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -205,7 +187,7 @@ async function broadcastFsSnapshot(workspace: string): Promise<void> {
   emitEvent("filesystem.snapshot", { snapshot: { root: workspace, entries } });
 }
 
-async function handleControl(ws: WebSocket, msg: ControlMessage): Promise<void> {
+async function handleControl(ws: WebSocket, msg: WsControlMessage): Promise<void> {
   try {
     switch (msg.action) {
       case "prompt": {
@@ -225,9 +207,8 @@ async function handleControl(ws: WebSocket, msg: ControlMessage): Promise<void> 
         if (resolver) {
           permissionResolvers.delete(msg.requestId);
           // ACP SDK expects { outcome: { outcome: "selected", optionId } } or { outcome: { outcome: "cancelled" } }
-          const body = msg.body as Record<string, unknown>;
-          const response: acp.RequestPermissionResponse = body.optionId
-            ? { outcome: { outcome: "selected", optionId: body.optionId as string } }
+          const response: acp.RequestPermissionResponse = "optionId" in msg.body
+            ? { outcome: { outcome: "selected", optionId: msg.body.optionId } }
             : { outcome: { outcome: "cancelled" } };
           emitRpc(
             acp.CLIENT_METHODS.session_request_permission,
@@ -461,11 +442,16 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && req.url === "/start") {
-      const body = JSON.parse(await readBody(req)) as SessionHostStartRequest;
+      const parsed = JSON.parse(await readBody(req));
+      const result = SessionHostStartRequestSchema.safeParse(parsed);
+      if (!result.success) {
+        jsonResponse(res, 400, { error: result.error.message });
+        return;
+      }
       const addr = httpServer.address();
       const port = typeof addr === "object" && addr ? addr.port : SESSION_HOST_PORT;
-      const result = await startSession(body, port);
-      jsonResponse(res, 200, result);
+      const startResult = await startSession(result.data, port);
+      jsonResponse(res, 200, startResult);
       return;
     }
 
@@ -491,7 +477,7 @@ const wss = new WebSocketServer({ server: httpServer });
 wss.on("connection", (ws) => {
   clients.add(ws);
   if (sessionId) {
-    ws.send(JSON.stringify({ type: "connected", sessionId } satisfies WsMessage));
+    ws.send(JSON.stringify({ type: "connected", sessionId } satisfies WsServerMessage));
     // Send initial filesystem snapshot to the newly connected client
     if (sessionWorkspace) {
       void sendFsSnapshot(ws, sessionWorkspace);
@@ -500,10 +486,15 @@ wss.on("connection", (ws) => {
 
   ws.on("message", (data) => {
     try {
-      const msg = JSON.parse(String(data)) as ControlMessage;
-      void handleControl(ws, msg);
+      const parsed = JSON.parse(String(data));
+      const result = WsControlMessageSchema.safeParse(parsed);
+      if (!result.success) {
+        ws.send(JSON.stringify({ type: "error", message: `Invalid message: ${result.error.message}` }));
+        return;
+      }
+      void handleControl(ws, result.data);
     } catch {
-      ws.send(JSON.stringify({ type: "error", message: "Invalid message" } satisfies WsMessage));
+      ws.send(JSON.stringify({ type: "error", message: "Invalid message" }));
     }
   });
 
