@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
-import { dirname, basename } from "node:path";
-import { readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import Docker from "dockerode";
 import type { Runtime } from "@flamecast/sdk/runtime";
+
+const execFileAsync = promisify(execFile);
 
 const CONTAINER_PORT = "8080";
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -242,52 +246,22 @@ export class DockerRuntime implements Runtime {
    * so repeated session starts don't rebuild.
    */
   private async buildImage(dockerfilePath: string, tag: string): Promise<string> {
+    const fullTag = tag.includes(":") ? tag : `${tag}:latest`;
+
     const cached = this.builtImages.get(dockerfilePath);
-    if (cached) {
+    if (cached === fullTag) {
       try {
         await this.docker.getImage(cached).inspect();
         return cached;
       } catch {
-        // Cached tag no longer exists — rebuild
         this.builtImages.delete(dockerfilePath);
       }
     }
 
-    // Ensure the tag includes a version so Docker doesn't try to pull from a registry
-    const fullTag = tag.includes(":") ? tag : `${tag}:latest`;
-
     const context = dirname(dockerfilePath);
-    const dockerfileName = basename(dockerfilePath);
-
     console.log(`[DockerRuntime] Building image ${fullTag} from ${dockerfilePath}`);
 
-    // List all top-level entries so dockerode's tar packer includes the full context
-    const entries = await readdir(context);
-    const stream = await this.docker.buildImage(
-      { context, src: entries },
-      { t: fullTag, dockerfile: dockerfileName },
-    );
-
-    await new Promise<void>((resolve, reject) => {
-      this.docker.modem.followProgress(
-        stream,
-        (err: Error | null) => (err ? reject(err) : resolve()),
-        (event: { stream?: string; error?: string }) => {
-          if (event.error) {
-            process.stderr.write(`[DockerRuntime] ${event.error}\n`);
-          } else if (event.stream) {
-            process.stdout.write(event.stream);
-          }
-        },
-      );
-    });
-
-    // Verify the image was actually created — builds can silently fail
-    try {
-      await this.docker.getImage(fullTag).inspect();
-    } catch {
-      throw new Error(`Docker build completed but image "${fullTag}" was not created`);
-    }
+    await execFileAsync("docker", ["build", "-t", fullTag, "-f", dockerfilePath, context]);
 
     this.builtImages.set(dockerfilePath, fullTag);
     return fullTag;
