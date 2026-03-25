@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { readdirSync, statSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import {
   Sandbox,
   Template,
@@ -12,29 +11,26 @@ import {
 import type { Runtime } from "@flamecast/sdk/runtime";
 
 const SESSION_HOST_PORT = 8080;
+const SESSION_HOST_REPO = "https://github.com/smithery-ai/flamecast.git";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
-/** Resolve the @flamecast/session-host package directory (contains dist/ + package.json). */
-function resolveSessionHostDir(): string {
-  const resolved = import.meta.resolve("@flamecast/session-host");
-  return dirname(dirname(fileURLToPath(resolved)));
-}
-
 /**
  * Generate a Dockerfile that mirrors DockerRuntime's pattern:
- * base image → system deps → session-host → optional setup → entrypoint.
+ * base image → system deps → session-host (cloned from repo) → optional setup.
  */
 function generateDockerfile(baseImage: string, setup?: string): string {
   const lines = [
     `FROM ${baseImage}`,
     `RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates git && rm -rf /var/lib/apt/lists/*`,
-    // Bake session-host into the image
-    `COPY session-host/ /session-host/`,
-    `RUN cd /session-host && npm install --omit=dev`,
+    // Clone repo and build session-host
+    `RUN git clone --depth 1 ${SESSION_HOST_REPO} /tmp/flamecast \\`,
+    `    && cp -r /tmp/flamecast/packages/session-host /session-host \\`,
+    `    && cd /session-host && npm install --omit=dev \\`,
+    `    && rm -rf /tmp/flamecast`,
     // Agent workspace
     `WORKDIR /workspace`,
   ];
@@ -248,27 +244,25 @@ export class E2BRuntime implements Runtime {
 
     console.log(`[E2BRuntime] Building template ${templateName}`);
 
-    // Build the template using E2B's fromDockerfile with local session-host files
-    const shDir = resolveSessionHostDir();
-    const copyItems = collectSessionHostCopyItems(shDir);
-
+    // If there's a setup script, we need a build context for COPY setup.sh
     let tmpDir: string | undefined;
+    let template;
+
     if (setup) {
       tmpDir = mkdtempSync(join(tmpdir(), "flamecast-e2b-"));
-      const setupPath = join(tmpDir, "setup.sh");
-      writeFileSync(setupPath, setup);
-      copyItems.push({ src: setupPath, dest: "/tmp/setup.sh" });
+      writeFileSync(join(tmpDir, "Dockerfile"), dockerfileContent);
+      writeFileSync(join(tmpDir, "setup.sh"), setup);
+      template = Template()
+        .fromDockerfile(join(tmpDir, "Dockerfile"))
+        .setStartCmd(`node /session-host/dist/index.js`, waitForPort(SESSION_HOST_PORT));
+    } else {
+      // No build context needed — Dockerfile only uses RUN (git clone)
+      template = Template()
+        .fromDockerfile(dockerfileContent)
+        .setStartCmd(`node /session-host/dist/index.js`, waitForPort(SESSION_HOST_PORT));
     }
 
     try {
-      const template = Template()
-        .fromDockerfile(dockerfileContent)
-        .copyItems(copyItems)
-        .setStartCmd(
-          `node /session-host/dist/index.js`,
-          waitForPort(SESSION_HOST_PORT),
-        );
-
       await Template.build(template, templateName, {
         apiKey: this.apiKey,
         onBuildLogs: defaultBuildLogger(),
@@ -281,39 +275,4 @@ export class E2BRuntime implements Runtime {
     return templateName;
   }
 
-}
-
-/**
- * Collect session-host files as CopyItems for the E2B template builder.
- * Copies dist/ and package.json (skipping node_modules).
- */
-function collectSessionHostCopyItems(
-  shDir: string,
-): { src: string; dest: string }[] {
-  const items: { src: string; dest: string }[] = [];
-
-  // package.json
-  items.push({ src: join(shDir, "package.json"), dest: "/session-host/package.json" });
-
-  // dist/ recursively
-  const distDir = join(shDir, "dist");
-  collectDir(distDir, "/session-host/dist", items);
-
-  return items;
-}
-
-function collectDir(
-  dir: string,
-  destBase: string,
-  items: { src: string; dest: string }[],
-): void {
-  for (const entry of readdirSync(dir)) {
-    const abs = join(dir, entry);
-    const dest = `${destBase}/${entry}`;
-    if (statSync(abs).isDirectory()) {
-      collectDir(abs, dest, items);
-    } else {
-      items.push({ src: abs, dest });
-    }
-  }
 }
