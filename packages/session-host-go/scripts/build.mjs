@@ -7,7 +7,7 @@
  * Skips gracefully if Go is not installed.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { arch } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -16,10 +16,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const output = join(root, "dist", "session-host");
 
-// Skip if already built
+// Skip if already built for the correct platform (linux)
 if (existsSync(output)) {
-  console.log("[session-host-go] binary already exists, skipping build");
-  process.exit(0);
+  try {
+    const header = Buffer.alloc(4);
+    const fd = openSync(output, "r");
+    readSync(fd, header, 0, 4, 0);
+    closeSync(fd);
+    const isELF = header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46;
+    if (isELF) {
+      console.log("[session-host-go] binary already exists (ELF), skipping build");
+      process.exit(0);
+    }
+    console.log("[session-host-go] binary exists but is not ELF (wrong platform), rebuilding...");
+  } catch {
+    // Can't read header — rebuild to be safe
+  }
 }
 
 // Check Go is available

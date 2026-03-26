@@ -65,7 +65,7 @@ func (h *Hub) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 			handler := h.controlHandler
 			h.mu.RUnlock()
 			if handler != nil {
-				handler(id, msg)
+				go handler(id, msg)
 			}
 		}
 	})
