@@ -1,6 +1,13 @@
 #!/bin/bash
-# Quick smoke test — creates a session and verifies the handlers fire.
-# Run this in a separate terminal while the example is running.
+# Smoke test — creates a session, sends a prompt via REST, terminates.
+# Run this in a separate terminal while the example server is running.
+#
+# Usage:
+#   # Terminal 1:
+#   cd examples/event-handlers && pnpm start
+#
+#   # Terminal 2:
+#   ./examples/event-handlers/test.sh
 
 set -e
 
@@ -16,17 +23,20 @@ SESSION_ID=$(echo "$SESSION" | jq -r .id)
 
 echo ""
 echo "=== Session created: $SESSION_ID ==="
-echo "=== Check the server terminal for handler output ==="
-echo ""
-echo "=== Getting session ==="
-curl -s "$BASE/agents/$SESSION_ID" | jq '{id, status, agentName, websocketUrl}'
 
 echo ""
-echo "=== Waiting 5s for agent activity... ==="
-sleep 5
+echo "=== Sending prompt via REST ==="
+PROMPT_RESULT=$(curl -s -X POST "$BASE/agents/$SESSION_ID/prompts" \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "write a file to disk"}')
+
+echo "$PROMPT_RESULT" | jq .
+echo ""
+echo "=== Prompt response received ==="
 
 echo ""
 echo "=== Terminating session ==="
 curl -s -X DELETE "$BASE/agents/$SESSION_ID" | jq .
+
 echo ""
-echo "=== Done — check server terminal for onSessionEnd output ==="
+echo "=== Done — check server terminal for handler output ==="

@@ -449,6 +449,23 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && req.url === "/prompt") {
+      if (!connection) {
+        jsonResponse(res, 400, { error: "No active session" });
+        return;
+      }
+      const { text } = JSON.parse(await readBody(req));
+      const params: acp.PromptRequest = {
+        sessionId,
+        prompt: [{ type: "text", text }],
+      };
+      emitRpc(acp.AGENT_METHODS.session_prompt, "client_to_agent", "request", params);
+      const result = await connection.prompt(params);
+      emitRpc(acp.AGENT_METHODS.session_prompt, "agent_to_client", "response", result);
+      jsonResponse(res, 200, result);
+      return;
+    }
+
     if (req.method === "GET" && req.url?.startsWith("/files")) {
       if (!sessionWorkspace) {
         jsonResponse(res, 400, { error: "No active session" });

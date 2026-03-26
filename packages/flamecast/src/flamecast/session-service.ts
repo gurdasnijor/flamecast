@@ -153,6 +153,20 @@ export class SessionService {
     return this.sessions.get(sessionId)?.runtimeName;
   }
 
+  async proxyRequest(sessionId: string, path: string, init: RequestInit): Promise<Response> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return new Response("Session not found", { status: 404 });
+    const runtime = this.runtimes[session.runtimeName];
+    if (!runtime) return new Response("Runtime not found", { status: 500 });
+    return runtime.fetchSession(
+      sessionId,
+      new Request(`http://host${path}`, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...init.headers },
+      }),
+    );
+  }
+
   async proxyWebSocket(sessionId: string, request: Request): Promise<Response> {
     const session = this.sessions.get(sessionId);
     if (!session) return new Response("Session not found", { status: 404 });

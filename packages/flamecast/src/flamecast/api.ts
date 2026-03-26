@@ -14,6 +14,7 @@ export type FlamecastApi = Pick<
   | "handleSessionEvent"
   | "listAgentTemplates"
   | "listSessions"
+  | "promptSession"
   | "registerAgentTemplate"
   | "terminateSession"
   | "runtimeNames"
@@ -109,6 +110,21 @@ export function createApi(flamecast: FlamecastApi) {
     })
     .get("/agents/:agentId", async (c) => getAgentSnapshot(c, c.req.param("agentId")))
     .get("/agents/:agentId/", async (c) => getAgentSnapshot(c, c.req.param("agentId")))
+    .post("/agents/:agentId/prompts", async (c) => {
+      try {
+        const agentId = c.req.param("agentId");
+        const { text } = await c.req.json();
+        if (!text || typeof text !== "string") {
+          return c.json({ error: "Missing 'text' field" }, 400);
+        }
+        const result = await flamecast.promptSession(agentId, text);
+        return c.json(result);
+      } catch (error) {
+        console.error("Prompt failed:", error);
+        const status = toErrorMessage(error).includes("not found") ? 404 : 500;
+        return c.json({ error: toErrorMessage(error) }, status);
+      }
+    })
     .post("/agents/:agentId/events", async (c) => {
       try {
         const agentId = c.req.param("agentId");

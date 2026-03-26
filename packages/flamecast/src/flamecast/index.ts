@@ -235,6 +235,19 @@ export class Flamecast<
     return this.snapshotSession(id, opts);
   }
 
+  async promptSession(id: string, text: string): Promise<Record<string, unknown>> {
+    await this.ensureReady();
+    const response = await this.sessionService.proxyRequest(id, "/prompt", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "(unreadable)");
+      throw new Error(`Prompt failed (${response.status}): ${detail}`);
+    }
+    return response.json();
+  }
+
   async terminateSession(id: string): Promise<void> {
     await this.ensureReady();
     if (!this.sessionService.hasSession(id)) {
