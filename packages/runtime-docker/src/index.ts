@@ -1,40 +1,85 @@
-import { createHash } from "node:crypto";
-import { dirname, basename } from "node:path";
-import { readFile } from "node:fs/promises";
+/* oxlint-disable no-type-assertion/no-type-assertion */
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
 import type { Runtime } from "@flamecast/protocol/runtime";
-import type { SessionHostStartRequest } from "@flamecast/protocol/session-host";
 
-type DockerStartBody = SessionHostStartRequest & {
-  image?: string;
-  dockerfile?: string;
-};
+// ---------------------------------------------------------------------------
+// Session-host binary resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the path to the session-host static Go binary.
+ *
+ * Lookup order:
+ *   1. `SESSION_HOST_BINARY` env var (explicit override)
+ *   2. Via the @flamecast/session-host-go package dependency
+ *      (resolves through node_modules, works in monorepo and standalone)
+ */
+function resolveSessionHostBinary(): string {
+  // 1. Explicit env var
+  if (process.env.SESSION_HOST_BINARY) {
+    const p = process.env.SESSION_HOST_BINARY;
+    if (!existsSync(p)) {
+      throw new Error(`SESSION_HOST_BINARY points to "${p}" which does not exist`);
+    }
+    return p;
+  }
+
+  // 2. Resolve via @flamecast/session-host-go package
+  // import.meta.resolve gives us the package.json path; the binary is at dist/session-host
+  try {
+    const pkgJsonUrl = import.meta.resolve("@flamecast/session-host-go/package.json");
+    const pkgDir = dirname(fileURLToPath(pkgJsonUrl));
+    const binaryPath = join(pkgDir, "dist", "session-host");
+    if (existsSync(binaryPath)) return binaryPath;
+  } catch {
+    // Package not resolvable
+  }
+
+  throw new Error(
+    "No session-host binary found. Install Go and run: " +
+      "pnpm --filter @flamecast/session-host-go run postinstall",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const CONTAINER_PORT = "8080";
+const CONTAINER_BIN_PATH = "/usr/local/bin/session-host";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
+// ---------------------------------------------------------------------------
+// DockerRuntime
+// ---------------------------------------------------------------------------
+
 /**
- * DockerRuntime — spawns a new SessionHost container per session.
+ * DockerRuntime — spawns a new container per session.
  *
- * Each session gets its own container on a random host port.
- * The container image is determined (in priority order):
- *   1. `image` field from the agent template's runtime config (in the /start body)
- *   2. `dockerfile` field → built on-the-fly with `docker build`
- *   3. The fallback image passed to the constructor (default: "flamecast-session-host")
+ * Bind-mounts the session-host static Go binary into any user-provided base
+ * image. The binary is statically linked and has zero dependencies, so it
+ * works on any Linux distro (Debian, Alpine, Ubuntu, etc.) without requiring
+ * Node.js or any other runtime.
+ *
+ * This avoids:
+ *   - Dockerfile generation overhead
+ *   - CMD/entrypoint conflicts with user images
+ *   - Runtime dependencies in the base image
  */
 export class DockerRuntime implements Runtime {
-  private readonly fallbackImage: string;
+  private readonly baseImage: string;
   private readonly docker: Docker;
   private readonly containers = new Map<string, { containerId: string; port: number }>();
-  /** Cache of images already built from dockerfiles in this runtime's lifetime. */
-  private readonly builtImages = new Map<string, string>();
 
-  constructor(opts?: { image?: string; docker?: Docker }) {
-    this.fallbackImage = opts?.image ?? "flamecast-session-host";
+  constructor(opts?: { baseImage?: string; docker?: Docker }) {
+    this.baseImage = opts?.baseImage ?? "node:22-slim";
     this.docker = opts?.docker ?? new Docker();
   }
 
@@ -57,7 +102,8 @@ export class DockerRuntime implements Runtime {
     await Promise.allSettled(
       [...this.containers.values()].map(async (entry) => {
         const c = this.docker.getContainer(entry.containerId);
-        await c.kill();
+        await c.kill().catch(() => {});
+        await c.remove().catch(() => {});
       }),
     );
     this.containers.clear();
@@ -73,37 +119,56 @@ export class DockerRuntime implements Runtime {
     }
 
     try {
-      const parsed: DockerStartBody = JSON.parse(await request.text());
+      const parsed = JSON.parse(await request.text()) as Record<string, unknown>;
+      const binaryPath = resolveSessionHostBinary();
 
-      const image = await this.resolveImage(parsed);
-      console.log(`[DockerRuntime] Creating container from image: ${image}`);
+      console.log(
+        `[DockerRuntime] Starting container (image=${this.baseImage}, binary=${binaryPath})`,
+      );
+
+      await this.ensureImage(this.baseImage);
 
       const container = await this.docker.createContainer({
-        Image: image,
+        Image: this.baseImage,
+        Cmd: [CONTAINER_BIN_PATH],
         ExposedPorts: { [`${CONTAINER_PORT}/tcp`]: {} },
-        HostConfig: {
-          PortBindings: { [`${CONTAINER_PORT}/tcp`]: [{ HostPort: "0" }] },
-          AutoRemove: true,
-        },
         Env: [`SESSION_HOST_PORT=${CONTAINER_PORT}`, "RUNTIME_SETUP_ENABLED=1"],
+        HostConfig: {
+          Binds: [`${binaryPath}:${CONTAINER_BIN_PATH}:ro`],
+          PortBindings: { [`${CONTAINER_PORT}/tcp`]: [{ HostPort: "0" }] },
+        },
+        WorkingDir: "/workspace",
       });
 
       await container.start();
 
       const info = await container.inspect();
+
+      // Check if the container is actually running
+      if (!info.State.Running) {
+        const logs = await container.logs({ stdout: true, stderr: true, tail: 20 });
+        await container.remove().catch(() => {});
+        throw new Error(
+          `Container exited immediately (code=${info.State.ExitCode}). ` +
+            `Logs:\n${logs.toString()}`,
+        );
+      }
+
       const portBindings = info.NetworkSettings.Ports[`${CONTAINER_PORT}/tcp`];
       const port = parseInt(portBindings?.[0]?.HostPort ?? "0", 10);
 
       if (!port) {
+        const logs = await container.logs({ stdout: true, stderr: true, tail: 20 });
         await container.kill().catch(() => {});
-        throw new Error("Failed to get container port");
+        await container.remove().catch(() => {});
+        throw new Error(`Failed to get container port. Logs:\n${logs.toString()}`);
       }
 
       this.containers.set(sessionId, { containerId: container.id, port });
       await this.waitForReady(port);
 
-      // Override workspace to container's WORKDIR — host path doesn't exist inside.
-      parsed.workspace = "/app";
+      // Override workspace to the container's agent workspace.
+      parsed.workspace = "/workspace";
 
       const resp = await fetch(`http://localhost:${port}/start`, {
         method: "POST",
@@ -131,12 +196,12 @@ export class DockerRuntime implements Runtime {
         headers: JSON_HEADERS,
       });
     } catch (err) {
-      // Clean up the container if it was started but /start failed
       const leaked = this.containers.get(sessionId);
       this.containers.delete(sessionId);
       if (leaked) {
         const c = this.docker.getContainer(leaked.containerId);
         await c.kill().catch(() => {});
+        await c.remove().catch(() => {});
       }
       return jsonResponse(
         { error: err instanceof Error ? err.message : "Failed to start container" },
@@ -158,9 +223,10 @@ export class DockerRuntime implements Runtime {
 
     try {
       const c = this.docker.getContainer(entry.containerId);
-      await c.kill();
+      await c.kill().catch(() => {});
+      await c.remove().catch(() => {});
     } catch {
-      // Container may already be stopped (AutoRemove)
+      // Container may already be stopped
     }
     this.containers.delete(sessionId);
 
@@ -190,91 +256,30 @@ export class DockerRuntime implements Runtime {
   }
 
   // ---------------------------------------------------------------------------
-  // Image resolution
+  // Image management
   // ---------------------------------------------------------------------------
 
-  /**
-   * Determine which Docker image to use for the container.
-   *
-   * Priority:
-   *   1. Explicit `image` in the request body (template runtime config)
-   *   2. Build from `dockerfile` path in the request body
-   *   3. Fall back to the constructor-provided image
-   */
-  private async resolveImage(body: DockerStartBody): Promise<string> {
-    const { image, dockerfile } = body;
-
-    if (image) {
-      try {
-        await this.docker.getImage(image).inspect();
-        return image;
-      } catch {
-        if (dockerfile) return this.buildImage(dockerfile, image);
-        throw new Error(
-          `Docker image "${image}" not found locally. Build it first or provide a dockerfile.`,
-        );
-      }
-    }
-
-    if (dockerfile) {
-      const tag = await this.dockerfileTag(dockerfile);
-      return this.buildImage(dockerfile, tag);
-    }
-
-    // Validate the fallback image exists before returning it.
+  /** Pull the image if it doesn't exist locally. */
+  private async ensureImage(image: string): Promise<void> {
     try {
-      await this.docker.getImage(this.fallbackImage).inspect();
+      await this.docker.getImage(image).inspect();
+      return; // Already available
     } catch {
-      throw new Error(
-        `Docker image "${this.fallbackImage}" not found. ` +
-          `Build it first with: cd packages/session-host && pnpm docker:build`,
-      );
+      // Not found locally — pull it
     }
-    return this.fallbackImage;
-  }
 
-  /** Deterministic tag from dockerfile content hash (avoids stale image accumulation). */
-  private async dockerfileTag(dockerfilePath: string): Promise<string> {
-    try {
-      const content = await readFile(dockerfilePath, "utf8");
-      const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
-      return `flamecast-session-${hash}`;
-    } catch {
-      return `flamecast-session-fallback`;
-    }
-  }
-
-  /**
-   * Build a Docker image from a Dockerfile path. Caches by dockerfile path
-   * so repeated session starts don't rebuild.
-   */
-  private async buildImage(dockerfilePath: string, tag: string): Promise<string> {
-    const cached = this.builtImages.get(dockerfilePath);
-    if (cached) return cached;
-
-    const context = dirname(dockerfilePath);
-    const dockerfileName = basename(dockerfilePath);
-
-    console.log(`[DockerRuntime] Building image ${tag} from ${dockerfilePath}`);
-
-    const stream = await this.docker.buildImage(
-      { context, src: [dockerfileName] },
-      { t: tag, dockerfile: dockerfileName },
-    );
-
+    console.log(`[DockerRuntime] Pulling image ${image}...`);
+    const stream = await this.docker.pull(image);
     await new Promise<void>((resolve, reject) => {
-      this.docker.modem.followProgress(
-        stream,
-        (err: Error | null) => (err ? reject(err) : resolve()),
-        (event: { stream?: string }) => {
-          if (event.stream) process.stdout.write(event.stream);
-        },
+      this.docker.modem.followProgress(stream, (err: Error | null) =>
+        err ? reject(err) : resolve(),
       );
     });
-
-    this.builtImages.set(dockerfilePath, tag);
-    return tag;
   }
+
+  // ---------------------------------------------------------------------------
+  // Readiness check
+  // ---------------------------------------------------------------------------
 
   private async waitForReady(port: number, timeoutMs = 30_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;

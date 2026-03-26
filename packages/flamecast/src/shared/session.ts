@@ -71,13 +71,11 @@ export const RegisterAgentTemplateBodySchema = z.object({
 export function createRegisterAgentTemplateBodySchema(runtimeNames: [string, ...string[]]) {
   return z.object({
     name: z.string().min(1),
+    setup: z.string().optional(),
     spawn: AgentSpawnSchema,
     runtime: z
       .object({
         provider: z.enum(runtimeNames),
-        image: z.string().optional(),
-        dockerfile: z.string().optional(),
-        setup: z.string().optional(),
       })
       .optional(),
   });

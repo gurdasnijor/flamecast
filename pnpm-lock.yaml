@@ -73,6 +73,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.16.1
+        version: 0.16.1(zod@4.3.6)
       '@flamecast/runtime-docker':
         specifier: workspace:*
         version: link:../../packages/runtime-docker
@@ -251,6 +254,9 @@ importers:
       '@flamecast/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@flamecast/session-host-go':
+        specifier: workspace:*
+        version: link:../session-host-go
       dockerode:
         specifier: ^4.0.6
         version: 4.0.10
@@ -289,6 +295,8 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+
+  packages/session-host-go: {}
 
 packages:
 
