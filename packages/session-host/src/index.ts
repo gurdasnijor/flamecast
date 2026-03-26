@@ -276,9 +276,6 @@ async function startSession(
   sessionWorkspace = workspace;
   flamecastSessionId = req.sessionId ?? "";
   callbackUrl = req.callbackUrl ?? "";
-  console.log(
-    `[session-host] flamecastSessionId = ${JSON.stringify(flamecastSessionId)}, callbackUrl = ${JSON.stringify(callbackUrl)}`,
-  );
 
   try {
     return await doStartSession(req, workspace, serverPort);
