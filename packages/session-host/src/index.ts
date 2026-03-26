@@ -43,22 +43,15 @@ const permissionResolvers = new Map<string, (response: acp.RequestPermissionResp
  */
 async function postCallback(event: SessionCallbackEvent): Promise<Record<string, unknown> | null> {
   if (!callbackUrl || !flamecastSessionId) return null;
-  const url = `${callbackUrl}/agents/${flamecastSessionId}/events`;
-  console.log(`[session-host] postCallback ${event.type} → ${url}`);
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(`${callbackUrl}/agents/${flamecastSessionId}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(event),
     });
-    const body = await resp.json();
-    console.log(
-      `[session-host] postCallback ${event.type} ← ${resp.status} ${JSON.stringify(body).slice(0, 200)}`,
-    );
     if (!resp.ok) return null;
-    return body;
-  } catch (err) {
-    console.error(`[session-host] postCallback ${event.type} error:`, err);
+    return resp.json();
+  } catch {
     return null;
   }
 }
@@ -100,7 +93,8 @@ function createAcpClient(): acp.Client {
   return {
     sessionUpdate: async (params: acp.SessionNotification) => {
       emitRpc(acp.CLIENT_METHODS.session_update, "agent_to_client", "notification", params);
-      void postCallback({ type: "agent_message", data: { sessionUpdate: params } });
+      // agent_message callbacks disabled — too chatty (one per chunk).
+      // TODO: coalesce into end_turn events per the webhook RFC.
     },
 
     requestPermission: async (params: acp.RequestPermissionRequest) => {
@@ -467,7 +461,12 @@ const httpServer = createServer(async (req, res) => {
         jsonResponse(res, 400, { error: "No active session" });
         return;
       }
-      const { text } = JSON.parse(await readBody(req));
+      const body = JSON.parse(await readBody(req));
+      const text = typeof body.text === "string" ? body.text : null;
+      if (!text) {
+        jsonResponse(res, 400, { error: "Missing 'text' field" });
+        return;
+      }
       const params: acp.PromptRequest = {
         sessionId,
         prompt: [{ type: "text", text }],

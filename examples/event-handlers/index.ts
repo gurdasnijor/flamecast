@@ -15,9 +15,13 @@
  *     -H 'Content-Type: application/json' \
  *     -d '{"text": "write a file to disk"}' | jq .
  */
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { Flamecast, NodeRuntime } from "@flamecast/sdk";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const agentPath = resolve(__dirname, "../../packages/flamecast/src/flamecast/agent.ts");
 const PORT = 3002;
 
 const flamecast = new Flamecast({
@@ -28,10 +32,7 @@ const flamecast = new Flamecast({
     {
       id: "example",
       name: "Example agent",
-      spawn: {
-        command: "pnpm",
-        args: ["exec", "tsx", "../../packages/flamecast/src/flamecast/agent.ts"],
-      },
+      spawn: { command: "pnpm", args: ["exec", "tsx", agentPath] },
       runtime: { provider: "default" },
     },
   ],

@@ -340,6 +340,9 @@ export class Flamecast<
         }
         return { ok: true };
       }
+
+      default:
+        return { ok: true };
     }
   }
 

@@ -129,6 +129,9 @@ export function createApi(flamecast: FlamecastApi) {
       try {
         const agentId = c.req.param("agentId");
         const event = await c.req.json();
+        if (!event || typeof event.type !== "string" || !event.data) {
+          return c.json({ error: "Invalid event: missing type or data" }, 400);
+        }
         return c.json(await flamecast.handleSessionEvent(agentId, event));
       } catch (error) {
         console.error("Session event callback failed:", error);
