@@ -1,5 +1,5 @@
 {
-  "name": "@flamecast/example-webhooks-and-signaling",
+  "name": "@flamecast/example-queue-drain",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,7 +7,6 @@
   },
   "dependencies": {
     "@flamecast/example-shared": "workspace:*",
-    "@flamecast/protocol": "workspace:*",
     "@flamecast/sdk": "workspace:*"
   },
   "devDependencies": {
