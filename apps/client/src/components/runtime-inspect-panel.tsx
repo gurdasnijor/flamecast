@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchSessions } from "@/lib/api";
+import { fetchRuntimeFile, fetchRuntimeFsSnapshot, fetchSessions } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { XtermTerminal } from "@/components/xterm-terminal";
+import { XtermTerminal, type XtermTerminalHandle } from "@/components/xterm-terminal";
 import {
+  FileTree,
+  FileTreeFile,
+  FileTreeFolder,
+} from "@/components/ai-elements/file-tree";
+import {
+  FileCode2Icon,
   FolderTreeIcon,
   LoaderCircleIcon,
   PlayIcon,
@@ -37,7 +43,6 @@ import type { RuntimeInstance } from "@flamecast/protocol/runtime";
 interface TerminalTab {
   id: string;
   label: string;
-  data: string[];
   /** "running" | "closing" | "closed" */
   state: "running" | "closing" | "closed";
 }
@@ -47,6 +52,13 @@ interface RuntimeInspectPanelProps {
   onStart?: () => void;
   isStarting?: boolean;
 }
+
+type TreeNode = {
+  name: string;
+  path: string;
+  type: "file" | "directory" | "symlink" | "other";
+  children: TreeNode[];
+};
 
 // ---------------------------------------------------------------------------
 // Component
@@ -157,12 +169,12 @@ function ActiveRuntimeView({ instance }: { instance: RuntimeInstance }) {
           </TabsList>
         </div>
 
-        <TabsContent value="filesystem" className="mt-0 min-h-0 flex-1 overflow-auto">
-          <FilesystemTab instance={instance} />
+        <TabsContent value="filesystem" className="mt-0 min-h-0 flex-1 overflow-hidden">
+          <FilesystemTab instanceName={instance.name} />
         </TabsContent>
 
         <TabsContent value="terminal" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <TerminalTabsContainer instance={instance} />
+          <TerminalTabsContainer instanceName={instance.name} />
         </TabsContent>
 
         <TabsContent value="traces" className="mt-0 min-h-0 flex-1 overflow-auto">
@@ -174,19 +186,143 @@ function ActiveRuntimeView({ instance }: { instance: RuntimeInstance }) {
 }
 
 // ---------------------------------------------------------------------------
-// Filesystem tab (placeholder — hooks into existing filesystem snapshot infra)
+// Filesystem tab — uses runtime-level HTTP endpoints (not session-scoped)
 // ---------------------------------------------------------------------------
 
-function FilesystemTab({ instance: _instance }: { instance: RuntimeInstance }) {
-  return (
-    <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-      <div className="space-y-2 text-center">
-        <FolderTreeIcon className="mx-auto size-8 text-muted-foreground/50" />
-        <p>Filesystem preview for this runtime instance.</p>
-        <p className="text-xs">
-          Connect to a session on this runtime to browse its workspace files.
-        </p>
+function FilesystemTab({ instanceName }: { instanceName: string }) {
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [filePreview, setFilePreview] = useState<{ content: string; truncated: boolean } | null>(null);
+  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+
+  // Fetch filesystem snapshot at the runtime level
+  const { data: fsSnapshot, isLoading } = useQuery({
+    queryKey: ["runtime-fs", instanceName],
+    queryFn: () => fetchRuntimeFsSnapshot(instanceName),
+    refetchInterval: 15_000,
+  });
+
+  const fileEntries = fsSnapshot?.entries ?? [];
+  const workspaceRoot = fsSnapshot?.root ?? null;
+  const fileTree = useMemo(() => buildTree(fileEntries), [fileEntries]);
+
+  useEffect(() => {
+    setExpandedPaths((current) =>
+      current.size > 0 ? current : getInitialExpandedPaths(fileTree),
+    );
+  }, [fileTree]);
+
+  // File preview when selecting a file
+  useEffect(() => {
+    if (!selectedPath) {
+      setFilePreview(null);
+      return;
+    }
+    const entry = fileEntries.find((e) => e.path === selectedPath);
+    if (!entry || entry.type !== "file") {
+      setFilePreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFilePreviewLoading(true);
+    fetchRuntimeFile(instanceName, selectedPath)
+      .then((result) => {
+        if (!cancelled) setFilePreview({ content: result.content, truncated: result.truncated });
+      })
+      .catch(() => {
+        if (!cancelled) setFilePreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFilePreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPath, instanceName, fileEntries]);
+
+  const handleTreeSelect = useCallback(
+    (path: string) => {
+      setSelectedPath(path);
+      setExpandedPaths((current) => {
+        const next = new Set(current);
+        for (const parentPath of getParentPaths(path)) next.add(parentPath);
+        const entry = fileEntries.find((e) => e.path === path);
+        if (entry?.type === "directory") next.add(path);
+        return next;
+      });
+    },
+    [fileEntries],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <LoaderCircleIcon className="size-5 animate-spin text-muted-foreground" />
       </div>
+    );
+  }
+
+  if (fileEntries.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        <div className="space-y-2 text-center">
+          <FolderTreeIcon className="mx-auto size-8 text-muted-foreground/50" />
+          <p>No filesystem entries available.</p>
+          <p className="text-xs">Start a session on this runtime to browse workspace files.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* File tree sidebar */}
+      <aside className="flex w-64 shrink-0 flex-col overflow-hidden border-r">
+        <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+          <FolderTreeIcon className="size-3.5 text-muted-foreground" />
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {workspaceRoot ?? "workspace"}
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-2">
+          <FileTree
+            className="border-none bg-transparent"
+            expanded={expandedPaths}
+            onExpandedChange={setExpandedPaths}
+            onSelect={handleTreeSelect}
+            selectedPath={selectedPath ?? undefined}
+          >
+            {renderTree(fileTree)}
+          </FileTree>
+        </div>
+      </aside>
+
+      {/* File preview */}
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+          <FileCode2Icon className="size-3.5 text-muted-foreground" />
+          <p className="min-w-0 flex-1 truncate text-xs font-medium">
+            {selectedPath ?? "Select a file"}
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          {!selectedPath ? (
+            <EmptyPreview message="Select a file to preview." />
+          ) : filePreviewLoading ? (
+            <EmptyPreview message="Loading..." />
+          ) : filePreview ? (
+            <pre className="whitespace-pre-wrap break-all p-4 text-xs font-mono">
+              {filePreview.content}
+              {filePreview.truncated && (
+                <span className="text-muted-foreground">{"\n\n--- File truncated ---"}</span>
+              )}
+            </pre>
+          ) : (
+            <EmptyPreview message="Could not load preview." />
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -197,79 +333,37 @@ function FilesystemTab({ instance: _instance }: { instance: RuntimeInstance }) {
 
 let terminalCounter = 0;
 
-function TerminalTabsContainer({ instance: _instance }: { instance: RuntimeInstance }) {
+function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
   const [tabs, setTabs] = useState<TerminalTab[]>(() => {
     terminalCounter++;
     return [
       {
         id: `term-${terminalCounter}`,
         label: `Terminal ${terminalCounter}`,
-        data: [
-          `\x1b[1;32m$ Connected to runtime\x1b[0m\r\n`,
-          `\x1b[90mType commands here...\x1b[0m\r\n`,
-        ],
         state: "running",
       },
     ];
   });
   const [activeTerminal, setActiveTerminal] = useState<string>(tabs[0]?.id ?? "");
   const [closingTab, setClosingTab] = useState<TerminalTab | null>(null);
+  // Track xterm refs per tab
+  const terminalRefs = useRef<Map<string, XtermTerminalHandle>>(new Map());
 
   const addTab = useCallback(() => {
     terminalCounter++;
     const newTab: TerminalTab = {
       id: `term-${terminalCounter}`,
       label: `Terminal ${terminalCounter}`,
-      data: [
-        `\x1b[1;32m$ Connected to runtime\x1b[0m\r\n`,
-      ],
       state: "running",
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTerminal(newTab.id);
   }, []);
 
-  const requestClose = useCallback((tab: TerminalTab) => {
-    if (tab.state === "closed") {
-      // Already closed — just remove
-      setTabs((prev) => {
-        const next = prev.filter((t) => t.id !== tab.id);
-        return next;
-      });
-      setActiveTerminal((current) => {
-        if (current === tab.id) {
-          const remaining = tabs.filter((t) => t.id !== tab.id);
-          return remaining[remaining.length - 1]?.id ?? "";
-        }
-        return current;
-      });
-      return;
-    }
-    // Show confirmation dialog
-    setClosingTab(tab);
-  }, [tabs]);
-
-  const handleGracefulClose = useCallback(() => {
-    if (!closingTab) return;
-    const tabId = closingTab.id;
-    // Mark as closing (sends SIGTERM-equivalent)
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId
-          ? {
-              ...t,
-              state: "closing" as const,
-              data: [...t.data, `\r\n\x1b[33mSending close signal...\x1b[0m\r\n`],
-            }
-          : t,
-      ),
-    );
-    // Simulate process exit after a short delay
-    setTimeout(() => {
-      setTabs((prev) => {
-        const next = prev.filter((t) => t.id !== tabId);
-        return next;
-      });
+  const removeTab = useCallback(
+    (tabId: string) => {
+      terminalRefs.current.delete(tabId);
+      setTabs((prev) => prev.filter((t) => t.id !== tabId));
       setActiveTerminal((current) => {
         if (current === tabId) {
           const remaining = tabs.filter((t) => t.id !== tabId);
@@ -277,35 +371,73 @@ function TerminalTabsContainer({ instance: _instance }: { instance: RuntimeInsta
         }
         return current;
       });
-    }, 500);
+    },
+    [tabs],
+  );
+
+  const requestClose = useCallback(
+    (tab: TerminalTab) => {
+      if (tab.state === "closed") {
+        removeTab(tab.id);
+        return;
+      }
+      setClosingTab(tab);
+    },
+    [removeTab],
+  );
+
+  const handleGracefulClose = useCallback(() => {
+    if (!closingTab) return;
+    const tabId = closingTab.id;
+    const handle = terminalRefs.current.get(tabId);
+    handle?.write("\r\n\x1b[33mSending close signal...\x1b[0m\r\n");
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, state: "closing" as const } : t)),
+    );
+    // Simulate process exit after a short delay (will be replaced by real SIGTERM when backend supports it)
+    setTimeout(() => removeTab(tabId), 500);
     setClosingTab(null);
-  }, [closingTab, tabs]);
+  }, [closingTab, removeTab]);
 
   const handleHardKill = useCallback(() => {
     if (!closingTab) return;
-    const tabId = closingTab.id;
-    // Immediately remove
-    setTabs((prev) => prev.filter((t) => t.id !== tabId));
-    setActiveTerminal((current) => {
-      if (current === tabId) {
-        const remaining = tabs.filter((t) => t.id !== tabId);
-        return remaining[remaining.length - 1]?.id ?? "";
-      }
-      return current;
-    });
+    removeTab(closingTab.id);
     setClosingTab(null);
-  }, [closingTab, tabs]);
+  }, [closingTab, removeTab]);
 
+  // Terminal input handler — sends to backend via session, or echoes locally with basic line editing
   const handleTerminalInput = useCallback(
-    (data: string) => {
-      // Echo input back to terminal and append to data
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTerminal ? { ...t, data: [...t.data, data] } : t,
-        ),
-      );
+    (tabId: string, data: string) => {
+      const handle = terminalRefs.current.get(tabId);
+      if (!handle) return;
+
+      // When connected to a real PTY backend via the runtime session,
+      // forward input directly and let the PTY handle echo/line discipline.
+      // For now, provide local echo with basic line editing.
+      for (const char of data) {
+        switch (char) {
+          case "\r": // Enter
+            handle.write("\r\n");
+            break;
+          case "\x7f": // Backspace
+            handle.write("\b \b");
+            break;
+          case "\x03": // Ctrl+C
+            handle.write("^C\r\n");
+            break;
+          case "\x04": // Ctrl+D
+            handle.write("^D\r\n");
+            break;
+          default:
+            // Print normal characters
+            if (char >= " " || char === "\t") {
+              handle.write(char);
+            }
+            break;
+        }
+      }
     },
-    [activeTerminal],
+    [],
   );
 
   return (
@@ -355,16 +487,20 @@ function TerminalTabsContainer({ instance: _instance }: { instance: RuntimeInsta
       {/* Terminal content */}
       <div className="min-h-0 flex-1">
         {tabs.map((tab) => (
-          <div
+          <TerminalPane
             key={tab.id}
-            className={cn("h-full", activeTerminal === tab.id ? "block" : "hidden")}
-          >
-            <XtermTerminal
-              data={tab.data}
-              onInput={handleTerminalInput}
-              className="h-full"
-            />
-          </div>
+            tab={tab}
+            isActive={activeTerminal === tab.id}
+            onInput={(data) => handleTerminalInput(tab.id, data)}
+            onRefReady={(handle) => {
+              if (handle) {
+                terminalRefs.current.set(tab.id, handle);
+              } else {
+                terminalRefs.current.delete(tab.id);
+              }
+            }}
+            instanceName={instanceName}
+          />
         ))}
         {tabs.length === 0 && (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -407,6 +543,68 @@ function TerminalTabsContainer({ instance: _instance }: { instance: RuntimeInsta
 }
 
 // ---------------------------------------------------------------------------
+// Individual terminal pane — manages its own xterm ref + welcome message
+// ---------------------------------------------------------------------------
+
+function TerminalPane({
+  tab,
+  isActive,
+  onInput,
+  onRefReady,
+  instanceName,
+}: {
+  tab: TerminalTab;
+  isActive: boolean;
+  onInput: (data: string) => void;
+  onRefReady: (handle: XtermTerminalHandle | null) => void;
+  instanceName: string;
+}) {
+  const xtermRef = useRef<XtermTerminalHandle>(null);
+  const wroteWelcome = useRef(false);
+
+  // Register ref with parent
+  useEffect(() => {
+    if (xtermRef.current) {
+      onRefReady(xtermRef.current);
+    }
+    return () => onRefReady(null);
+  }, [onRefReady]);
+
+  // Write welcome message once terminal is mounted
+  useEffect(() => {
+    if (wroteWelcome.current) return;
+    // Small delay to let xterm initialize
+    const timer = setTimeout(() => {
+      const handle = xtermRef.current;
+      if (!handle) return;
+      wroteWelcome.current = true;
+
+      handle.write(`\x1b[1;32mConnected to runtime ${instanceName}\x1b[0m\r\n`);
+      handle.write(`\x1b[90mTerminal ready.\x1b[0m\r\n\r\n`);
+      handle.write("$ ");
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [instanceName]);
+
+  // Re-fit when becoming active (tab switch)
+  useEffect(() => {
+    if (isActive) {
+      requestAnimationFrame(() => xtermRef.current?.fit());
+    }
+  }, [isActive]);
+
+  return (
+    <div className={cn("h-full", isActive ? "block" : "hidden")}>
+      <XtermTerminal
+        ref={xtermRef}
+        onInput={onInput}
+        className="h-full"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Traces tab — shows traces from ALL sessions on this runtime instance
 // ---------------------------------------------------------------------------
 
@@ -417,7 +615,6 @@ function TracesTab({ instance }: { instance: RuntimeInstance }) {
     refetchInterval: 10_000,
   });
 
-  // Filter sessions that belong to this runtime instance
   const runtimeSessions = useMemo(() => {
     if (!sessions) return [];
     return sessions.filter((s) => s.runtime === instance.name);
@@ -451,7 +648,9 @@ function TracesTab({ instance }: { instance: RuntimeInstance }) {
             <Badge variant="secondary" className="shrink-0">
               {session.agentName}
             </Badge>
-            <code className="truncate text-xs text-muted-foreground">{session.id.slice(0, 12)}...</code>
+            <code className="truncate text-xs text-muted-foreground">
+              {session.id.slice(0, 12)}...
+            </code>
             <Badge
               variant="outline"
               className={cn(
@@ -468,7 +667,7 @@ function TracesTab({ instance }: { instance: RuntimeInstance }) {
             <p className="pl-2 text-xs text-muted-foreground">No trace entries yet.</p>
           ) : (
             <div className="space-y-1 rounded-lg border bg-muted/30 p-3">
-              {session.logs.map((log, index) => (
+              {session.logs.map((log: { timestamp: string; type: string; data: Record<string, unknown> }, index: number) => (
                 <Fragment key={index}>
                   {index > 0 && <Separator className="my-1" />}
                   <div className="flex items-start gap-2 text-xs">
@@ -495,6 +694,83 @@ function TracesTab({ instance }: { instance: RuntimeInstance }) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function EmptyPreview({ message }: { message: string }) {
+  return (
+    <div className="flex h-full min-h-[10rem] items-center justify-center p-6 text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+function renderTree(nodes: TreeNode[]) {
+  return nodes.map((node) =>
+    node.type === "directory" ? (
+      <FileTreeFolder key={node.path} name={node.name} path={node.path}>
+        {renderTree(node.children)}
+      </FileTreeFolder>
+    ) : (
+      <FileTreeFile key={node.path} name={node.name} path={node.path} />
+    ),
+  );
+}
+
+function buildTree(entries: Array<{ path: string; type: string }>): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", type: "directory", children: [] };
+
+  for (const entry of entries) {
+    const segments = entry.path.split("/").filter(Boolean);
+    let current = root;
+
+    segments.forEach((segment, index) => {
+      const path = segments.slice(0, index + 1).join("/");
+      let child = current.children.find((c) => c.path === path);
+
+      if (!child) {
+        child = {
+          name: segment,
+          path,
+          type: index === segments.length - 1 ? (entry.type as TreeNode["type"]) : "directory",
+          children: [],
+        };
+        current.children.push(child);
+      }
+
+      if (index === segments.length - 1) {
+        child.type = entry.type as TreeNode["type"];
+      }
+
+      current = child;
+    });
+  }
+
+  sortTree(root.children);
+  return root.children;
+}
+
+function sortTree(nodes: TreeNode[]) {
+  nodes.sort((a, b) => {
+    if (a.type === "directory" && b.type !== "directory") return -1;
+    if (a.type !== "directory" && b.type === "directory") return 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const node of nodes) {
+    if (node.children.length > 0) sortTree(node.children);
+  }
+}
+
+function getInitialExpandedPaths(nodes: TreeNode[]) {
+  return new Set(nodes.filter((n) => n.type === "directory").map((n) => n.path));
+}
+
+function getParentPaths(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  const parents: string[] = [];
+  for (let i = 0; i < segments.length - 1; i++) {
+    parents.push(segments.slice(0, i + 1).join("/"));
+  }
+  return parents;
+}
 
 function getTraceVariant(type: string): "default" | "secondary" | "destructive" | "outline" {
   switch (type) {

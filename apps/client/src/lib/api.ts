@@ -6,6 +6,8 @@ export const {
   createSession,
   fetchAgentTemplates,
   fetchRuntimes,
+  fetchRuntimeFile,
+  fetchRuntimeFsSnapshot,
   fetchSession,
   fetchSessions,
   pauseRuntime,

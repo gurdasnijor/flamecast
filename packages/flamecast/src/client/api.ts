@@ -78,6 +78,19 @@ export type FlamecastClient = {
   startRuntime(typeName: string, name?: string): Promise<RuntimeInstance>;
   stopRuntime(instanceName: string): Promise<void>;
   pauseRuntime(instanceName: string): Promise<void>;
+
+  // Runtime-level filesystem
+  fetchRuntimeFsSnapshot(instanceName: string): Promise<{
+    root: string;
+    entries: Array<{ path: string; type: string }>;
+    truncated: boolean;
+    maxEntries: number;
+  }>;
+  fetchRuntimeFile(instanceName: string, filePath: string): Promise<{
+    content: string;
+    truncated: boolean;
+    maxChars: number;
+  }>;
 };
 
 async function assertOk(response: Response, message: string): Promise<void> {
@@ -238,6 +251,24 @@ export function createFlamecastClient(options: FlamecastClientOptions): Flamecas
         param: { instanceName },
       });
       await assertOk(response, "Failed to pause runtime");
+    },
+
+    // -- Runtime-level filesystem --
+
+    async fetchRuntimeFsSnapshot(instanceName) {
+      const response = await rpc.runtimes[":instanceName"].fs.snapshot.$get({
+        param: { instanceName },
+      });
+      await assertOk(response, "Failed to fetch runtime filesystem snapshot");
+      return response.json();
+    },
+    async fetchRuntimeFile(instanceName, filePath) {
+      const response = await rpc.runtimes[":instanceName"].files.$get({
+        param: { instanceName },
+        query: { path: filePath },
+      });
+      await assertOk(response, "Failed to fetch runtime file");
+      return response.json();
     },
   };
 }
