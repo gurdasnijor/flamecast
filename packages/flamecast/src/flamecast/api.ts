@@ -154,7 +154,7 @@ export function createApi(flamecast: FlamecastApi) {
           return c.json({ error: msg }, status);
         }
       })
-      // ---- Runtime-level filesystem access ----
+      // ---- Runtime-level filesystem + exec ----
       .get("/runtimes/:instanceName/fs/snapshot", async (c) => {
         return proxyRuntimeInstance(c, flamecast, "/fs/snapshot", "GET");
       })
@@ -166,6 +166,9 @@ export function createApi(flamecast: FlamecastApi) {
           `/files?path=${encodeURIComponent(path)}`,
           "GET",
         );
+      })
+      .post("/runtimes/:instanceName/exec", async (c) => {
+        return proxyRuntimeInstance(c, flamecast, "/exec", "POST", await c.req.text());
       })
       .get("/agents", async (c) => {
         try {
@@ -366,9 +369,12 @@ async function proxyRuntimeInstance(
       method,
       ...(body ? { body } : {}),
     });
-    const data = await resp.json().catch(() => null);
-    // oxlint-disable-next-line no-type-assertion/no-type-assertion -- Hono's StatusCode requires a literal; resp.status is dynamic
-    return c.json(data ?? { error: "Invalid response from session-host" }, resp.status as 200);
+    // Pass through the raw response body and status from the session-host
+    const text = await resp.text();
+    return new Response(text, {
+      status: resp.status,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (error) {
     const msg = toErrorMessage(error);
     const status = msg.includes("not found") ? 404 : 500;

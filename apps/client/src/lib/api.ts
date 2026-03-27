@@ -4,6 +4,7 @@ const client = createFlamecastClient({ baseUrl: "/api" });
 
 export const {
   createSession,
+  execOnRuntime,
   fetchAgentTemplates,
   fetchRuntimes,
   fetchRuntimeFile,

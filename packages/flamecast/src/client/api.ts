@@ -91,6 +91,12 @@ export type FlamecastClient = {
     truncated: boolean;
     maxChars: number;
   }>;
+
+  // Runtime-level exec
+  execOnRuntime(instanceName: string, command: string): Promise<{
+    output: string;
+    exitCode: number;
+  }>;
 };
 
 async function assertOk(response: Response, message: string): Promise<void> {
@@ -268,6 +274,15 @@ export function createFlamecastClient(options: FlamecastClientOptions): Flamecas
         query: { path: filePath },
       });
       await assertOk(response, "Failed to fetch runtime file");
+      return response.json();
+    },
+
+    async execOnRuntime(instanceName, command) {
+      const response = await rpc.runtimes[":instanceName"].exec.$post({
+        param: { instanceName },
+        json: { command },
+      });
+      await assertOk(response, "Failed to execute command on runtime");
       return response.json();
     },
   };

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRuntimeFile, fetchRuntimeFsSnapshot, fetchSessions } from "@/lib/api";
+import { execOnRuntime, fetchRuntimeFile, fetchRuntimeFsSnapshot, fetchSessions } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -511,34 +511,75 @@ function TerminalPane({
 }) {
   const xtermRef = useRef<XtermTerminalHandle>(null);
   const wroteWelcome = useRef(false);
+  const lineBuffer = useRef("");
+  const isExecuting = useRef(false);
 
-  // Handle terminal input directly — no indirection through parent refs
-  const handleInput = useCallback((data: string) => {
-    const handle = xtermRef.current;
-    if (!handle) return;
-
-    for (const char of data) {
-      switch (char) {
-        case "\r": // Enter
-          handle.write("\r\n$ ");
-          break;
-        case "\x7f": // Backspace
-          handle.write("\b \b");
-          break;
-        case "\x03": // Ctrl+C
-          handle.write("^C\r\n$ ");
-          break;
-        case "\x04": // Ctrl+D
-          handle.write("^D\r\n$ ");
-          break;
-        default:
-          if (char >= " " || char === "\t") {
-            handle.write(char);
-          }
-          break;
+  const executeCommand = useCallback(
+    async (command: string) => {
+      const handle = xtermRef.current;
+      if (!handle || !command.trim()) {
+        handle?.write("\r\n$ ");
+        return;
       }
-    }
-  }, []);
+
+      isExecuting.current = true;
+      handle.write("\r\n");
+      try {
+        const result = await execOnRuntime(instanceName, command);
+        if (result.output) {
+          // Write output, converting \n to \r\n for xterm
+          handle.write(result.output.replace(/\n/g, "\r\n"));
+          // Ensure output ends with newline
+          if (!result.output.endsWith("\n")) {
+            handle.write("\r\n");
+          }
+        }
+        if (result.exitCode !== 0) {
+          handle.write(`\x1b[31mexit code: ${result.exitCode}\x1b[0m\r\n`);
+        }
+      } catch {
+        handle.write("\x1b[31mFailed to execute command\x1b[0m\r\n");
+      }
+      isExecuting.current = false;
+      handle.write("$ ");
+    },
+    [instanceName],
+  );
+
+  const handleInput = useCallback(
+    (data: string) => {
+      const handle = xtermRef.current;
+      if (!handle || isExecuting.current) return;
+
+      for (const char of data) {
+        switch (char) {
+          case "\r": { // Enter
+            const cmd = lineBuffer.current;
+            lineBuffer.current = "";
+            void executeCommand(cmd);
+            break;
+          }
+          case "\x7f": // Backspace
+            if (lineBuffer.current.length > 0) {
+              lineBuffer.current = lineBuffer.current.slice(0, -1);
+              handle.write("\b \b");
+            }
+            break;
+          case "\x03": // Ctrl+C
+            lineBuffer.current = "";
+            handle.write("^C\r\n$ ");
+            break;
+          default:
+            if (char >= " " || char === "\t") {
+              lineBuffer.current += char;
+              handle.write(char);
+            }
+            break;
+        }
+      }
+    },
+    [executeCommand],
+  );
 
   // Write welcome message once terminal is mounted
   useEffect(() => {
@@ -549,7 +590,7 @@ function TerminalPane({
       wroteWelcome.current = true;
 
       handle.write(`\x1b[1;32mConnected to runtime ${instanceName}\x1b[0m\r\n`);
-      handle.write(`\x1b[90mTerminal ready.\x1b[0m\r\n\r\n`);
+      handle.write(`\x1b[90mType commands to execute on the runtime.\x1b[0m\r\n\r\n`);
       handle.write("$ ");
     }, 50);
     return () => clearTimeout(timer);
