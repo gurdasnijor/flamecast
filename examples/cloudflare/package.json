@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "build": "pnpm -w build",
+    "build": "pnpm -w turbo run build:package --filter=@flamecast/example-cloudflare... && tsc --project tsconfig.json --noEmit",
     "deploy": "wrangler deploy",
     "test": "vitest run --config vitest.config.ts"
   },
@@ -19,7 +19,6 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "vercel": "^50.37.1",
     "wrangler": "^4.77.0"
   },
   "packageManager": "pnpm@10.26.2"
