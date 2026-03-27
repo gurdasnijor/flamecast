@@ -346,8 +346,6 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
   });
   const [activeTerminal, setActiveTerminal] = useState<string>(tabs[0]?.id ?? "");
   const [closingTab, setClosingTab] = useState<TerminalTab | null>(null);
-  // Track xterm refs per tab
-  const terminalRefs = useRef<Map<string, XtermTerminalHandle>>(new Map());
 
   const addTab = useCallback(() => {
     terminalCounter++;
@@ -362,17 +360,19 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
 
   const removeTab = useCallback(
     (tabId: string) => {
-      terminalRefs.current.delete(tabId);
-      setTabs((prev) => prev.filter((t) => t.id !== tabId));
-      setActiveTerminal((current) => {
-        if (current === tabId) {
-          const remaining = tabs.filter((t) => t.id !== tabId);
-          return remaining[remaining.length - 1]?.id ?? "";
-        }
-        return current;
+      setTabs((prev) => {
+        const next = prev.filter((t) => t.id !== tabId);
+        // Also fix active terminal if needed
+        setActiveTerminal((current) => {
+          if (current === tabId) {
+            return next[next.length - 1]?.id ?? "";
+          }
+          return current;
+        });
+        return next;
       });
     },
-    [tabs],
+    [],
   );
 
   const requestClose = useCallback(
@@ -389,12 +389,9 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
   const handleGracefulClose = useCallback(() => {
     if (!closingTab) return;
     const tabId = closingTab.id;
-    const handle = terminalRefs.current.get(tabId);
-    handle?.write("\r\n\x1b[33mSending close signal...\x1b[0m\r\n");
     setTabs((prev) =>
       prev.map((t) => (t.id === tabId ? { ...t, state: "closing" as const } : t)),
     );
-    // Simulate process exit after a short delay (will be replaced by real SIGTERM when backend supports it)
     setTimeout(() => removeTab(tabId), 500);
     setClosingTab(null);
   }, [closingTab, removeTab]);
@@ -404,41 +401,6 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
     removeTab(closingTab.id);
     setClosingTab(null);
   }, [closingTab, removeTab]);
-
-  // Terminal input handler — sends to backend via session, or echoes locally with basic line editing
-  const handleTerminalInput = useCallback(
-    (tabId: string, data: string) => {
-      const handle = terminalRefs.current.get(tabId);
-      if (!handle) return;
-
-      // When connected to a real PTY backend via the runtime session,
-      // forward input directly and let the PTY handle echo/line discipline.
-      // For now, provide local echo with basic line editing.
-      for (const char of data) {
-        switch (char) {
-          case "\r": // Enter
-            handle.write("\r\n");
-            break;
-          case "\x7f": // Backspace
-            handle.write("\b \b");
-            break;
-          case "\x03": // Ctrl+C
-            handle.write("^C\r\n");
-            break;
-          case "\x04": // Ctrl+D
-            handle.write("^D\r\n");
-            break;
-          default:
-            // Print normal characters
-            if (char >= " " || char === "\t") {
-              handle.write(char);
-            }
-            break;
-        }
-      }
-    },
-    [],
-  );
 
   return (
     <>
@@ -491,14 +453,6 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
             key={tab.id}
             tab={tab}
             isActive={activeTerminal === tab.id}
-            onInput={(data) => handleTerminalInput(tab.id, data)}
-            onRefReady={(handle) => {
-              if (handle) {
-                terminalRefs.current.set(tab.id, handle);
-              } else {
-                terminalRefs.current.delete(tab.id);
-              }
-            }}
             instanceName={instanceName}
           />
         ))}
@@ -543,37 +497,52 @@ function TerminalTabsContainer({ instanceName }: { instanceName: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Individual terminal pane — manages its own xterm ref + welcome message
+// Individual terminal pane — owns its xterm ref and handles input directly
 // ---------------------------------------------------------------------------
 
 function TerminalPane({
   tab,
   isActive,
-  onInput,
-  onRefReady,
   instanceName,
 }: {
   tab: TerminalTab;
   isActive: boolean;
-  onInput: (data: string) => void;
-  onRefReady: (handle: XtermTerminalHandle | null) => void;
   instanceName: string;
 }) {
   const xtermRef = useRef<XtermTerminalHandle>(null);
   const wroteWelcome = useRef(false);
 
-  // Register ref with parent
-  useEffect(() => {
-    if (xtermRef.current) {
-      onRefReady(xtermRef.current);
+  // Handle terminal input directly — no indirection through parent refs
+  const handleInput = useCallback((data: string) => {
+    const handle = xtermRef.current;
+    if (!handle) return;
+
+    for (const char of data) {
+      switch (char) {
+        case "\r": // Enter
+          handle.write("\r\n$ ");
+          break;
+        case "\x7f": // Backspace
+          handle.write("\b \b");
+          break;
+        case "\x03": // Ctrl+C
+          handle.write("^C\r\n$ ");
+          break;
+        case "\x04": // Ctrl+D
+          handle.write("^D\r\n$ ");
+          break;
+        default:
+          if (char >= " " || char === "\t") {
+            handle.write(char);
+          }
+          break;
+      }
     }
-    return () => onRefReady(null);
-  }, [onRefReady]);
+  }, []);
 
   // Write welcome message once terminal is mounted
   useEffect(() => {
     if (wroteWelcome.current) return;
-    // Small delay to let xterm initialize
     const timer = setTimeout(() => {
       const handle = xtermRef.current;
       if (!handle) return;
@@ -597,7 +566,7 @@ function TerminalPane({
     <div className={cn("h-full", isActive ? "block" : "hidden")}>
       <XtermTerminal
         ref={xtermRef}
-        onInput={onInput}
+        onInput={handleInput}
         className="h-full"
       />
     </div>
