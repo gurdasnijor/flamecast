@@ -38,6 +38,10 @@
     "./verify": {
       "types": "./dist/verify.d.ts",
       "import": "./dist/verify.js"
+    },
+    "./vendor-analysis": {
+      "types": "./dist/vendor-analysis.d.ts",
+      "import": "./dist/vendor-analysis.js"
     }
   },
   "scripts": {

@@ -28,6 +28,7 @@ import type {
   SessionContext,
   SessionEndReason,
 } from "@flamecast/protocol/runtime";
+import { VendorAnalysisService, MemoryCostStorage, type CostStorage } from "./vendor-analysis/index.js";
 
 // Public API types — all sourced from @flamecast/protocol
 export type {
@@ -49,6 +50,16 @@ export type { FileSystemEntry } from "@flamecast/protocol/session-host";
 export type { RuntimeInstance, RuntimeInfo } from "@flamecast/protocol/runtime";
 export type { SessionMeta, SessionRuntimeInfo, FlamecastStorage } from "./storage.js";
 export { NodeRuntime } from "./runtime-node.js";
+export { VendorAnalysisService, MemoryCostStorage } from "./vendor-analysis/index.js";
+export type { CostStorage } from "./vendor-analysis/index.js";
+export type {
+  SessionCostRecord,
+  ProviderCostSummary,
+  ProviderComparison,
+  PortabilityReport,
+  ProviderPricing,
+  VendorAnalysisDashboard,
+} from "@flamecast/protocol/vendor-analysis";
 
 // ---------------------------------------------------------------------------
 // Event handler context types
@@ -123,6 +134,8 @@ export type FlamecastOptions<
   callbackUrl?: string;
   /** Global webhooks delivered for all sessions. Merged with per-session webhooks at creation time. */
   webhooks?: Omit<WebhookConfig, "id">[];
+  /** Cost storage for vendor analysis. Defaults to in-memory. */
+  costStorage?: CostStorage;
 } & FlamecastEventHandlers<R>;
 
 export class Flamecast<
@@ -136,6 +149,9 @@ export class Flamecast<
   private readonly globalWebhooks: Omit<WebhookConfig, "id">[];
   private readonly webhookEngine = new WebhookDeliveryEngine();
   private readonly webhookAbortControllers = new Map<string, AbortController>();
+
+  /** Vendor analysis service for cost tracking and provider comparison. */
+  readonly vendorAnalysis: VendorAnalysisService;
 
   /** Event bus for lifecycle events and session history. Used by the Node
    *  `listen()` function to wire the WS adapter and session-host bridge. */
@@ -151,6 +167,8 @@ export class Flamecast<
   private storage: FlamecastStorage | null = null;
   private readyPromise: Promise<void> | null = null;
   private recoveryPromise: Promise<void> | null = null;
+  /** Track prompt count per session for cost recording. */
+  private readonly sessionPromptCounts = new Map<string, number>();
 
   /** The Hono app. Use with any runtime: Node, CF Workers, Vercel, etc. */
   readonly app;
@@ -162,6 +180,7 @@ export class Flamecast<
     this.globalWebhooks = opts.webhooks ?? [];
     this.runtimesMap = opts.runtimes;
     this.sessionService = new SessionService(opts.runtimes);
+    this.vendorAnalysis = new VendorAnalysisService(opts.costStorage ?? new MemoryCostStorage());
     this.app = createServerApp(this);
     this.handlers = {
       onPermissionRequest: opts.onPermissionRequest,
@@ -423,6 +442,7 @@ export class Flamecast<
 
   async promptSession(id: string, text: string): Promise<Record<string, unknown>> {
     await this.ensureReady();
+    this.sessionPromptCounts.set(id, (this.sessionPromptCounts.get(id) ?? 0) + 1);
     const response = await this.sessionService.proxyRequest(id, "/prompt", {
       method: "POST",
       body: JSON.stringify({ text }),
@@ -490,6 +510,11 @@ export class Flamecast<
       agentId: resolveAgentId(id),
     });
 
+    // Record session cost for vendor analysis
+    if (sessionCtx) {
+      await this.recordSessionCostFromContext(sessionCtx);
+    }
+
     // Cancel in-flight webhook retries for this session
     this.webhookAbortControllers.get(id)?.abort();
     this.webhookAbortControllers.delete(id);
@@ -533,6 +558,9 @@ export class Flamecast<
 
       case "session_end": {
         const ctx = await this.buildSessionContext(sessionId);
+        if (ctx) {
+          await this.recordSessionCostFromContext(ctx);
+        }
         if (this.handlers.onSessionEnd && ctx) {
           try {
             await this.handlers.onSessionEnd({ session: ctx, reason: "agent_exit" });
@@ -696,6 +724,47 @@ export class Flamecast<
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Record session cost for vendor analysis when a session ends.
+   * Estimates cost based on configured provider pricing or records duration-only.
+   */
+  private async recordSessionCostFromContext(ctx: SessionContext<R>): Promise<void> {
+    try {
+      const endedAt = new Date().toISOString();
+      const durationMs = new Date(endedAt).getTime() - new Date(ctx.startedAt).getTime();
+      const promptCount = this.sessionPromptCounts.get(ctx.id) ?? 0;
+
+      // Estimate cost from provider pricing if available
+      const estimate = await this.vendorAnalysis.estimateSessionCost(
+        ctx.runtime,
+        durationMs,
+        promptCount,
+      );
+
+      await this.vendorAnalysis.recordSessionCost({
+        sessionId: ctx.id,
+        provider: ctx.runtime,
+        agentName: ctx.agentName,
+        startedAt: ctx.startedAt,
+        endedAt,
+        durationMs,
+        estimatedCostUsd: estimate.estimatedCostUsd,
+        promptCount,
+        metadata: {
+          spawn: ctx.spawn,
+          costBreakdown: estimate.breakdown,
+        },
+      });
+
+      this.sessionPromptCounts.delete(ctx.id);
+    } catch (err) {
+      console.warn(
+        `[Flamecast] Failed to record session cost for "${ctx.id}":`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   private async buildSessionContext(sessionId: string): Promise<SessionContext<R> | null> {
     const storage = this.requireStorage();
