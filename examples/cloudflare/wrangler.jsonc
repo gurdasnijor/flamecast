@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "flamecast-cloudflare",
+  "name": "flamecast-backend",
   "main": "src/worker.ts",
   "compatibility_date": "2026-03-27",
   "compatibility_flags": ["nodejs_compat"],
