@@ -15,6 +15,7 @@ function cloneTemplate(template: AgentTemplate): AgentTemplate {
       args: [...template.spawn.args],
     },
     runtime: { ...template.runtime },
+    ...(template.env ? { env: { ...template.env } } : {}),
   };
 }
 
@@ -65,6 +66,31 @@ export class MemoryFlamecastStorage implements FlamecastStorage {
   async getAgentTemplate(id: string): Promise<AgentTemplate | null> {
     const row = this.templates.get(id);
     return row ? cloneTemplate(row.template) : null;
+  }
+
+  async updateAgentTemplate(
+    id: string,
+    patch: {
+      name?: string;
+      spawn?: AgentTemplate["spawn"];
+      runtime?: Partial<AgentTemplate["runtime"]>;
+      env?: Record<string, string>;
+    },
+  ): Promise<AgentTemplate | null> {
+    const row = this.templates.get(id);
+    if (!row) return null;
+    const existing = cloneTemplate(row.template);
+    const merged: AgentTemplate = {
+      ...existing,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.spawn !== undefined ? { spawn: patch.spawn } : {}),
+      ...(patch.runtime !== undefined
+        ? { runtime: { ...existing.runtime, ...patch.runtime } }
+        : {}),
+      ...(patch.env !== undefined ? { env: patch.env } : {}),
+    };
+    this.templates.set(id, { template: cloneTemplate(merged), managed: row.managed });
+    return cloneTemplate(merged);
   }
 
   async saveAgentTemplate(template: AgentTemplate): Promise<void> {

@@ -208,6 +208,21 @@ export class Flamecast<
     return this.requireStorage().listAgentTemplates();
   }
 
+  async updateAgentTemplate(
+    id: string,
+    patch: {
+      name?: string;
+      spawn?: AgentTemplate["spawn"];
+      runtime?: Partial<AgentTemplate["runtime"]>;
+      env?: Record<string, string>;
+    },
+  ): Promise<AgentTemplate> {
+    await this.ensureReady();
+    const updated = await this.requireStorage().updateAgentTemplate(id, patch);
+    if (!updated) throw new Error(`Agent template "${id}" not found`);
+    return updated;
+  }
+
   // ---------------------------------------------------------------------------
   // Runtime lifecycle
   // ---------------------------------------------------------------------------
@@ -322,8 +337,8 @@ export class Flamecast<
   }
 
   async registerAgentTemplate(
-    body: RegisterAgentTemplateBody & {
-      runtime?: { provider: RuntimeNames<R> } & Record<string, unknown>;
+    body: Omit<RegisterAgentTemplateBody, "runtime"> & {
+      runtime?: { provider?: RuntimeNames<R> | string } & Record<string, unknown>;
     },
   ): Promise<AgentTemplate> {
     await this.ensureReady();
@@ -342,7 +357,8 @@ export class Flamecast<
         command: body.spawn.command,
         args: [...body.spawn.args],
       },
-      runtime: body.runtime ? { ...body.runtime } : { provider },
+      runtime: body.runtime ? { ...body.runtime, provider } : { provider },
+      ...(body.env ? { env: body.env } : {}),
     };
 
     await this.requireStorage().saveAgentTemplate(template);
@@ -812,13 +828,19 @@ export class Flamecast<
         throw new Error(`Unknown agent template "${opts.agentTemplateId}"`);
       }
 
+      // Merge env: runtime-level env as base, template-level env as override
+      const mergedEnv =
+        template.runtime.env || template.env
+          ? { ...template.runtime.env, ...template.env }
+          : undefined;
+
       return {
         agentName: template.name,
         spawn: {
           command: template.spawn.command,
           args: [...template.spawn.args],
         },
-        runtime: { ...template.runtime },
+        runtime: { ...template.runtime, ...(mergedEnv ? { env: mergedEnv } : {}) },
       };
     }
 

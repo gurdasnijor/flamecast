@@ -33,6 +33,7 @@ function rowToTemplate(row: typeof agentTemplates.$inferSelect): AgentTemplate {
       ...row.runtime,
       ...(row.setup ? { setup: row.setup } : {}),
     },
+    ...(row.env ? { env: row.env } : {}),
   };
 }
 
@@ -62,6 +63,7 @@ export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
             id: template.id,
             name: template.name,
             setup: template.runtime.setup ?? null,
+            env: template.env ?? null,
             spawn: template.spawn,
             runtime: template.runtime,
             managed: true,
@@ -72,6 +74,7 @@ export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
             set: {
               name: template.name,
               setup: template.runtime.setup ?? null,
+              env: template.env ?? null,
               spawn: template.spawn,
               runtime: template.runtime,
               managed: true,
@@ -100,6 +103,42 @@ export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
       return rows[0] ? rowToTemplate(rows[0]) : null;
     },
 
+    async updateAgentTemplate(id, patch) {
+      const existing = await db
+        .select()
+        .from(agentTemplates)
+        .where(eq(agentTemplates.id, id))
+        .limit(1);
+      if (!existing[0]) return null;
+
+      const existingTemplate = rowToTemplate(existing[0]);
+      const mergedRuntime = patch.runtime
+        ? { ...existingTemplate.runtime, ...patch.runtime }
+        : existingTemplate.runtime;
+      const merged: AgentTemplate = {
+        ...existingTemplate,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.spawn !== undefined ? { spawn: patch.spawn } : {}),
+        runtime: mergedRuntime,
+        ...(patch.env !== undefined ? { env: patch.env } : {}),
+      };
+
+      const set: Partial<typeof agentTemplates.$inferInsert> = {};
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.spawn !== undefined) set.spawn = patch.spawn;
+      if (patch.runtime !== undefined) {
+        set.runtime = mergedRuntime;
+        set.setup = mergedRuntime.setup ?? null;
+      }
+      if (patch.env !== undefined) set.env = patch.env ?? null;
+
+      if (Object.keys(set).length > 0) {
+        await db.update(agentTemplates).set(set).where(eq(agentTemplates.id, id));
+      }
+
+      return merged;
+    },
+
     async saveAgentTemplate(template: AgentTemplate) {
       await db
         .insert(agentTemplates)
@@ -107,6 +146,7 @@ export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
           id: template.id,
           name: template.name,
           setup: template.runtime.setup ?? null,
+          env: template.env ?? null,
           spawn: template.spawn,
           runtime: template.runtime,
           managed: false,
@@ -117,6 +157,7 @@ export function createStorageFromDb(db: PsqlAppDb): FlamecastStorage {
           set: {
             name: template.name,
             setup: template.runtime.setup ?? null,
+            env: template.env ?? null,
             spawn: template.spawn,
             runtime: template.runtime,
             managed: false,
