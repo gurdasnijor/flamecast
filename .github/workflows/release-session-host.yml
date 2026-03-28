@@ -1,0 +1,41 @@
+name: Release session-host
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - packages/session-host-go/**
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/session-host-go/go.mod
+
+      - name: Build
+        working-directory: packages/session-host-go
+        run: GOOS=linux GOARCH=amd64 go build -o dist/session-host-amd64 .
+
+      - name: Delete existing release
+        run: gh release delete session-host-latest -y --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create release
+        run: |
+          gh release create session-host-latest \
+            packages/session-host-go/dist/session-host-amd64 \
+            --title "session-host (latest)" \
+            --notes "Rolling release — runtime-host with multi-session support."
+        env:
+          GH_TOKEN: ${{ github.token }}
