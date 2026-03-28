@@ -432,12 +432,53 @@ export class Flamecast<
 
   async listSessions(): Promise<Session[]> {
     await this.ensureReady();
-    const allMetas = await this.requireStorage().listAllSessions();
-    const activeMetas = allMetas.filter((meta) => meta.status === "active");
-    const sessions = await Promise.all(
-      activeMetas.map((meta) => this.snapshotSession(meta.id, { readOnly: true })),
-    );
-    return sessions.filter((session) => session.status === "active");
+    const storage = this.requireStorage();
+
+    // Use listActiveSessionsWithRuntime to fetch all data in a single query,
+    // avoiding N+1 round-trips through Hyperdrive / serverless DB connections.
+    const storedSessions = await storage.listActiveSessionsWithRuntime();
+
+    return storedSessions
+      .filter((s) => {
+        if (s.meta.status !== "active") return false;
+        // Sessions without runtime info can never be reached
+        if (!s.runtimeInfo) return false;
+        return true;
+      })
+      .map((stored) => {
+        const websocketUrl =
+          this.sessionService.getWebsocketUrl(stored.meta.id) ??
+          stored.runtimeInfo?.websocketUrl;
+
+        const promptQueue = this.sessionService.hasSession(stored.meta.id)
+          ? null // queue is fetched on-demand by getSession, not during listing
+          : null;
+
+        return {
+          id: stored.meta.id,
+          agentName: stored.meta.agentName,
+          spawn: {
+            command: stored.meta.spawn.command,
+            args: [...stored.meta.spawn.args],
+          },
+          startedAt: stored.meta.startedAt,
+          lastUpdatedAt: stored.meta.lastUpdatedAt,
+          status: stored.meta.status,
+          logs: [],
+          pendingPermission: stored.meta.pendingPermission
+            ? {
+                ...stored.meta.pendingPermission,
+                options: stored.meta.pendingPermission.options.map((option) => ({
+                  ...option,
+                })),
+              }
+            : null,
+          fileSystem: null,
+          promptQueue,
+          websocketUrl,
+          runtime: stored.meta.runtime,
+        } satisfies Session;
+      });
   }
 
   async getSession(
@@ -862,11 +903,26 @@ export class Flamecast<
     if (stored.meta.status !== "active") return stored;
     if (this.sessionService.hasSession(sessionId)) return stored;
 
+    // In read-only mode (e.g. listSessions), skip recovery entirely.
+    // Recovery involves external API calls (E2B Sandbox.getFullInfo, health
+    // checks) that can hang or time out in serverless environments where
+    // each request creates a fresh Flamecast instance. Just return whatever
+    // the database has — the session may still be alive, we just don't need
+    // to verify it for a listing.
+    if (opts.readOnly) {
+      if (!stored.runtimeInfo) {
+        return {
+          ...stored,
+          meta: { ...stored.meta, status: "killed" },
+          runtimeInfo: null,
+        };
+      }
+      return stored;
+    }
+
     // No runtime info → session can never be recovered
     if (!stored.runtimeInfo) {
-      if (!opts.readOnly) {
-        await this.requireStorage().finalizeSession(sessionId, "terminated");
-      }
+      await this.requireStorage().finalizeSession(sessionId, "terminated");
       return {
         ...stored,
         meta: { ...stored.meta, status: "killed" },
@@ -881,13 +937,6 @@ export class Flamecast<
     );
 
     if (recovered) return stored;
-
-    // Recovery failed — in read-only mode, don't mutate the database.
-    // The session may still be alive; we just can't reach it from this
-    // ephemeral serverless instance.
-    if (opts.readOnly) {
-      return stored;
-    }
 
     // Grace period: don't permanently kill sessions that were recently active.
     // Another process or request may still be connected to the session; only
