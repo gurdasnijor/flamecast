@@ -6,6 +6,6 @@ import { createAuthClient } from "better-auth/react";
 const apiUrl: string | undefined = import.meta.env.VITE_API_URL;
 const baseURL = apiUrl ? apiUrl.replace(/\/api\/?$/, "") : undefined;
 
-export const authClient = createAuthClient({ baseURL });
+const authClient = createAuthClient({ baseURL });
 
 export const { useSession, signIn, signOut } = authClient;
