@@ -8,11 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { GithubIcon, LogOutIcon } from "lucide-react";
 
 export function UserMenu() {
@@ -25,7 +21,9 @@ export function UserMenu() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            onClick={() => signIn.social({ provider: "github", callbackURL: window.location.origin })}
+            onClick={() =>
+              signIn.social({ provider: "github", callbackURL: window.location.origin })
+            }
             className="cursor-pointer"
           >
             <GithubIcon className="size-4" />
