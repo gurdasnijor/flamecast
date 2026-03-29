@@ -319,9 +319,10 @@ Configuration is TypeScript via the `Flamecast` constructor:
 
 ```ts
 import { Flamecast } from "@flamecast/sdk";
+import { createPsqlStorage } from "@flamecast/storage-psql";
 
 const flamecast = new Flamecast({
-  storage: "pglite",
+  storage: await createPsqlStorage(),
 });
 
 await flamecast.listen(3001);
@@ -352,7 +353,7 @@ export default flamecast.fetch;
 
 ### Storage options
 
-Use `@flamecast/storage-psql` for SQL-backed persistence. `createPsqlStorage()` defaults to embedded PGLite when no `url` is provided:
+Use `@flamecast/storage-psql` for SQL-backed persistence. `createPsqlStorage()` defaults to embedded PGLite when no `url` is provided, but it no longer auto-applies migrations:
 
 ```ts
 import { createPsqlStorage } from "@flamecast/storage-psql";
@@ -362,6 +363,20 @@ const storage = await createPsqlStorage({ url: "postgres://localhost/flamecast" 
 
 // Embedded PGLite (default)
 const storage = await createPsqlStorage();
+```
+
+Before starting the app for the first time, run:
+
+```bash
+flamecast db migrate
+```
+
+Useful admin commands:
+
+```bash
+flamecast db status
+flamecast db migrate
+flamecast db studio
 ```
 
 | Option | Description |

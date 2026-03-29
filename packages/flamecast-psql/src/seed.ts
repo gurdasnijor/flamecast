@@ -4,7 +4,7 @@
  * Run via: DATABASE_URL=... npx tsx src/seed.ts
  */
 import { defaultAgentTemplates } from "./default-templates.js";
-import { createDatabase } from "./db.js";
+import { createDatabase, migrateDatabase } from "./db.js";
 import { createStorageFromDb } from "./storage.js";
 
 const url = process.env.DATABASE_URL;
@@ -13,9 +13,13 @@ if (!url) {
   process.exit(1);
 }
 
-const { db, close } = await createDatabase({ url });
-const storage = createStorageFromDb(db);
-await storage.seedAgentTemplates(defaultAgentTemplates);
+const bundle = await createDatabase({ url });
 
-console.log(`Seeded ${defaultAgentTemplates.length} templates`);
-await close();
+try {
+  await migrateDatabase(bundle);
+  const storage = createStorageFromDb(bundle.db);
+  await storage.seedAgentTemplates(defaultAgentTemplates);
+  console.log(`Seeded ${defaultAgentTemplates.length} templates`);
+} finally {
+  await bundle.close();
+}

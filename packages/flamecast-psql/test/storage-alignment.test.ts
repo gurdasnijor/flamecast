@@ -2,14 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabase } from "../src/db.js";
+import { createDatabase, migrateDatabase } from "../src/db.js";
 import { createStorageFromDb } from "../src/storage.js";
 
 describe("storage alignment", () => {
   it("stores managed and user templates in pglite-backed storage", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "flamecast-storage-"));
-    const { db, close } = await createDatabase({ dataDir });
-    const storage = createStorageFromDb(db);
+    const bundle = await createDatabase({ dataDir });
+    await migrateDatabase(bundle);
+    const storage = createStorageFromDb(bundle.db);
 
     try {
       await storage.seedAgentTemplates([
@@ -65,15 +66,16 @@ describe("storage alignment", () => {
         },
       ]);
     } finally {
-      await close();
+      await bundle.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });
 
   it("stores sessions in pglite-backed storage", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "flamecast-sessions-"));
-    const { db, close } = await createDatabase({ dataDir });
-    const storage = createStorageFromDb(db);
+    const bundle = await createDatabase({ dataDir });
+    await migrateDatabase(bundle);
+    const storage = createStorageFromDb(bundle.db);
 
     try {
       await storage.createSession({
@@ -117,15 +119,16 @@ describe("storage alignment", () => {
       expect(allAfterKill).toHaveLength(1);
       expect(allAfterKill[0]?.status).toBe("killed");
     } finally {
-      await close();
+      await bundle.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });
 
   it("lists runtime instances oldest first", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "flamecast-runtime-instances-"));
-    const { db, close } = await createDatabase({ dataDir });
-    const storage = createStorageFromDb(db);
+    const bundle = await createDatabase({ dataDir });
+    await migrateDatabase(bundle);
+    const storage = createStorageFromDb(bundle.db);
 
     try {
       await storage.saveRuntimeInstance({
@@ -154,7 +157,7 @@ describe("storage alignment", () => {
       expect(instances[0]?.websocketUrl).toBe("ws://localhost:9002/");
       expect(instances[1]?.websocketUrl).toBeUndefined();
     } finally {
-      await close();
+      await bundle.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });

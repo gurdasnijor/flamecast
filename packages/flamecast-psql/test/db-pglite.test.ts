@@ -17,14 +17,20 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("node:fs/promises", () => ({ mkdir: mocks.mkdir }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: mocks.mkdir,
+  };
+});
 vi.mock("@electric-sql/pglite", () => ({
   PGlite: { create: mocks.createPGlite },
 }));
 vi.mock("drizzle-orm/pglite", () => ({ drizzle: mocks.drizzlePgLite }));
 vi.mock("drizzle-orm/pglite/migrator", () => ({ migrate: mocks.migratePgLite }));
 
-import { createDatabase } from "../src/db.js";
+import { createDatabase, migrateDatabase } from "../src/db.js";
 
 function resetPgliteMocks() {
   mocks.mkdir.mockReset().mockImplementation(async () => {});
@@ -61,7 +67,7 @@ describe("database client pglite branch", () => {
       path.resolve(path.join(process.cwd(), ".flamecast", "pglite")),
     );
     expect(mocks.mkdir).toHaveBeenCalledTimes(3);
-    expect(mocks.migratePgLite).toHaveBeenCalledTimes(3);
+    expect(mocks.migratePgLite).not.toHaveBeenCalled();
     expect(mocks.drizzlePgLite).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -71,11 +77,71 @@ describe("database client pglite branch", () => {
     expect(explicit.db).toEqual({ kind: "pglite" });
     expect(flamecastEnvBundle.db).toEqual({ kind: "pglite" });
     expect(defaultBundle.db).toEqual({ kind: "pglite" });
+    expect(explicit.driver).toBe("pglite");
 
     await explicit.close();
     await flamecastEnvBundle.close();
     await defaultBundle.close();
     expect(mocks.close).toHaveBeenCalledTimes(3);
+  });
+
+  test("applies migrations only when requested", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ table_name: "drizzle.__drizzle_migrations" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ table_name: "drizzle.__drizzle_migrations" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            hash: "hash-1",
+            created_at: 1774302395391,
+          },
+          {
+            hash: "hash-2",
+            created_at: 1774470884025,
+          },
+          {
+            hash: "hash-3",
+            created_at: 1774570000000,
+          },
+          {
+            hash: "hash-4",
+            created_at: 1774520594695,
+          },
+          {
+            hash: "hash-5",
+            created_at: 1774600000000,
+          },
+          {
+            hash: "hash-6",
+            created_at: 1774601000000,
+          },
+          {
+            hash: "hash-7",
+            created_at: 1774680000000,
+          },
+          {
+            hash: "hash-8",
+            created_at: 1774817000000,
+          },
+        ],
+      });
+    mocks.createPGlite.mockResolvedValueOnce({
+      close: mocks.close,
+      query,
+    });
+
+    const bundle = await createDatabase({ dataDir: "/tmp/migrate-pglite" });
+    await migrateDatabase(bundle);
+
+    expect(mocks.migratePgLite).toHaveBeenCalledWith(
+      { kind: "pglite" },
+      expect.objectContaining({
+        migrationsFolder: expect.stringContaining(path.join("src", "migrations")),
+      }),
+    );
+    await bundle.close();
   });
 
   test("rewrites locked-directory startup failures to a friendlier message", async () => {
