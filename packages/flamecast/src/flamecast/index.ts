@@ -14,7 +14,6 @@ import type {
 } from "../shared/session.js";
 import { createServerApp } from "./app.js";
 import type { FlamecastStorage, StoredSession } from "./storage.js";
-import { MemoryFlamecastStorage } from "./storage/memory/index.js";
 import { SessionService } from "./session-service.js";
 import { WebhookDeliveryEngine } from "./events/webhooks.js";
 import { EventBus } from "./events/bus.js";
@@ -144,7 +143,7 @@ export interface FlamecastEventHandlers<
 export type FlamecastOptions<
   R extends Record<string, Runtime<Record<string, unknown>>> = Record<string, Runtime>,
 > = {
-  storage?: FlamecastStorage;
+  storage: FlamecastStorage;
   runtimes: R;
   agentTemplates?: AgentTemplate[];
   /** Override the auto-detected callback URL for session-host → control plane events. */
@@ -157,7 +156,7 @@ export class Flamecast<
   R extends Record<string, Runtime<Record<string, unknown>>> = Record<string, Runtime>,
 > {
   private readonly initialAgentTemplates: AgentTemplate[] | undefined;
-  private readonly storageConfig?: FlamecastStorage;
+  private readonly storageConfig: FlamecastStorage;
   private readonly sessionService: SessionService;
   private readonly runtimesMap: Record<string, Runtime<Record<string, unknown>>>;
   private readonly callbackUrl?: string;
@@ -924,7 +923,7 @@ export class Flamecast<
       // Also set readyPromise so ensureReady() skips re-initialization later.
       if (!this.readyPromise) {
         this.readyPromise = (async () => {
-          const storage = this.storageConfig ?? new MemoryFlamecastStorage();
+          const storage = this.storageConfig;
           this.storage = storage;
           if (this.initialAgentTemplates) {
             await storage.seedAgentTemplates(this.initialAgentTemplates);
@@ -973,7 +972,7 @@ export class Flamecast<
   private async ensureReady(): Promise<void> {
     if (!this.readyPromise) {
       this.readyPromise = (async () => {
-        const storage = this.storageConfig ?? new MemoryFlamecastStorage();
+        const storage = this.storageConfig;
         this.storage = storage;
         if (this.initialAgentTemplates) {
           await storage.seedAgentTemplates(this.initialAgentTemplates);
