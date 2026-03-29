@@ -12,9 +12,21 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui
 import { GithubIcon, LogOutIcon } from "lucide-react";
 
 export function UserMenu() {
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, error } = useSession();
 
   if (isPending) return null;
+
+  if (error) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton disabled className="text-muted-foreground">
+            <span>No auth configured</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
 
   if (!session) {
     return (

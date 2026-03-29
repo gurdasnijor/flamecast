@@ -7,7 +7,11 @@ import { E2BRuntime } from "@flamecast/runtime-e2b";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 import { storage } from "./db.js";
-import { auth } from "./auth.js";
+
+const auth =
+  process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+    ? (await import("./auth.js")).auth
+    : undefined;
 
 dotenv.config();
 const __dirname = dirname(fileURLToPath(import.meta.url));
