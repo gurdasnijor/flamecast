@@ -12,25 +12,15 @@ import { Pool } from "pg";
 import { PSQL_MIGRATIONS_FOLDER } from "./migrations-path.js";
 import * as schema from "./schema.js";
 
+// Stable advisory lock id to prevent concurrent Postgres migration runners.
 const MIGRATION_LOCK_ID = 1_883_626_139;
 const DRIZZLE_MIGRATIONS_TABLE = "drizzle.__drizzle_migrations";
 
-type JournalEntry = {
-  tag: string;
-  when: number;
-};
-
 type Journal = {
-  entries: JournalEntry[];
-};
-
-type AppliedMigrationRow = {
-  hash: string;
-  created_at: number;
-};
-
-type MigrationTableLookupRow = {
-  table_name: string | null;
+  entries: Array<{
+    tag: string;
+    when: number;
+  }>;
 };
 
 export type PsqlConnectionOptions = {
@@ -112,33 +102,36 @@ async function readMigrationMetadata(): Promise<MigrationRecord[]> {
   }));
 }
 
-async function queryRows<TRow extends Record<string, unknown>>(
-  bundle: DatabaseBundle,
-  query: string,
-): Promise<TRow[]> {
+async function hasAppliedMigrationsTable(bundle: DatabaseBundle): Promise<boolean> {
   if (bundle.driver === "postgres") {
-    const result = await bundle.client.query<TRow>(query);
-    return result.rows;
+    const result = await bundle.client.query<{ table_name: string | null }>(
+      `select to_regclass('${DRIZZLE_MIGRATIONS_TABLE}') as table_name`,
+    );
+    return result.rows[0]?.table_name !== null;
   }
 
-  const result: { rows: TRow[] } = await bundle.client.query(query);
-  return result.rows;
-}
-
-async function listAppliedMigrationRows(bundle: DatabaseBundle): Promise<AppliedMigrationRow[]> {
-  const lookupRows = await queryRows<MigrationTableLookupRow>(
-    bundle,
+  const result: { rows: Array<{ table_name: string | null }> } = await bundle.client.query(
     `select to_regclass('${DRIZZLE_MIGRATIONS_TABLE}') as table_name`,
   );
+  return result.rows[0]?.table_name !== null;
+}
 
-  if (lookupRows[0]?.table_name === null) {
+async function listAppliedMigrationHashes(bundle: DatabaseBundle): Promise<string[]> {
+  if (!(await hasAppliedMigrationsTable(bundle))) {
     return [];
   }
 
-  return queryRows<AppliedMigrationRow>(
-    bundle,
-    `select hash, created_at from ${DRIZZLE_MIGRATIONS_TABLE} order by id asc`,
+  if (bundle.driver === "postgres") {
+    const result = await bundle.client.query<{ hash: string }>(
+      `select hash from ${DRIZZLE_MIGRATIONS_TABLE} order by id asc`,
+    );
+    return result.rows.map((row) => row.hash);
+  }
+
+  const result: { rows: Array<{ hash: string }> } = await bundle.client.query(
+    `select hash from ${DRIZZLE_MIGRATIONS_TABLE} order by id asc`,
   );
+  return result.rows.map((row) => row.hash);
 }
 
 async function withPostgresMigrationLock<T>(
@@ -214,13 +207,13 @@ export async function createDatabase(options: PsqlConnectionOptions = {}): Promi
 }
 
 export async function getMigrationStatus(bundle: DatabaseBundle): Promise<MigrationStatus> {
-  const [records, appliedRows] = await Promise.all([
+  const [records, appliedHashes] = await Promise.all([
     readMigrationMetadata(),
-    listAppliedMigrationRows(bundle),
+    listAppliedMigrationHashes(bundle),
   ]);
-  const appliedHashes = new Set(appliedRows.map((row) => row.hash));
-  const applied = records.filter((record) => appliedHashes.has(record.hash));
-  const pending = records.filter((record) => !appliedHashes.has(record.hash));
+  const appliedHashSet = new Set(appliedHashes);
+  const applied = records.filter((record) => appliedHashSet.has(record.hash));
+  const pending = records.filter((record) => !appliedHashSet.has(record.hash));
 
   return {
     applied,

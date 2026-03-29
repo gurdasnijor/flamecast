@@ -1,7 +1,7 @@
+import type { FlamecastStorage } from "@flamecast/protocol";
 import { assertDatabaseReady, createDatabase, resolvePsqlConnection } from "./db.js";
 import { createStorageFromDb } from "./storage.js";
 import { defaultAgentTemplates } from "./default-templates.js";
-import type { PsqlFlamecastStorage } from "./flamecast-storage.js";
 import { PSQL_SCHEMA_FILE } from "./migrations-path.js";
 
 export type PsqlStorageOptions = {
@@ -34,7 +34,7 @@ export type PsqlStorageOptions = {
  */
 export async function createPsqlStorage(
   options: PsqlStorageOptions = {},
-): Promise<PsqlFlamecastStorage> {
+): Promise<FlamecastStorage> {
   const bundle = await createDatabase(options);
 
   try {
@@ -101,11 +101,11 @@ export type {
   ResolvedPsqlConnection,
 } from "./db.js";
 export type {
-  PsqlFlamecastStorage,
+  FlamecastStorage,
   SessionMeta,
   SessionRuntimeInfo,
   StoredSession,
-} from "./flamecast-storage.js";
+} from "@flamecast/protocol";
 export {
   assertDatabaseReady,
   createDatabase,
