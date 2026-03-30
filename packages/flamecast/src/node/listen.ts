@@ -15,9 +15,14 @@ import type { Flamecast } from "../flamecast/index.js";
  *
  * @example
  * ```ts
- * import { Flamecast, listen } from "@flamecast/sdk";
+ * import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
+ * import { createPsqlDatabase } from "@flamecast/storage-psql";
  *
- * const flamecast = new Flamecast({ runtimes: { default: new NodeRuntime() } });
+ * const flamecast = new Flamecast({
+ *   backend: createPsqlDatabase({ url: process.env.DATABASE_URL }),
+ *   runtimes: { default: new NodeRuntime() },
+ * });
+ * await flamecast.init();
  * const handle = listen(flamecast, { port: 3001 }, (info) => {
  *   console.log(`Flamecast running on http://localhost:${info.port}`);
  * });
