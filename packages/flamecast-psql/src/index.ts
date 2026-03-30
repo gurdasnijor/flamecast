@@ -1,7 +1,8 @@
-import { createDatabase } from "./db.js";
+import type { FlamecastStorage } from "@flamecast/protocol";
+import { assertDatabaseReady, createDatabase, resolvePsqlConnection } from "./db.js";
 import { createStorageFromDb } from "./storage.js";
 import { defaultAgentTemplates } from "./default-templates.js";
-import type { PsqlFlamecastStorage } from "./flamecast-storage.js";
+import { PSQL_SCHEMA_FILE } from "./migrations-path.js";
 
 export type PsqlStorageOptions = {
   /** Postgres connection URL. If omitted, falls back to embedded PGLite. */
@@ -15,9 +16,12 @@ export type PsqlStorageOptions = {
 /**
  * Create a Drizzle-backed Flamecast storage backed by PostgreSQL (or embedded PGLite).
  *
+ * Startup is read-only with respect to schema: pending migrations must be
+ * applied explicitly via `migrateDatabase()` or the `flamecast db migrate` CLI.
+ *
  * When using PGLite (no `url`), builtin agent templates are auto-seeded unless
- * `seedDefaults: false` is passed. When using Postgres, templates are not seeded
- * unless `seedDefaults: true` is explicitly set.
+ * `seedDefaults: false` is passed. When using Postgres, templates are not
+ * seeded unless `seedDefaults: true` is explicitly set.
  *
  * @example
  * ```ts
@@ -30,26 +34,84 @@ export type PsqlStorageOptions = {
  */
 export async function createPsqlStorage(
   options: PsqlStorageOptions = {},
-): Promise<PsqlFlamecastStorage> {
-  const { db } = await createDatabase(options);
-  const storage = createStorageFromDb(db);
+): Promise<FlamecastStorage> {
+  const bundle = await createDatabase(options);
 
-  const shouldSeed = options.seedDefaults ?? !options.url;
-  if (shouldSeed) {
-    await storage.seedAgentTemplates(defaultAgentTemplates);
+  try {
+    await assertDatabaseReady(bundle);
+    const storage = createStorageFromDb(bundle.db);
+
+    const shouldSeed = options.seedDefaults ?? !options.url;
+    if (shouldSeed) {
+      await storage.seedAgentTemplates(defaultAgentTemplates);
+    }
+
+    return storage;
+  } catch (error) {
+    await bundle.close().catch(() => {});
+    throw error;
+  }
+}
+
+export type DrizzleStudioConfig =
+  | {
+      dialect: "postgresql";
+      schema: string;
+      dbCredentials: { url: string };
+    }
+  | {
+      dialect: "postgresql";
+      driver: "pglite";
+      schema: string;
+      dbCredentials: { url: string };
+    };
+
+export function getDrizzleStudioConfig(
+  options: Pick<PsqlStorageOptions, "url" | "dataDir"> = {},
+): DrizzleStudioConfig {
+  const connection = resolvePsqlConnection(options);
+
+  if (connection.driver === "postgres") {
+    return {
+      dialect: "postgresql",
+      schema: PSQL_SCHEMA_FILE,
+      dbCredentials: {
+        url: connection.url,
+      },
+    };
   }
 
-  return storage;
+  return {
+    dialect: "postgresql",
+    driver: "pglite",
+    schema: PSQL_SCHEMA_FILE,
+    dbCredentials: {
+      url: connection.dataDir,
+    },
+  };
 }
 
 export { createStorageFromDb } from "./storage.js";
 export type { PsqlAppDb } from "./types.js";
-export type { DatabaseBundle } from "./db.js";
 export type {
-  PsqlFlamecastStorage,
+  DatabaseBundle,
+  MigrationRecord,
+  MigrationStatus,
+  PsqlConnectionOptions,
+  ResolvedPsqlConnection,
+} from "./db.js";
+export type {
+  FlamecastStorage,
   SessionMeta,
   SessionRuntimeInfo,
   StoredSession,
-} from "./flamecast-storage.js";
-export { createDatabase } from "./db.js";
+} from "@flamecast/protocol";
+export {
+  assertDatabaseReady,
+  createDatabase,
+  getMigrationStatus,
+  getMigrationStatusMessage,
+  migrateDatabase,
+  resolvePsqlConnection,
+} from "./db.js";
 export { defaultAgentTemplates } from "./default-templates.js";

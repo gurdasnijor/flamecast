@@ -21,6 +21,7 @@ pnpm install
 <Step title="Start the dev server">
 
 ```bash
+pnpm db:migrate
 pnpm dev
 ```
 
@@ -57,6 +58,8 @@ const flamecast = new Flamecast({
 
 await flamecast.listen(3001);
 ```
+
+Run `flamecast db migrate` once before starting a fresh database.
 
 ## What to do next
 

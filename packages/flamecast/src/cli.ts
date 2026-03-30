@@ -1,37 +1,13 @@
 #!/usr/bin/env node
 
-import { serve } from "@hono/node-server";
-import { createPsqlStorage } from "@flamecast/storage-psql";
-import { Flamecast, NodeRuntime } from "./index.js";
+import { runCli } from "./cli-app.js";
 
-function parsePort(value: string | undefined): number {
-  if (!value) return 3001;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid port "${value}"`);
+try {
+  const exitCode = await runCli(process.argv.slice(2));
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
   }
-  return parsed;
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 }
-
-const port = parsePort(process.env.FLAMECAST_PORT ?? process.env.PORT);
-const storage = await createPsqlStorage();
-
-const flamecast = new Flamecast({
-  storage,
-  runtimes: { default: new NodeRuntime() },
-});
-
-const server = serve({ fetch: flamecast.app.fetch, port }, () => {
-  console.log(`Flamecast running on http://localhost:${port}`);
-  console.log(`API: http://localhost:${port}/api`);
-});
-
-async function shutdown() {
-  console.log("\nShutting down...");
-  await flamecast.shutdown();
-  server.close();
-  process.exit(0);
-}
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
