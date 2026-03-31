@@ -1,19 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createRequire } from "node:module";
-import { platform, arch } from "node:os";
-
-function resolveRestateBinary(): string {
-  const require = createRequire(import.meta.url);
-  const serverPkg = require.resolve("@restatedev/restate-server/package.json");
-  const serverRequire = createRequire(serverPkg);
-  return serverRequire.resolve(
-    `@restatedev/restate-server-${platform()}-${arch()}/bin/restate-server`,
-  );
-}
+import { createRestateEndpoint } from "./endpoint.js";
 
 /**
- * Start a local restate-server and register the Flamecast endpoint with it.
- * Returns a stop function for graceful shutdown.
+ * Start the Flamecast Restate endpoint, a local restate-server, and register
+ * the deployment. Returns a stop function for graceful shutdown.
  */
 export async function autoStartRestate(opts?: {
   ingressPort?: number;
@@ -23,11 +13,16 @@ export async function autoStartRestate(opts?: {
   const ingressPort = opts?.ingressPort ?? 18080;
   const adminPort = opts?.adminPort ?? 19070;
   const endpointPort = opts?.endpointPort ?? 9080;
-
   const ingressUrl = `http://localhost:${ingressPort}`;
   const adminUrl = `http://localhost:${adminPort}`;
+  const endpointUrl = `http://localhost:${endpointPort}`;
 
-  const child: ChildProcess = spawn(resolveRestateBinary(), [], {
+  // 1. Start the Flamecast VO endpoint
+  await createRestateEndpoint().listen(endpointPort);
+  console.log(`[restate] Endpoint listening on :${endpointPort}`);
+
+  // 2. Start restate-server via the npm wrapper (handles platform binary resolution)
+  const server: ChildProcess = spawn("npx", ["@restatedev/restate-server"], {
     stdio: ["ignore", "inherit", "inherit"],
     env: {
       ...process.env,
@@ -36,30 +31,32 @@ export async function autoStartRestate(opts?: {
     },
   });
 
-  // Poll until healthy
+  // 3. Wait for healthy
   for (let i = 0; i < 150; i++) {
     await new Promise((r) => setTimeout(r, 200));
     try {
       if ((await fetch(`${adminUrl}/health`)).ok) break;
     } catch {}
   }
+  console.log(`[restate] Server ready (ingress :${ingressPort}, admin :${adminPort})`);
 
-  // Register endpoint
-  for (let i = 0; i < 10; i++) {
-    try {
-      const resp = await fetch(`${adminUrl}/deployments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uri: `http://localhost:${endpointPort}` }),
-      });
-      if (resp.ok) break;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 500));
+  // 4. Register deployment (POST /deployments, idempotent with force: true)
+  const resp = await fetch(`${adminUrl}/deployments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uri: endpointUrl }),
+  });
+  if (!resp.ok) {
+    console.warn(`[restate] Registration failed (${resp.status}): ${await resp.text()}`);
+  } else {
+    const result = await resp.json() as { services?: Array<{ name: string }> };
+    const names = result.services?.map((s) => s.name) ?? [];
+    console.log(`[restate] Registered services: ${names.join(", ")}`);
   }
 
   return {
     ingressUrl,
     adminUrl,
-    stop: () => child.kill("SIGTERM"),
+    stop: () => server.kill("SIGTERM"),
   };
 }

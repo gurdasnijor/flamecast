@@ -5,7 +5,7 @@ import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
 import { DockerRuntime } from "@flamecast/runtime-docker";
 import { E2BRuntime } from "@flamecast/runtime-e2b";
 import { createPsqlStorage } from "@flamecast/storage-psql";
-import { RestateSessionService, RestateStorage, autoStartRestate, createRestateEndpoint } from "@flamecast/restate";
+import { RestateSessionService, RestateStorage, autoStartRestate } from "@flamecast/restate";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -27,13 +27,9 @@ const runtimes = {
 };
 
 // ---------------------------------------------------------------------------
-// Restate — auto-start server + endpoint, or connect to existing instance
+// Restate — auto-start server + endpoint + registration
 // ---------------------------------------------------------------------------
 
-// Start the Flamecast Restate endpoint (VO handlers)
-await createRestateEndpoint().listen(9080);
-
-// Start restate-server and register the endpoint
 const restate = await autoStartRestate();
 const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? restate.ingressUrl;
 const restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? restate.adminUrl;
