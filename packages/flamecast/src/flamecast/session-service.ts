@@ -35,6 +35,12 @@ export interface ISessionService {
   getRuntimeName(sessionId: string): Promise<string | undefined>;
   getWebhooks(sessionId: string): Promise<WebhookConfig[]>;
 
+  resolvePermission(
+    sessionId: string,
+    requestId: string,
+    body: { optionId?: string; outcome?: string },
+  ): Promise<void>;
+
   proxyRequest(sessionId: string, path: string, init: RequestInit): Promise<Response>;
   proxyWebSocket(sessionId: string, request: Request): Promise<Response>;
 }
@@ -253,6 +259,22 @@ export class SessionService implements ISessionService {
 
   async getWebhooks(sessionId: string): Promise<WebhookConfig[]> {
     return this.sessions.get(sessionId)?.webhooks ?? [];
+  }
+
+  async resolvePermission(
+    sessionId: string,
+    requestId: string,
+    body: { optionId?: string; outcome?: string },
+  ): Promise<void> {
+    const response = await this.proxyRequest(
+      sessionId,
+      `/permissions/${requestId}`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "(unreadable)");
+      throw new Error(`Permission resolve failed (${response.status}): ${detail}`);
+    }
   }
 
   async proxyRequest(sessionId: string, path: string, init: RequestInit): Promise<Response> {

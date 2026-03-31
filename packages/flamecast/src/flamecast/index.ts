@@ -605,15 +605,7 @@ export class Flamecast<
   ): Promise<Record<string, unknown>> {
     await this.ensureReady();
     await this.ensureSessionRegistered(sessionId);
-    const response = await this.sessionService.proxyRequest(
-      sessionId,
-      `/permissions/${requestId}`,
-      { method: "POST", body: JSON.stringify(body) },
-    );
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "(unreadable)");
-      throw new Error(`Permission resolve failed (${response.status}): ${detail}`);
-    }
+    await this.sessionService.resolvePermission(sessionId, requestId, body);
 
     // The session host's HTTP permission endpoint does not emit a resolution
     // event back through the callback, so push one to the event bus so that
@@ -637,7 +629,7 @@ export class Flamecast<
       pendingPermission: null,
     });
 
-    return response.json();
+    return { ok: true };
   }
 
   async terminateSession(id: string): Promise<void> {
