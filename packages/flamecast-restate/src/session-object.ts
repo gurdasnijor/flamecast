@@ -80,7 +80,7 @@ async function handlePermissionRequest(
   // Update meta with pending permission and timestamp
   const meta = await ctx.get<SessionMeta>("meta");
   if (meta) {
-    ctx.set("meta", { ...meta, lastUpdatedAt: now, pendingPermission: data });
+    ctx.set("meta", { ...meta, lastUpdatedAt: now, pendingPermission: { ...(data as Record<string, unknown>), awakeableId: id } });
   }
 
   publish(ctx, `session:${ctx.key}`, {

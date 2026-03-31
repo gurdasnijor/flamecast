@@ -164,6 +164,42 @@ export class RestateSessionService implements ISessionService {
       });
     }
 
+    // Route permission resolution through Restate awakeable instead of
+    // the session-host's Go channel (which is bypassed in Restate mode).
+    const permMatch = path.match(/^\/permissions\/(.+)$/);
+    if (permMatch && init.method === "POST" && init.body) {
+      const body = JSON.parse(
+        typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as ArrayBuffer),
+      ) as { optionId?: string; outcome?: string };
+
+      // Read the awakeableId from VO state
+      const meta = await this.restateClient
+        .objectClient(FlamecastSession, sessionId)
+        .getStatus();
+      const awakeableId = (meta?.pendingPermission as { awakeableId?: string } | null)
+        ?.awakeableId;
+
+      if (!awakeableId) {
+        return new Response(
+          JSON.stringify({ error: "No pending permission request" }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      // Resolve the awakeable — this unblocks the VO handleCallback handler,
+      // which returns the payload to the Go session-host's HTTP request.
+      // The Go session-host's RequestPermission then returns this to the agent.
+      const resolution = body.optionId
+        ? { outcome: { outcome: "selected", optionId: body.optionId } }
+        : { outcome: { outcome: "cancelled" } };
+      await this.restateClient.resolveAwakeable(awakeableId, resolution);
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     // Everything else proxies directly to the session-host
     let hostUrl = this.hostUrlCache.get(sessionId);
     if (!hostUrl) {

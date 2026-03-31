@@ -187,16 +187,47 @@ func (h *clientHandler) RequestPermission(params json.RawMessage) (json.RawMessa
 	_ = json.Unmarshal(params, &parsed)
 
 	requestID := generateUUID()
-	ch := make(chan json.RawMessage, 1)
-
-	h.mu.Lock()
-	h.permissionResolvers[requestID] = ch
-	h.mu.Unlock()
-
 	options := make([]map[string]any, len(parsed.Options))
 	for i, o := range parsed.Options {
 		options[i] = map[string]any{"optionId": o.OptionID, "name": o.Name, "kind": o.Kind}
 	}
+
+	eventData, _ := json.Marshal(map[string]any{
+		"requestId":  requestID,
+		"toolCallId": parsed.ToolCall.ToolCallID,
+		"title":      parsed.ToolCall.Title,
+		"kind":       parsed.ToolCall.Kind,
+		"options":    options,
+	})
+
+	// When callbackUrl is set (Restate mode), POST to the VO handleCallback
+	// handler. The VO creates an awakeable and suspends — the HTTP response
+	// won't return until the permission is resolved externally. This replaces
+	// the Go channel-based blocking with durable suspension.
+	if h.callbackUrl != "" {
+		h.emitEvent("permission_request", map[string]any{
+			"requestId":  requestID,
+			"toolCallId": parsed.ToolCall.ToolCallID,
+			"title":      parsed.ToolCall.Title,
+			"kind":       parsed.ToolCall.Kind,
+			"options":    options,
+		})
+
+		resp, err := h.forwardToControlPlane("permission_request", eventData)
+		if err != nil {
+			return nil, fmt.Errorf("permission callback failed: %w", err)
+		}
+
+		h.emitRPC(acp.MethodRequestPermission, "client_to_agent", "response", resp)
+		return resp, nil
+	}
+
+	// Fallback: no callbackUrl — use in-memory Go channel (non-durable)
+	ch := make(chan json.RawMessage, 1)
+	h.mu.Lock()
+	h.permissionResolvers[requestID] = ch
+	h.mu.Unlock()
+
 	h.emitEvent("permission_request", map[string]any{
 		"requestId":  requestID,
 		"toolCallId": parsed.ToolCall.ToolCallID,
@@ -205,7 +236,6 @@ func (h *clientHandler) RequestPermission(params json.RawMessage) (json.RawMessa
 		"options":    options,
 	})
 
-	// Block until the WebSocket client responds
 	resp := <-ch
 
 	h.mu.Lock()
@@ -430,10 +460,8 @@ func (h *clientHandler) TerminalKill(params json.RawMessage) (json.RawMessage, e
 
 func (h *clientHandler) forwardToControlPlane(eventType string, params json.RawMessage) (json.RawMessage, error) {
 	if h.callbackUrl == "" {
-		return nil, fmt.Errorf("temporal primitive %q requires a callbackUrl (Restate-backed session)", eventType)
+		return nil, fmt.Errorf("%q requires a callbackUrl (Restate-backed session)", eventType)
 	}
-
-	url := fmt.Sprintf("%s/%s", h.callbackUrl, h.sessionID)
 
 	body, err := json.Marshal(map[string]any{
 		"type": eventType,
@@ -443,7 +471,7 @@ func (h *clientHandler) forwardToControlPlane(eventType string, params json.RawM
 		return nil, fmt.Errorf("marshal %s event: %w", eventType, err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.callbackUrl, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("POST %s to control plane: %w", eventType, err)
 	}
@@ -659,6 +687,13 @@ func startSession(sessionID string, req startRequest, hub *ws.Hub, registry *ses
 			exitCode = cmd.ProcessState.ExitCode()
 		}
 		handler.emitEvent("session.terminated", map[string]any{"exitCode": exitCode})
+
+		// Notify Restate VO of session end (fire-and-forget)
+		if handler.callbackUrl != "" {
+			endData, _ := json.Marshal(map[string]any{"exitCode": exitCode})
+			_, _ = handler.forwardToControlPlane("session_end", endData)
+		}
+
 		hub.BroadcastLifecycle("session.terminated", sessionID, sessionID)
 		registry.remove(sessionID)
 	}()
@@ -743,6 +778,12 @@ func executePrompt(sess *session, text string) (*acp.PromptResponse, error) {
 		return nil, err
 	}
 	sess.handler.emitRPC(acp.MethodPrompt, "agent_to_client", "response", resp)
+
+	// Notify Restate VO that the turn ended (fire-and-forget)
+	if sess.handler.callbackUrl != "" {
+		_, _ = sess.handler.forwardToControlPlane("end_turn", json.RawMessage("{}"))
+	}
+
 	return resp, nil
 }
 
