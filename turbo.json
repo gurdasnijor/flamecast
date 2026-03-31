@@ -14,8 +14,7 @@
       "persistent": true
     },
     "dev:register": {
-      "cache": false,
-      "dependsOn": ["dev:server", "dev"]
+      "cache": false
     },
     "build": {
       "dependsOn": ["^build"],

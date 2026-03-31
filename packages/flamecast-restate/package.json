@@ -12,7 +12,7 @@
     "build": "tsc",
     "dev": "tsx src/serve-endpoint.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
-    "dev:register": "npx @restatedev/restate -y deployments register http://localhost:9080",
+    "dev:register": "sleep 5 && npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run"
   },
   "dependencies": {
