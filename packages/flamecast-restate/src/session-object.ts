@@ -18,6 +18,9 @@ export interface SessionMeta {
   runtimeName: string;
   status: "active" | "killed";
   startedAt: string;
+  lastUpdatedAt: string;
+  spawn: { command: string; args: string[] };
+  pendingPermission: unknown | null;
 }
 
 export interface StartSessionInput {
@@ -70,8 +73,15 @@ async function handlePermissionRequest(
   data: unknown,
 ): Promise<unknown> {
   const { id, promise } = ctx.awakeable<unknown>();
+  const now = new Date(await ctx.date.now()).toISOString();
 
   ctx.set("pending_permission", { awakeableId: id, data });
+
+  // Update meta with pending permission and timestamp
+  const meta = await ctx.get<SessionMeta>("meta");
+  if (meta) {
+    ctx.set("meta", { ...meta, lastUpdatedAt: now, pendingPermission: data });
+  }
 
   publish(ctx, `session:${ctx.key}`, {
     type: "permission_request",
@@ -82,6 +92,11 @@ async function handlePermissionRequest(
   const response = await promise;
 
   ctx.clear("pending_permission");
+  // Clear pending permission from meta
+  const metaAfter = await ctx.get<SessionMeta>("meta");
+  if (metaAfter) {
+    ctx.set("meta", { ...metaAfter, lastUpdatedAt: new Date(await ctx.date.now()).toISOString(), pendingPermission: null });
+  }
   return response;
 }
 
@@ -101,7 +116,7 @@ export const FlamecastSession = restate.object({
       input: StartSessionInput,
     ) => {
       // 1. Forward /start to session-host via runtime URL
-      const response = await ctx.run("spawn-agent", async () => {
+      await ctx.run("spawn-agent", async () => {
         const resp = await fetch(
           `${input.runtimeUrl}/sessions/${ctx.key}/start`,
           {
@@ -118,19 +133,28 @@ export const FlamecastSession = restate.object({
             }),
           },
         );
-        return (await resp.json()) as { hostUrl: string; websocketUrl: string };
+        if (!resp.ok) throw new Error(`Session-host /start failed: ${resp.status}`);
+        return await resp.json();
       });
 
       // 2. Persist session state
+      // hostUrl and websocketUrl are derived from the runtimeUrl — the Runtime
+      // layer (NodeRuntime/DockerRuntime) owns these URLs, and the session-host
+      // doesn't return them in its /start response.
+      const hostUrl = input.runtimeUrl;
+      const websocketUrl = input.runtimeUrl.replace(/^http/, "ws");
       const startedAt = new Date(await ctx.date.now()).toISOString();
       const meta: SessionMeta = {
         id: ctx.key,
         agentName: input.agentName,
-        hostUrl: response.hostUrl,
-        websocketUrl: response.websocketUrl,
+        hostUrl,
+        websocketUrl,
         runtimeName: input.runtimeName,
         status: "active",
         startedAt,
+        lastUpdatedAt: startedAt,
+        spawn: input.spawn,
+        pendingPermission: null,
       };
       ctx.set("meta", meta);
       ctx.set("webhooks", input.webhooks ?? []);
@@ -143,8 +167,8 @@ export const FlamecastSession = restate.object({
 
       return {
         sessionId: ctx.key,
-        hostUrl: response.hostUrl,
-        websocketUrl: response.websocketUrl,
+        hostUrl,
+        websocketUrl,
       };
     },
 
@@ -160,7 +184,8 @@ export const FlamecastSession = restate.object({
       });
 
       // 2. Update state
-      ctx.set("meta", { ...meta, status: "killed" as const });
+      const now = new Date(await ctx.date.now()).toISOString();
+      ctx.set("meta", { ...meta, status: "killed" as const, lastUpdatedAt: now, pendingPermission: null });
 
       // 3. Publish termination event
       publish(ctx, `session:${ctx.key}`, {
@@ -211,9 +236,13 @@ export const FlamecastSession = restate.object({
       if (event.type === "permission_request") {
         return await handlePermissionRequest(ctx, event.data);
       }
+      const now = new Date(await ctx.date.now()).toISOString();
       if (event.type === "session_end") {
         const meta = await ctx.get<SessionMeta>("meta");
-        if (meta) ctx.set("meta", { ...meta, status: "killed" as const });
+        if (meta) ctx.set("meta", { ...meta, status: "killed" as const, lastUpdatedAt: now, pendingPermission: null });
+      } else {
+        const meta = await ctx.get<SessionMeta>("meta");
+        if (meta) ctx.set("meta", { ...meta, lastUpdatedAt: now });
       }
       if (event.type === "end_turn") {
         ctx.set("currentTurn", null);

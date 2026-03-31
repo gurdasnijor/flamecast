@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
-import type { ISessionService } from "@flamecast/sdk";
 import { DockerRuntime } from "@flamecast/runtime-docker";
 import { E2BRuntime } from "@flamecast/runtime-e2b";
 import { createPsqlStorage } from "@flamecast/storage-psql";
+import { RestateSessionService, RestateStorage, autoStartRestate } from "@flamecast/restate";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -27,43 +27,38 @@ const runtimes = {
 };
 
 // ---------------------------------------------------------------------------
-// Restate session service — activates automatically when @flamecast/restate
-// is installed. Set RESTATE_URL to point at an existing Restate instance
-// instead of auto-starting, or RESTATE=off to force in-memory mode.
+// Restate — auto-starts locally, or connect to RESTATE_URL if provided
 // ---------------------------------------------------------------------------
 
-let sessionService: ISessionService | undefined;
+const restateUrl = process.env.RESTATE_URL;
+let restateIngressUrl: string;
+let restateAdminUrl: string;
 let restateStop: (() => Promise<void>) | undefined;
 
-if (process.env.RESTATE !== "off") {
-  try {
-    const { RestateSessionService, autoStartRestate } = await import("@flamecast/restate");
-    const restateUrl = process.env.RESTATE_URL;
-
-    if (restateUrl) {
-      console.log(`[restate] Connecting to Restate at ${restateUrl}`);
-      sessionService = new RestateSessionService(runtimes, restateUrl);
-    } else {
-      console.log("[restate] Auto-starting Restate server...");
-      const restate = await autoStartRestate();
-      console.log(`[restate] Ingress: ${restate.ingressUrl}`);
-      console.log(`[restate] Admin:   ${restate.adminUrl}`);
-      sessionService = new RestateSessionService(runtimes, restate.ingressUrl);
-      restateStop = restate.stop;
-    }
-  } catch {
-    // @flamecast/restate not installed — fall back to in-memory
-  }
+if (restateUrl) {
+  console.log(`[restate] Connecting to Restate at ${restateUrl}`);
+  restateIngressUrl = restateUrl;
+  restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? restateUrl.replace(/:\d+$/, ":9070");
+} else {
+  console.log("[restate] Auto-starting Restate server...");
+  const restate = await autoStartRestate();
+  console.log(`[restate] Ingress: ${restate.ingressUrl}`);
+  console.log(`[restate] Admin:   ${restate.adminUrl}`);
+  restateIngressUrl = restate.ingressUrl;
+  restateAdminUrl = restate.adminUrl;
+  restateStop = restate.stop;
 }
 
 // ---------------------------------------------------------------------------
 // Flamecast instance
 // ---------------------------------------------------------------------------
 
+const pgStorage = await createPsqlStorage(url ? { url } : undefined);
+
 const flamecast = new Flamecast({
-  storage: await createPsqlStorage(url ? { url } : undefined),
+  storage: new RestateStorage(restateAdminUrl, pgStorage),
   runtimes,
-  ...(sessionService ? { sessionService } : {}),
+  sessionService: new RestateSessionService(runtimes, restateIngressUrl),
   agentTemplates: createAgentTemplates({
     agentJsEnabled: agentJsRuntime !== null,
     e2bEnabled: Boolean(e2bApiKey),
@@ -74,15 +69,9 @@ const flamecast = new Flamecast({
 
 listen(flamecast, { port: 3001 }, (info) => {
   console.log(`Flamecast running on http://localhost:${info.port}`);
-  if (sessionService) {
-    console.log(`  Sessions: Restate-backed (durable)`);
-  } else {
-    console.log(`  Sessions: in-memory`);
-  }
+  console.log(`  Sessions: Restate-backed (durable)`);
 });
 
-// Graceful close: tear down in-process resources but leave sessions alive so
-// they can be recovered on the next startup via recoverSessions().
 async function shutdown() {
   await flamecast.close();
   if (restateStop) {

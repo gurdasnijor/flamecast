@@ -10,6 +10,13 @@ import { createRestateEndpoint } from "./endpoint.js";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface AutoStartOptions {
+  /** Ingress port. Defaults to 18080. */
+  ingressPort?: number;
+  /** Admin port. Defaults to 19070. */
+  adminPort?: number;
+}
+
 export interface AutoStartResult {
   ingressUrl: string;
   adminUrl: string;
@@ -64,40 +71,6 @@ function resolveRestateBinary(): string {
         `Install it with: pnpm add @restatedev/restate-server`,
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Port parsing
-// ---------------------------------------------------------------------------
-
-/**
- * Parse Restate's startup output to discover the randomly assigned ports.
- *
- * When started with `--use-random-ports=true`, Restate prints the chosen
- * ports in the first lines of standard output. We look for URL patterns
- * containing host:port in the output stream.
- */
-function parseUrls(output: string): { ingress?: string; admin?: string } {
-  const result: { ingress?: string; admin?: string } = {};
-
-  // Admin API prints a full URL: "Admin API starting on: http://host:port/"
-  const adminMatch = output.match(
-    /Admin API starting on:\s*(https?:\/\/[^\s/]+)/i,
-  );
-  if (adminMatch) {
-    result.admin = adminMatch[1].replace(/\/$/, "");
-  }
-
-  // Ingress prints: "Ingress HTTP listening" followed by "server.port: <port>"
-  // on a subsequent line within the same log block
-  const ingressBlock = output.match(
-    /Ingress HTTP listening[\s\S]*?server\.port:\s*(\d+)/i,
-  );
-  if (ingressBlock) {
-    result.ingress = `http://localhost:${ingressBlock[1]}`;
-  }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +132,12 @@ async function registerDeployment(
  * await restate.stop();
  * ```
  */
-export async function autoStartRestate(): Promise<AutoStartResult> {
+export async function autoStartRestate(
+  opts?: AutoStartOptions,
+): Promise<AutoStartResult> {
+  const ingressPort = opts?.ingressPort ?? 18080;
+  const adminPort = opts?.adminPort ?? 19070;
+
   // 1. Resolve the binary
   const binaryPath = resolveRestateBinary();
 
@@ -167,91 +145,47 @@ export async function autoStartRestate(): Promise<AutoStartResult> {
   const dataDir = path.join(homedir(), ".flamecast", "restate-data");
   await mkdir(dataDir, { recursive: true });
 
-  // 3. Spawn restate-server with random ports
+  // 3. Spawn restate-server with fixed ports via env vars
   const child: ChildProcess = spawn(
     binaryPath,
-    ["--use-random-ports=true", "--base-dir", dataDir],
+    ["--base-dir", dataDir],
     {
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        RESTATE_INGRESS__BIND_PORT: String(ingressPort),
+        RESTATE_ADMIN__BIND_PORT: String(adminPort),
+      },
     },
   );
 
-  // 4. Collect output and parse URLs
-  const urls = await new Promise<{ ingress: string; admin: string }>(
-    (resolve, reject) => {
-      let stdout = "";
-      let stderr = "";
-      let resolved = false;
+  const ingressUrl = `http://localhost:${ingressPort}`;
+  const adminUrl = `http://localhost:${adminPort}`;
 
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          reject(
-            new Error(
-              `Restate failed to start within 30s.\nstdout: ${stdout}\nstderr: ${stderr}`,
-            ),
-          );
-        }
-      }, 30_000);
+  // 4. Forward stderr for debugging, detect premature exit
+  child.stderr!.on("data", (chunk: Buffer) => {
+    for (const line of chunk.toString().split("\n")) {
+      if (line.trim()) console.error(`[restate] ${line}`);
+    }
+  });
 
-      const tryResolve = () => {
-        if (resolved) return;
-        const fromStdout = parseUrls(stdout);
-        const fromStderr = parseUrls(stderr);
-        const ingress = fromStdout.ingress ?? fromStderr.ingress;
-        const admin = fromStdout.admin ?? fromStderr.admin;
-        if (ingress && admin) {
-          resolved = true;
-          clearTimeout(timeout);
-          resolve({ ingress, admin });
-        }
-      };
+  // 5. Wait for Restate to become ready (poll admin health endpoint)
+  await new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error("Restate failed to start within 30s")), 30_000);
+    child.on("error", (err) => { clearTimeout(deadline); reject(err); });
+    child.on("exit", (code) => { clearTimeout(deadline); reject(new Error(`Restate exited with code ${code}`)); });
 
-      child.stdout!.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        stdout += text;
-        tryResolve();
-      });
+    const poll = async () => {
+      try {
+        const resp = await fetch(`${adminUrl}/health`);
+        if (resp.ok) { clearTimeout(deadline); resolve(); return; }
+      } catch { /* not ready yet */ }
+      setTimeout(poll, 200);
+    };
+    poll();
+  });
 
-      child.stderr!.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        stderr += text;
-        // Prefix and forward Restate's stderr for debugging
-        for (const line of text.split("\n")) {
-          if (line.trim()) {
-            console.error(`[restate] ${line}`);
-          }
-        }
-        tryResolve();
-      });
-
-      child.on("error", (err) => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          reject(
-            new Error(`Failed to start Restate: ${err.message}`),
-          );
-        }
-      });
-
-      child.on("exit", (code) => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
-          reject(
-            new Error(
-              `Restate exited prematurely with code ${code}.\nstdout: ${stdout}\nstderr: ${stderr}`,
-            ),
-          );
-        }
-      });
-    },
-  );
-
-  // 5. Start the Flamecast Restate endpoint on a random port.
-  //    We use http2Handler() + our own HTTP2 server so we retain a handle
-  //    for clean shutdown (listen() returns only a Promise<number>).
+  // 6. Start the Flamecast Restate endpoint and register with Restate
   const endpoint = createRestateEndpoint();
   const handler = endpoint.http2Handler();
   const http2Server: Http2Server = createServer(handler);
@@ -267,32 +201,22 @@ export async function autoStartRestate(): Promise<AutoStartResult> {
     });
     http2Server.on("error", reject);
   });
-  const endpointUrl = `http://localhost:${endpointPort}`;
 
-  // 6. Register the endpoint with Restate
-  await registerDeployment(urls.admin, endpointUrl);
+  await registerDeployment(adminUrl, `http://localhost:${endpointPort}`);
 
-  // 7. Return the result with a stop function
+  // 7. Return result
   return {
-    ingressUrl: urls.ingress,
-    adminUrl: urls.admin,
+    ingressUrl,
+    adminUrl,
     stop: async () => {
-      // Close the Flamecast service endpoint
       await new Promise<void>((resolve, reject) => {
         http2Server.close((err?: Error) => (err ? reject(err) : resolve()));
       });
-
-      // Gracefully terminate Restate
       if (child.exitCode === null) {
         child.kill("SIGTERM");
         await new Promise<void>((resolve) => {
-          const forceKillTimeout = setTimeout(() => {
-            child.kill("SIGKILL");
-          }, 5_000);
-          child.on("exit", () => {
-            clearTimeout(forceKillTimeout);
-            resolve();
-          });
+          const forceKill = setTimeout(() => child.kill("SIGKILL"), 5_000);
+          child.on("exit", () => { clearTimeout(forceKill); resolve(); });
         });
       }
     },
