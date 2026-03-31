@@ -12,7 +12,6 @@ export {
 export { WebhookDeliveryService } from "./webhook-service.js";
 export { createRestateEndpoint } from "./endpoint.js";
 export { RestateStorage } from "./restate-storage.js";
-export { autoStartRestate, type AutoStartResult, type AutoStartOptions } from "./auto-start.js";
 export {
   PubsubSseConsumer,
   type PubsubSseConsumerOptions,

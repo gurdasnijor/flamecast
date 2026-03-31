@@ -5,7 +5,7 @@ import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
 import { DockerRuntime } from "@flamecast/runtime-docker";
 import { E2BRuntime } from "@flamecast/runtime-e2b";
 import { createPsqlStorage } from "@flamecast/storage-psql";
-import { RestateSessionService, RestateStorage, autoStartRestate } from "@flamecast/restate";
+import { RestateSessionService, RestateStorage } from "@flamecast/restate";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -27,27 +27,11 @@ const runtimes = {
 };
 
 // ---------------------------------------------------------------------------
-// Restate — auto-starts locally, or connect to RESTATE_URL if provided
+// Restate — ingress at :18080, admin at :19070 (started separately via turbo)
 // ---------------------------------------------------------------------------
 
-const restateUrl = process.env.RESTATE_URL;
-let restateIngressUrl: string;
-let restateAdminUrl: string;
-let restateStop: (() => Promise<void>) | undefined;
-
-if (restateUrl) {
-  console.log(`[restate] Connecting to Restate at ${restateUrl}`);
-  restateIngressUrl = restateUrl;
-  restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? restateUrl.replace(/:\d+$/, ":9070");
-} else {
-  console.log("[restate] Auto-starting Restate server...");
-  const restate = await autoStartRestate();
-  console.log(`[restate] Ingress: ${restate.ingressUrl}`);
-  console.log(`[restate] Admin:   ${restate.adminUrl}`);
-  restateIngressUrl = restate.ingressUrl;
-  restateAdminUrl = restate.adminUrl;
-  restateStop = restate.stop;
-}
+const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
+const restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? "http://localhost:19070";
 
 // ---------------------------------------------------------------------------
 // Flamecast instance
@@ -74,10 +58,6 @@ listen(flamecast, { port: 3001 }, (info) => {
 
 async function shutdown() {
   await flamecast.close();
-  if (restateStop) {
-    console.log("[restate] Stopping Restate server...");
-    await restateStop();
-  }
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
