@@ -33,35 +33,34 @@ export interface AutoStartResult {
  * package's dependencies.
  */
 function resolveRestateBinary(): string {
-  const require = createRequire(import.meta.url);
+  const thisRequire = createRequire(import.meta.url);
 
-  // Map Node.js os values to Restate package naming conventions
-  const platformMap: Record<string, string> = {
-    darwin: "darwin",
-    linux: "linux",
-    win32: "windows",
-  };
-  const archMap: Record<string, string> = {
-    x64: "x64",
-    arm64: "aarch64",
-  };
-
-  const op = platformMap[platform()];
-  const ar = archMap[arch()];
-  if (!op || !ar) {
+  // Resolve via @restatedev/restate-server's own require context, so pnpm's
+  // strict module isolation can find the platform-specific binary package
+  // (it's a dependency of restate-server, not of our package).
+  let serverPkgPath: string;
+  try {
+    serverPkgPath = thisRequire.resolve(
+      "@restatedev/restate-server/package.json",
+    );
+  } catch {
     throw new Error(
-      `Unsupported platform: ${platform()}-${arch()}. ` +
-        `Restate supports linux/darwin on x64/arm64.`,
+      `Could not find @restatedev/restate-server. ` +
+        `Install it with: pnpm add @restatedev/restate-server`,
     );
   }
 
+  const serverRequire = createRequire(serverPkgPath);
+  const op = platform();
+  const ar = arch();
+
   try {
-    return require.resolve(
+    return serverRequire.resolve(
       `@restatedev/restate-server-${op}-${ar}/bin/restate-server`,
     );
   } catch {
     throw new Error(
-      `Could not find the Restate server binary. ` +
+      `Could not find the Restate server binary for ${op}-${ar}. ` +
         `Install it with: pnpm add @restatedev/restate-server`,
     );
   }
@@ -81,20 +80,21 @@ function resolveRestateBinary(): string {
 function parseUrls(output: string): { ingress?: string; admin?: string } {
   const result: { ingress?: string; admin?: string } = {};
 
-  // Look for ingress URL (port 8080 by default, random when using random ports)
-  const ingressMatch = output.match(
-    /(?:ingress|Ingress)[^\n]*?(https?:\/\/[^\s,]+)/i,
-  );
-  if (ingressMatch) {
-    result.ingress = ingressMatch[1];
-  }
-
-  // Look for admin URL (port 9071 by default)
+  // Admin API prints a full URL: "Admin API starting on: http://host:port/"
   const adminMatch = output.match(
-    /(?:admin|Admin)[^\n]*?(https?:\/\/[^\s,]+)/i,
+    /Admin API starting on:\s*(https?:\/\/[^\s/]+)/i,
   );
   if (adminMatch) {
-    result.admin = adminMatch[1];
+    result.admin = adminMatch[1].replace(/\/$/, "");
+  }
+
+  // Ingress prints: "Ingress HTTP listening" followed by "server.port: <port>"
+  // on a subsequent line within the same log block
+  const ingressBlock = output.match(
+    /Ingress HTTP listening[\s\S]*?server\.port:\s*(\d+)/i,
+  );
+  if (ingressBlock) {
+    result.ingress = `http://localhost:${ingressBlock[1]}`;
   }
 
   return result;
@@ -170,7 +170,7 @@ export async function autoStartRestate(): Promise<AutoStartResult> {
   // 3. Spawn restate-server with random ports
   const child: ChildProcess = spawn(
     binaryPath,
-    ["--use-random-ports=true", "--data-dir", dataDir],
+    ["--use-random-ports=true", "--base-dir", dataDir],
     {
       stdio: ["ignore", "pipe", "pipe"],
     },

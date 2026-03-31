@@ -19,7 +19,8 @@
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",
     "@restatedev/restate-sdk": "^1.5.0",
-    "@restatedev/restate-sdk-clients": "^1.5.0"
+    "@restatedev/restate-sdk-clients": "^1.5.0",
+    "@restatedev/restate-server": "^1.6.2"
   },
   "devDependencies": {
     "@restatedev/restate-sdk-testcontainers": "^1.11.1",
