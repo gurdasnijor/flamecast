@@ -288,7 +288,7 @@ export const FlamecastSession = restate.object({
         const timeout = ctx
           .sleep({ milliseconds: input.timeoutMs })
           .map(() => ({ __timeout: true as const }));
-        const raceResult = await restate.CombineablePromise.any([
+        const raceResult = await restate.RestatePromise.any([
           promise,
           timeout,
         ]);

@@ -14,7 +14,7 @@ function hmacSha256(secret: string, body: string): string {
 // Input type
 // ---------------------------------------------------------------------------
 
-interface WebhookDeliveryInput {
+export interface WebhookDeliveryInput {
   webhook: WebhookConfig;
   sessionId: string;
   event: { type: string; data: unknown };

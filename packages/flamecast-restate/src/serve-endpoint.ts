@@ -1,2 +1,2 @@
-import { createRestateEndpoint } from "./endpoint.js";
-createRestateEndpoint().listen(9080);
+import { serve } from "./endpoint.js";
+serve();
