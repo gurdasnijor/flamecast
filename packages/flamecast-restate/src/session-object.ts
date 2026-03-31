@@ -37,6 +37,15 @@ export interface SessionCallbackEvent {
   data: unknown;
 }
 
+/** Typed state keys for the FlamecastSession VO. */
+export interface SessionState {
+  meta: SessionMeta;
+  webhooks: WebhookConfig[];
+  currentTurn: { id: string; text: string; status: string } | null;
+  pending_permission: { awakeableId: string; data: unknown } | null;
+  waiting_for: { awakeableId: string; filter: Record<string, unknown> } | null;
+}
+
 // Phase 5 temporal primitive inputs — not yet wired to any code path
 export interface WaitForInput {
   filter: Record<string, unknown>;
@@ -165,6 +174,9 @@ export const FlamecastSession = restate.object({
       const now = new Date(await ctx.date.now()).toISOString();
       ctx.set("meta", { ...meta, status: "killed" as const, lastUpdatedAt: now, pendingPermission: null });
       publish(ctx, `session:${ctx.key}`, { type: "session.terminated", sessionId: ctx.key });
+
+      // Schedule state cleanup after 7 days
+      ctx.objectSendClient(FlamecastSession, ctx.key, { delay: 7 * 24 * 60 * 60 * 1000 }).cleanup();
     },
 
     handleCallback: async (ctx: restate.ObjectContext, event: SessionCallbackEvent) => {
@@ -175,6 +187,7 @@ export const FlamecastSession = restate.object({
       const now = new Date(await ctx.date.now()).toISOString();
       if (event.type === "session_end") {
         await updateMeta(ctx, { status: "killed", lastUpdatedAt: now, pendingPermission: null });
+        ctx.objectSendClient(FlamecastSession, ctx.key, { delay: 7 * 24 * 60 * 60 * 1000 }).cleanup();
       } else {
         await updateMeta(ctx, { lastUpdatedAt: now });
       }
@@ -187,21 +200,28 @@ export const FlamecastSession = restate.object({
       return { ok: true };
     },
 
-    // Queries + event resolution (shared — concurrent, non-blocking)
+    // Shared handlers — concurrent, non-blocking, lazy state
 
-    resolveEvent: restate.handlers.object.shared(
-      async (ctx: restate.ObjectSharedContext, input: { awakeableId: string; payload: unknown }) => {
-        ctx.resolveAwakeable(input.awakeableId, input.payload);
+    sendEvent: restate.handlers.object.shared(
+      { enableLazyState: true },
+      async (ctx: restate.ObjectSharedContext, event: { awakeableId: string; payload: unknown }) => {
+        ctx.resolveAwakeable(event.awakeableId, event.payload);
       },
     ),
 
     getStatus: restate.handlers.object.shared(
+      { enableLazyState: true },
       async (ctx: restate.ObjectSharedContext) => ctx.get<SessionMeta>("meta"),
     ),
 
     getWebhooks: restate.handlers.object.shared(
+      { enableLazyState: true },
       async (ctx: restate.ObjectSharedContext) => (await ctx.get<WebhookConfig[]>("webhooks")) ?? [],
     ),
+
+    cleanup: async (ctx: restate.ObjectContext): Promise<void> => {
+      ctx.clearAll();
+    },
 
     // -----------------------------------------------------------------
     // Phase 5 — temporal primitives. Not yet wired to any code path.

@@ -156,10 +156,12 @@ export class RestateSessionService implements ISessionService {
       ?.awakeableId;
     if (!awakeableId) throw new Error("No pending permission request");
 
-    const resolution = body.optionId
+    const payload = body.optionId
       ? { outcome: { outcome: "selected", optionId: body.optionId } }
       : { outcome: { outcome: "cancelled" } };
-    await this.restateClient.resolveAwakeable(awakeableId, resolution);
+    await this.restateClient
+      .objectClient(FlamecastSession, sessionId)
+      .sendEvent({ awakeableId, payload });
   }
 
   async proxyRequest(
