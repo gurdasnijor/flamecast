@@ -5,7 +5,7 @@ import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
 import { DockerRuntime } from "@flamecast/runtime-docker";
 import { E2BRuntime } from "@flamecast/runtime-e2b";
 import { createPsqlStorage } from "@flamecast/storage-psql";
-import { RestateSessionService, RestateStorage } from "@flamecast/restate";
+import { RestateSessionService, RestateStorage, autoStartRestate, createRestateEndpoint } from "@flamecast/restate";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -27,11 +27,16 @@ const runtimes = {
 };
 
 // ---------------------------------------------------------------------------
-// Restate — ingress at :18080, admin at :19070 (started separately via turbo)
+// Restate — auto-start server + endpoint, or connect to existing instance
 // ---------------------------------------------------------------------------
 
-const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
-const restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? "http://localhost:19070";
+// Start the Flamecast Restate endpoint (VO handlers)
+await createRestateEndpoint().listen(9080);
+
+// Start restate-server and register the endpoint
+const restate = await autoStartRestate();
+const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? restate.ingressUrl;
+const restateAdminUrl = process.env.RESTATE_ADMIN_URL ?? restate.adminUrl;
 
 // ---------------------------------------------------------------------------
 // Flamecast instance
@@ -58,6 +63,7 @@ listen(flamecast, { port: 3001 }, (info) => {
 
 async function shutdown() {
   await flamecast.close();
+  restate.stop();
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
