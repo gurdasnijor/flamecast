@@ -12,8 +12,3 @@ export {
 export { WebhookDeliveryService } from "./webhook-service.js";
 export { serve, services } from "./endpoint.js";
 export { RestateStorage } from "./restate-storage.js";
-export {
-  PubsubSseConsumer,
-  type PubsubSseConsumerOptions,
-  type ChannelEvent as PubsubChannelEvent,
-} from "./sse-consumer.js";
