@@ -29,22 +29,26 @@ export class RestateStorage implements FlamecastStorage {
   // ---------------------------------------------------------------------------
 
   private async query(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
-    const resp = await fetch(`${this.adminUrl}/query`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ query: sql }),
-    });
-    if (!resp.ok) {
-      throw new Error(
-        `Restate query failed (${resp.status}): ${await resp.text()}`,
-      );
+    try {
+      const resp = await fetch(`${this.adminUrl}/query`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ query: sql }),
+      });
+      if (!resp.ok) {
+        throw new Error(
+          `Restate query failed (${resp.status}): ${await resp.text()}`,
+        );
+      }
+      const json = await resp.json();
+      return json as { rows: Record<string, unknown>[] };
+    } catch {
+      // Restate not ready yet — return empty so server can start
+      return { rows: [] };
     }
-    const json = await resp.json();
-    // Restate returns { rows: [{col: val, ...}, ...] } with named columns
-    return json as { rows: Record<string, unknown>[] };
   }
 
   // ---------------------------------------------------------------------------
