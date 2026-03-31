@@ -210,9 +210,11 @@ export const FlamecastSession = restate.object({
       // Record turn start in state
       ctx.set("currentTurn", { id: turnId, text: input.text, status: "active" });
 
-      // Forward prompt to session-host (fire-and-forget for streaming).
-      // The session-host streams tokens directly to the client via WebSocket.
-      // end_turn arrives later via handleCallback.
+      // Fire-and-forget: send prompt to session-host and return immediately.
+      // The session-host streams tokens via WebSocket. end_turn and
+      // permission_request arrive later via handleCallback. We must NOT
+      // block here — that would hold the VO exclusive lock and prevent
+      // handleCallback from running (deadlock).
       await ctx.run("send-prompt", async () => {
         const resp = await fetch(
           `${meta.hostUrl}/sessions/${ctx.key}/prompt`,
@@ -222,8 +224,8 @@ export const FlamecastSession = restate.object({
             body: JSON.stringify({ text: input.text, turnId }),
           },
         );
-        if (!resp.ok) throw new Error(`Prompt failed: ${resp.status}`);
-        return await resp.json();
+        if (!resp.ok) throw new restate.TerminalError(`Prompt failed: ${resp.status}`);
+        // Don't await response body — just confirm the prompt was accepted
       });
 
       return { turnId };

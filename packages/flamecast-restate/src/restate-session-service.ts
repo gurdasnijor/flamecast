@@ -149,20 +149,11 @@ export class RestateSessionService implements ISessionService {
     path: string,
     init: RequestInit,
   ): Promise<Response> {
-    // Route prompts through the VO's turn handler for journaling and
-    // automatic serialization via VO exclusivity.
-    if (path === "/prompt" && init.method === "POST" && init.body) {
-      const body = JSON.parse(
-        typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as ArrayBuffer),
-      ) as { text: string };
-      const result = await this.restateClient
-        .objectClient(FlamecastSession, sessionId)
-        .turn({ text: body.text });
-      return new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    // Prompts go directly to the session-host (not through the VO) because:
+    // 1. The session-host blocks synchronously until the agent completes
+    // 2. The VO turn handler holds an exclusive lock, blocking handleCallback
+    // 3. handleCallback needs to run for permission_request awakeables
+    // This would deadlock. Callbacks route through the VO; prompts don't.
 
     // Route permission resolution through Restate awakeable instead of
     // the session-host's Go channel (which is bypassed in Restate mode).
