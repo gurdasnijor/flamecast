@@ -71,6 +71,9 @@ export function createApi(flamecast: FlamecastApi) {
       }
     })
 
+    // ── Runtimes (stub — agent processes managed by RuntimeHost now) ──
+    .get("/runtimes", (c) => c.json([]))
+
     // ── Session routes (typed Restate ingress client) ─────────────────
     .get("/sessions", async (c) => {
       try {
