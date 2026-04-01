@@ -392,6 +392,9 @@ importers:
       '@flamecast/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@flamecast/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@flamecast/sdk':
         specifier: workspace:*
         version: link:../flamecast

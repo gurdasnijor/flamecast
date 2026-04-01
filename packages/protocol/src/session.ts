@@ -113,6 +113,8 @@ export type SessionEvent =
       awakeableId: string;
       generation: number;
     }
+  // Permission resolution — emitted by resumeAgent so RuntimeHost can unblock
+  | { type: "permission_responded"; awakeableId: string; decision: unknown }
   // Streaming events — published in real-time as the agent works
   | { type: "text"; text: string; role: "assistant" | "thinking" }
   | {

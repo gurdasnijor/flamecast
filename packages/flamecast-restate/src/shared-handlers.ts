@@ -18,12 +18,14 @@ import type {
   WebhookConfig,
 } from "./adapter.js";
 import type { SessionEvent } from "@flamecast/protocol/session";
+import type { AgentRuntime } from "@flamecast/runtime";
 
-// ─── Publish helper ───────────────────────────────────────────────────────
+// ─── Publish helper (still needed for shared handlers that lack AgentRuntime) ─
 
 /**
  * Publish an event to Restate pubsub via one-way send to the pubsub VO.
- * Works from any Restate context (ObjectContext, ObjectSharedContext, etc.).
+ * Used by shared handlers running in ObjectSharedContext (no AgentRuntime).
+ * VO handlers should use runtime.emit() instead.
  */
 export function publish(
   ctx: restate.Context,
@@ -49,22 +51,24 @@ export function publish(
  */
 export async function handleResult(
   ctx: restate.ObjectContext,
+  runtime: AgentRuntime,
   adapter: AgentAdapter,
   session: SessionHandle,
   result: PromptResult,
 ): Promise<PromptResult> {
   if (result.status === "completed") {
-    ctx.set("lastRun", result);
-    publish(ctx, `session:${ctx.key}`, { type: "complete", result });
+    runtime.state.set("lastRun", result);
+    runtime.emit({ type: "complete", result });
     return result;
   }
   if (result.status === "awaiting") {
-    return await handleAwaiting(ctx, adapter, session, result);
+    return await handleAwaiting(ctx, runtime, adapter, session, result);
   }
   if (result.status === "failed") {
-    const msg = typeof result.error === "string"
-      ? result.error
-      : JSON.stringify(result.error);
+    const msg =
+      typeof result.error === "string"
+        ? result.error
+        : JSON.stringify(result.error);
     throw new restate.TerminalError(`Agent run failed: ${msg}`);
   }
   return result;
@@ -84,6 +88,7 @@ export async function handleResult(
  */
 export async function handleAwaiting(
   ctx: restate.ObjectContext,
+  runtime: AgentRuntime,
   adapter: AgentAdapter,
   session: SessionHandle,
   result: PromptResult,
@@ -91,48 +96,35 @@ export async function handleAwaiting(
   let currentResult = result;
 
   while (currentResult.status === "awaiting") {
-    // Increment generation counter — prevents stale resumes
+    // 1. Read and increment generation BEFORE creating durable promise.
     const generation =
-      ((await ctx.get<number>("generation")) ?? 0) + 1;
-    ctx.set("generation", generation);
+      ((await runtime.state.get<number>("generation")) ?? 0) + 1;
+    runtime.state.set("generation", generation);
 
-    // Publish the pause request so clients know what's needed
-    publish(ctx, `session:${ctx.key}`, {
+    // 2. Create durable promise synchronously (stores pending_pause state).
+    const dp = runtime.createDurablePromise<unknown>("pause", generation);
+
+    // 3. Emit pause event with the promise ID so UI can call /resume.
+    runtime.emit({
       type: "pause",
       request: currentResult.awaitRequest,
       generation,
     });
 
-    // Store awakeable ID so external systems can resolve it
-    const { id: awakeableId, promise } = ctx.awakeable<unknown>();
-    ctx.set("pending_pause", {
-      awakeableId,
-      runId: currentResult.runId,
-      request: currentResult.awaitRequest,
-      generation,
-    });
+    // 4. Suspend — zero compute until client POSTs /resume.
+    const resumePayload = await dp.promise;
 
-    // SUSPEND — zero compute until client resumes
-    const resumePayload = await promise;
+    runtime.state.clear("pending_pause");
 
-    ctx.clear("pending_pause");
-
-    // Capture values before entering ctx.run() — the closure must not
-    // reference the mutable `currentResult` variable, which could differ
-    // between the first execution and a replay.
+    // 5. Capture runId before ctx.run to avoid closure over mutable variable.
     const runId = currentResult.runId!;
-
-    // Journal the resumption
     currentResult = await ctx.run("resume", () =>
       adapter.resumeSync(session, runId, resumePayload),
     );
   }
 
-  ctx.set("lastRun", currentResult);
-  publish(ctx, `session:${ctx.key}`, {
-    type: "complete",
-    result: currentResult,
-  });
+  runtime.state.set("lastRun", currentResult);
+  runtime.emit({ type: "complete", result: currentResult });
   return currentResult;
 }
 
@@ -141,7 +133,8 @@ export async function handleAwaiting(
 export const sharedHandlers = {
   /**
    * Resume a paused agent. Checks generation counter to prevent stale
-   * resumes after cancel/steer operations.
+   * resumes after cancel/steer operations. Emits permission_responded
+   * so RuntimeHost can unblock its SDK callback via SSE.
    */
   resumeAgent: restate.handlers.object.shared(
     { enableLazyState: true },
@@ -156,6 +149,13 @@ export const sharedHandlers = {
         );
       }
       ctx.resolveAwakeable(input.awakeableId, input.payload);
+
+      // Emit so RuntimeHost (listening on SSE) can unblock its SDK callback
+      publish(ctx, `session:${ctx.key}`, {
+        type: "permission_responded",
+        awakeableId: input.awakeableId,
+        decision: input.payload,
+      } as SessionEvent);
     },
   ),
 

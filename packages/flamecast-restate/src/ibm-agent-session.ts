@@ -17,161 +17,140 @@ import type {
   SessionHandle,
   SessionMeta,
 } from "./adapter.js";
+import type { AgentRuntime } from "@flamecast/runtime";
+import { createRestateRuntime } from "@flamecast/runtime/restate";
 import { IbmAcpAdapter } from "./ibm-acp-adapter.js";
-import { handleResult, publish, sharedHandlers } from "./shared-handlers.js";
+import { handleResult, sharedHandlers } from "./shared-handlers.js";
 
-// ─── Virtual Object ──────────────────────────────────────────────────────────
+const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+function makeRuntime(ctx: restate.ObjectContext): AgentRuntime {
+  return createRestateRuntime(ctx, { objectName: "IbmAgentSession" });
+}
 
 export const IbmAgentSession = restate.object({
   name: "IbmAgentSession",
   handlers: {
     ...sharedHandlers,
 
-    /**
-     * Start a new IBM ACP session.
-     * Calls adapter.start() to verify the agent exists, then stores
-     * SessionHandle and SessionMeta in VO state.
-     */
     startSession: async (
       ctx: restate.ObjectContext,
       input: AgentStartConfig,
     ): Promise<SessionHandle> => {
+      const runtime = makeRuntime(ctx);
       const adapter = new IbmAcpAdapter();
-      const session = await ctx.run("start", () => adapter.start(input));
+      const session = await runtime.step("start", () => adapter.start(input));
 
-      const now = new Date().toISOString();
+      const now = runtime.now();
       const meta: SessionMeta = {
-        sessionId: ctx.key,
+        sessionId: runtime.key,
         protocol: "ibm",
         agent: session.agent,
         status: "active",
         startedAt: now,
         lastUpdatedAt: now,
       };
-      ctx.set("session", session);
-      ctx.set("meta", meta);
-      ctx.set("cwd", input.cwd);
+      runtime.state.set("session", session);
+      runtime.state.set("meta", meta);
+      if (input.cwd) runtime.state.set("cwd", input.cwd);
 
-      publish(ctx, `session:${ctx.key}`, { type: "session.created", meta });
+      runtime.emit({ type: "session.created", meta });
       return session;
     },
 
-    /**
-     * Run the agent — create + awakeable pattern.
-     *
-     * Phase 1: ctx.run("create-run") journals runId — visible immediately.
-     * Phase 2: awakeable() suspends — ZERO compute until terminal.
-     *
-     * The API layer SSE listener resolves this awakeable when the IBM ACP
-     * agent reaches a terminal state (completed, awaiting, failed).
-     */
     runAgent: async (
       ctx: restate.ObjectContext,
       input: { text: string },
     ): Promise<PromptResult> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new IbmAcpAdapter();
 
       // Phase 1: Create run (journaled) — runId visible immediately
-      const { runId } = await ctx.run("create-run", () =>
+      const { runId } = await runtime.step("create-run", () =>
         adapter.createRun(session, input.text),
       );
-
-      // Publish immediately — clients subscribe to agent SSE by runId
-      publish(ctx, `session:${ctx.key}`, { type: "run.started", runId });
+      runtime.emit({ type: "run.started", runId });
 
       // Phase 2: Suspend on awakeable — ZERO compute until terminal
       const { id: awakeableId, promise } = ctx.awakeable<PromptResult>();
-      ctx.set("pending_run", { awakeableId, runId });
+      runtime.state.set("pending_run", { awakeableId, runId });
 
       const result = await promise;
-      ctx.clear("pending_run");
+      runtime.state.clear("pending_run");
 
-      return handleResult(ctx, adapter, session, result);
+      return handleResult(ctx, runtime, adapter, session, result);
     },
 
-    /**
-     * Cancel the current agent run.
-     */
     cancelAgent: async (
       ctx: restate.ObjectContext,
     ): Promise<{ cancelled: boolean }> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
-      await ctx.run("cancel", () => new IbmAcpAdapter().cancel(session));
-      ctx.clear("pending_pause");
-      ctx.clear("pending_run");
+      await runtime.step("cancel", () => new IbmAcpAdapter().cancel(session));
+      runtime.state.clear("pending_pause");
+      runtime.state.clear("pending_run");
       return { cancelled: true };
     },
 
-    /**
-     * Steer the agent — cancel -> config -> re-prompt.
-     * Each step is a separate ctx.run() for journaling.
-     */
     steerAgent: async (
       ctx: restate.ObjectContext,
       input: { newText: string; mode?: string; model?: string },
     ): Promise<PromptResult> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new IbmAcpAdapter();
 
-      await ctx.run("cancel", () => adapter.cancel(session));
+      await runtime.step("cancel", () => adapter.cancel(session));
       if (input.mode) {
-        await ctx.run("set-mode", () =>
+        await runtime.step("set-mode", () =>
           adapter.setConfigOption(session, "mode", input.mode!),
         );
       }
       if (input.model) {
-        await ctx.run("set-model", () =>
+        await runtime.step("set-model", () =>
           adapter.setConfigOption(session, "model", input.model!),
         );
       }
 
       // Re-create run (same create + awakeable pattern)
-      const { runId } = await ctx.run("create-run", () =>
+      const { runId } = await runtime.step("create-run", () =>
         adapter.createRun(session, input.newText),
       );
-      publish(ctx, `session:${ctx.key}`, { type: "run.started", runId });
+      runtime.emit({ type: "run.started", runId });
 
       const { id: awakeableId, promise } = ctx.awakeable<PromptResult>();
-      ctx.set("pending_run", { awakeableId, runId });
+      runtime.state.set("pending_run", { awakeableId, runId });
 
       const result = await promise;
-      ctx.clear("pending_run");
+      runtime.state.clear("pending_run");
 
-      return handleResult(ctx, adapter, session, result);
+      return handleResult(ctx, runtime, adapter, session, result);
     },
 
-    /**
-     * Terminate the session. Closes the adapter, updates meta, and
-     * schedules state cleanup after 7 days.
-     */
     terminateSession: async (ctx: restate.ObjectContext): Promise<void> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (session) {
-        await ctx.run("close", () => new IbmAcpAdapter().close(session));
+        await runtime.step("close", () =>
+          new IbmAcpAdapter().close(session),
+        );
       }
 
-      // Update meta to terminal status
-      const meta = await ctx.get<SessionMeta>("meta");
+      const meta = await runtime.state.get<SessionMeta>("meta");
       if (meta) {
-        ctx.set("meta", {
+        runtime.state.set("meta", {
           ...meta,
           status: "killed" as const,
-          lastUpdatedAt: new Date().toISOString(),
+          lastUpdatedAt: runtime.now(),
         });
       }
 
-      publish(ctx, `session:${ctx.key}`, { type: "session.terminated" });
-
-      // Schedule cleanup after 7 days
-      ctx
-        .objectSendClient(IbmAgentSession, ctx.key, {
-          delay: 7 * 24 * 60 * 60 * 1000,
-        })
-        .cleanup();
+      runtime.emit({ type: "session.terminated" });
+      runtime.scheduleCleanup(CLEANUP_DELAY_MS);
     },
   },
 });

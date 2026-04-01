@@ -6,12 +6,6 @@
  * to pubsub. The prompt itself is ephemeral (not journaled); only
  * the final result + permission awakeables are durable.
  *
- * Token streaming for Zed is via session-host WebSocket (client-direct),
- * NOT through the VO.
- *
- * Needs increased Restate inactivity timeout — set at service config level
- * (restate.toml or deployment registration), not in code.
- *
  * Reference: docs/sdd-durable-acp-bridge.md §5.2
  */
 
@@ -23,18 +17,29 @@ import type {
   SessionMeta,
 } from "./adapter.js";
 import type { SessionEvent } from "@flamecast/protocol/session";
+import type { AgentRuntime } from "@flamecast/runtime";
+import { createRestateRuntime } from "@flamecast/runtime/restate";
 import { ZedAcpAdapter } from "./zed-acp-adapter.js";
-import { sharedHandlers, publish, handleResult } from "./shared-handlers.js";
+import { sharedHandlers, handleResult } from "./shared-handlers.js";
+
+const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+function makeRuntime(ctx: restate.ObjectContext): AgentRuntime {
+  return createRestateRuntime(ctx, { objectName: "ZedAgentSession" });
+}
 
 /**
  * Create a permission handler that uses Restate awakeables + pubsub.
  * Follows the same generation counter pattern as handleAwaiting in
  * shared-handlers.ts.
  */
-function createPermissionHandler(ctx: restate.ObjectContext) {
-  return async (params: import("@agentclientprotocol/sdk").RequestPermissionRequest) => {
-    const generation = ((await ctx.get<number>("generation")) ?? 0) + 1;
-    ctx.set("generation", generation);
+function createPermissionHandler(runtime: AgentRuntime) {
+  return async (
+    params: import("@agentclientprotocol/sdk").RequestPermissionRequest,
+  ) => {
+    const generation =
+      ((await runtime.state.get<number>("generation")) ?? 0) + 1;
+    runtime.state.set("generation", generation);
 
     const permissionRequest = {
       requestId: params.toolCall.toolCallId,
@@ -48,26 +53,27 @@ function createPermissionHandler(ctx: restate.ObjectContext) {
       })),
     };
 
-    const { id: awakeableId, promise } = ctx.awakeable<{ optionId: string }>();
-    ctx.set("pending_pause", {
-      awakeableId,
+    const dp = runtime.createDurablePromise<{ optionId: string }>(
+      "permission",
       generation,
-      request: permissionRequest,
-    });
+    );
 
     const event: SessionEvent = {
       type: "permission_request",
       ...permissionRequest,
-      awakeableId,
+      awakeableId: dp.id,
       generation,
     };
-    publish(ctx, `session:${ctx.key}`, event);
+    runtime.emit(event);
 
-    const response = await promise;
-    ctx.clear("pending_pause");
+    const response = await dp.promise;
+    runtime.state.clear("pending_pause");
 
     return {
-      outcome: { outcome: "selected" as const, optionId: response.optionId },
+      outcome: {
+        outcome: "selected" as const,
+        optionId: response.optionId,
+      },
     };
   };
 }
@@ -77,144 +83,124 @@ export const ZedAgentSession = restate.object({
   handlers: {
     ...sharedHandlers,
 
-    /**
-     * Start a new Zed ACP session.
-     * Spawns the agent process, sends initialize + session/new.
-     * Stores SessionHandle in VO state.
-     */
     startSession: async (
       ctx: restate.ObjectContext,
       input: AgentStartConfig,
     ): Promise<SessionHandle> => {
+      const runtime = makeRuntime(ctx);
       const adapter = new ZedAcpAdapter();
-      const session = await ctx.run("start", () => adapter.start(input));
+      const session = await runtime.step("start", () => adapter.start(input));
 
-      const now = new Date().toISOString();
+      const now = runtime.now();
       const meta: SessionMeta = {
-        sessionId: ctx.key,
+        sessionId: runtime.key,
         protocol: "zed",
         agent: session.agent,
         status: "active",
         startedAt: now,
         lastUpdatedAt: now,
       };
-      ctx.set("session", session);
-      ctx.set("meta", meta);
-      ctx.set("cwd", input.cwd);
+      runtime.state.set("session", session);
+      runtime.state.set("meta", meta);
+      if (input.cwd) runtime.state.set("cwd", input.cwd);
 
-      publish(ctx, `session:${ctx.key}`, { type: "session.created", meta });
+      runtime.emit({ type: "session.created", meta });
       return session;
     },
 
-    /**
-     * Run the agent — ephemeral prompt with durable permission awakeables.
-     *
-     * promptSync runs OUTSIDE ctx.run() so permission callbacks can create
-     * awakeables and publish to pubsub. The prompt is ephemeral; only the
-     * final result is journaled via handleResult.
-     */
     runAgent: async (
       ctx: restate.ObjectContext,
       input: { text: string },
     ): Promise<PromptResult> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new ZedAcpAdapter();
 
-      // Inject permission handler + publish sink for real-time streaming
-      adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+      // Inject permission handler + publish sink using runtime
+      adapter.setPermissionHandler(
+        session,
+        createPermissionHandler(runtime),
+      );
       adapter.setPublishSink(session, (event) => {
-        publish(ctx, `session:${ctx.key}`, event as SessionEvent);
+        runtime.emit(event as SessionEvent);
       });
 
       // Run prompt OUTSIDE ctx.run() — ephemeral, not journaled.
-      // Permission callbacks inside will create awakeables (durable).
-      // Streaming events publish to pubsub in real-time via the sink.
       const result = await adapter.promptSync(session, input.text);
 
-      // Clean up handlers
       adapter.setPermissionHandler(session, null);
       adapter.setPublishSink(session, null);
 
-      return handleResult(ctx, adapter, session, result);
+      return handleResult(ctx, runtime, adapter, session, result);
     },
 
-    /**
-     * Cancel the current agent run.
-     */
     cancelAgent: async (
       ctx: restate.ObjectContext,
     ): Promise<{ cancelled: boolean }> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
-      await ctx.run("cancel", () => new ZedAcpAdapter().cancel(session));
-      ctx.clear("pending_pause");
+      await runtime.step("cancel", () => new ZedAcpAdapter().cancel(session));
+      runtime.state.clear("pending_pause");
       return { cancelled: true };
     },
 
-    /**
-     * Steer the agent — cancel, optionally reconfigure, then re-prompt.
-     * Each step is a separate ctx.run() for journaling.
-     */
     steerAgent: async (
       ctx: restate.ObjectContext,
       input: { newText: string; mode?: string; model?: string },
     ): Promise<PromptResult> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new ZedAcpAdapter();
 
-      await ctx.run("cancel", () => adapter.cancel(session));
+      await runtime.step("cancel", () => adapter.cancel(session));
       if (input.mode) {
-        await ctx.run("set-mode", () =>
+        await runtime.step("set-mode", () =>
           adapter.setConfigOption(session, "mode", input.mode!),
         );
       }
       if (input.model) {
-        await ctx.run("set-model", () =>
+        await runtime.step("set-model", () =>
           adapter.setConfigOption(session, "model", input.model!),
         );
       }
 
-      // Re-prompt with permission handler + streaming (same ephemeral pattern)
-      adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+      adapter.setPermissionHandler(
+        session,
+        createPermissionHandler(runtime),
+      );
       adapter.setPublishSink(session, (event) => {
-        publish(ctx, `session:${ctx.key}`, event as SessionEvent);
+        runtime.emit(event as SessionEvent);
       });
       const result = await adapter.promptSync(session, input.newText);
       adapter.setPermissionHandler(session, null);
       adapter.setPublishSink(session, null);
 
-      return handleResult(ctx, adapter, session, result);
+      return handleResult(ctx, runtime, adapter, session, result);
     },
 
-    /**
-     * Terminate the session. Kill process, cleanup state after delay.
-     */
     terminateSession: async (ctx: restate.ObjectContext): Promise<void> => {
-      const session = await ctx.get<SessionHandle>("session");
+      const runtime = makeRuntime(ctx);
+      const session = await runtime.state.get<SessionHandle>("session");
       if (session) {
-        await ctx.run("close", () => new ZedAcpAdapter().close(session));
+        await runtime.step("close", () =>
+          new ZedAcpAdapter().close(session),
+        );
       }
 
-      // Update meta to killed status
-      const meta = await ctx.get<SessionMeta>("meta");
+      const meta = await runtime.state.get<SessionMeta>("meta");
       if (meta) {
-        ctx.set("meta", {
+        runtime.state.set("meta", {
           ...meta,
           status: "killed" as const,
-          lastUpdatedAt: new Date().toISOString(),
+          lastUpdatedAt: runtime.now(),
         });
       }
 
-      publish(ctx, `session:${ctx.key}`, { type: "session.terminated" });
-
-      // Schedule state cleanup after 7 days
-      ctx
-        .objectSendClient(ZedAgentSession, ctx.key, {
-          delay: 7 * 24 * 60 * 60 * 1000,
-        })
-        .cleanup();
+      runtime.emit({ type: "session.terminated" });
+      runtime.scheduleCleanup(CLEANUP_DELAY_MS);
     },
   },
 });
