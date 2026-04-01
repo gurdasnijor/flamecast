@@ -1,0 +1,27 @@
+{
+  "name": "@flamecast/adapters",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./stdio": {
+      "types": "./dist/stdio.d.ts",
+      "import": "./dist/stdio.js"
+    },
+    "./a2a": {
+      "types": "./dist/a2a.d.ts",
+      "import": "./dist/a2a.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@flamecast/protocol": "workspace:*",
+    "@flamecast/runtime-host": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
+  }
+}
