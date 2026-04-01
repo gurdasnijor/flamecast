@@ -172,39 +172,42 @@ export const AgentSession = restate.object({
 
         return handleResult(ctx, runtime, adapter as any, handle, result);
       } else {
-        // Stdio: create awakeable, kick off prompt via RuntimeHost, suspend.
-        const { id: awakeableId, promise } = ctx.awakeable<PromptResult>();
+        // Stdio: fire-and-forget. RuntimeHost drives the agent and
+        // publishes all events (text, tool, complete) to pubsub via SSE.
+        // The client already has an EventSource open — no need to wait.
+        getRuntimeHost().prompt(
+          {
+            sessionId: handle.sessionId,
+            strategy: "local",
+            agentName: handle.agent.name,
+          },
+          input.text,
+          {
+            onEvent(event) {
+              runtime.emit(event as any);
+            },
+            async onPermission(request) {
+              // TODO: durable permission handling via awakeable
+              return { optionId: request.options[0]?.optionId ?? "approved" };
+            },
+            onComplete(result) {
+              runtime.emit({ type: "complete", result: result as any });
+            },
+            onError(err) {
+              runtime.emit({
+                type: "complete",
+                result: {
+                  status: "failed",
+                  error: err.message,
+                  runId: handle.sessionId,
+                },
+              });
+            },
+          },
+        );
 
-        const adapter = new StdioAdapter(getRuntimeHost());
-        const callbacks: RuntimeHostCallbacks = {
-          onEvent(event) {
-            // Publish streaming events to pubsub in real-time
-            runtime.emit(event as any);
-          },
-          async onPermission(request) {
-            // TODO: route through VO awakeable for durable permission handling.
-            // For now, auto-approve first option.
-            return { optionId: request.options[0]?.optionId ?? "approved" };
-          },
-          onComplete(result) {
-            // Resolve the VO's awakeable — this resumes the handler
-            ctx.resolveAwakeable(awakeableId, result);
-          },
-          onError(err) {
-            ctx.resolveAwakeable(awakeableId, {
-              status: "failed",
-              error: err.message,
-              runId: handle.sessionId,
-            } satisfies PromptResultPayload);
-          },
-        };
-
-        // Fire-and-forget — RuntimeHost drives the agent
-        adapter.promptAsync(handle, input.text, callbacks);
-
-        // Suspend until RuntimeHost calls onComplete/onError
-        const result = await promise;
-        return handleResult(ctx, runtime, adapter as any, handle, result);
+        // Return immediately — events stream via SSE
+        return { status: "completed", runId: handle.sessionId };
       }
     },
 
