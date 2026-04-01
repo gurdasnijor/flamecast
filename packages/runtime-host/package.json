@@ -27,7 +27,15 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
     "@flamecast/protocol": "workspace:*",
+    "@restatedev/pubsub-client": "^0.1.0",
+    "@restatedev/restate-sdk-clients": "^1.5.0",
     "hono": "^4.12.8"
+  },
+  "peerDependencies": {
+    "e2b": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "e2b": { "optional": true }
   },
   "devDependencies": {
     "typescript": "^5.8.3",

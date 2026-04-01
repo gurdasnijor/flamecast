@@ -10,5 +10,6 @@
     "rootDir": "./src",
     "outDir": "./dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/strategies/e2b.ts"]
 }

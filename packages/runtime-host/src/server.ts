@@ -3,8 +3,8 @@
  *
  * Hono server exposing the RuntimeHost interface over HTTP.
  * POST /prompt is non-blocking (202) — the server drives the agent,
- * publishes events to pubsub via Restate ingress, and resolves the
- * VO's awakeable on terminal state.
+ * publishes events to pubsub via typed Restate ingress client, and
+ * resolves the VO's awakeable on terminal state.
  *
  * Only needed for deployed/multi-tenant. Local dev uses
  * InProcessRuntimeHost directly (no HTTP overhead).
@@ -13,6 +13,8 @@
  */
 
 import { Hono } from "hono";
+import * as clients from "@restatedev/restate-sdk-clients";
+import { createPubsubClient } from "@restatedev/pubsub-client";
 import { InProcessRuntimeHost } from "./local.js";
 import type { AgentSpec, ProcessHandle } from "./types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
@@ -24,7 +26,22 @@ export interface RuntimeHostServerOptions {
 
 export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
   const host = new InProcessRuntimeHost();
+  const ingress = clients.connect({ url: opts.restateIngressUrl });
+  const pubsub = createPubsubClient({
+    name: "pubsub",
+    ingressUrl: opts.restateIngressUrl,
+  });
   const app = new Hono();
+
+  /** Publish an event to the session's pubsub topic. */
+  function publishEvent(sessionId: string, event: unknown): void {
+    pubsub.publish(`session:${sessionId}`, event).catch(() => {});
+  }
+
+  /** Resolve a Restate awakeable with a payload. */
+  function resolveAwakeable(awakeableId: string, payload: unknown): void {
+    ingress.resolveAwakeable(awakeableId, payload);
+  }
 
   app.post("/sessions/:id/spawn", async (c) => {
     const sessionId = c.req.param("id");
@@ -61,44 +78,19 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
     host
       .prompt(handle, body.text, {
         onEvent(event) {
-          // Publish streaming events to pubsub via Restate ingress
-          fetch(
-            `${opts.restateIngressUrl}/pubsub/session:${sessionId}/publish`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(event),
-            },
-          ).catch(() => {});
+          publishEvent(sessionId, event);
         },
 
         async onPermission(request) {
-          // Call VO's requestPermission shared handler
-          // For now, auto-approve (the full mechanism uses SSE subscription)
+          // TODO: call VO requestPermission handler + SSE subscription
           return { optionId: request.options[0]?.optionId ?? "approved" };
         },
 
         onComplete(result) {
-          // Resolve the VO's awakeable if provided
           if (body.awakeableId) {
-            fetch(
-              `${opts.restateIngressUrl}/restate/awakeables/${body.awakeableId}/resolve`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(result),
-              },
-            ).catch(() => {});
+            resolveAwakeable(body.awakeableId, result);
           }
-          // Also publish complete event
-          fetch(
-            `${opts.restateIngressUrl}/pubsub/session:${sessionId}/publish`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "complete", result }),
-            },
-          ).catch(() => {});
+          publishEvent(sessionId, { type: "complete", result });
         },
 
         onError(err) {
@@ -108,20 +100,12 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
             runId: sessionId,
           };
           if (body.awakeableId) {
-            fetch(
-              `${opts.restateIngressUrl}/restate/awakeables/${body.awakeableId}/resolve`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(failResult),
-              },
-            ).catch(() => {});
+            resolveAwakeable(body.awakeableId, failResult);
           }
         },
       })
       .catch(() => {});
 
-    // Return 202 immediately — agent runs asynchronously
     return c.json({ accepted: true }, 202);
   });
 
