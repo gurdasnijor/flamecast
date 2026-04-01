@@ -218,13 +218,27 @@ export function createApi(flamecast: FlamecastApi) {
         if (!status?.cwd) return c.json({ error: "No cwd for session" }, 400);
 
         const { readdir } = await import("node:fs/promises");
-        const entries = await readdir(status.cwd, { withFileTypes: true });
+        const path = await import("node:path");
+        type Entry = { path: string; type: "file" | "directory" | "other" };
+        const entries: Entry[] = [];
+        const walk = async (dir: string): Promise<void> => {
+          const dirents = await readdir(dir, { withFileTypes: true }).catch(() => null);
+          if (!dirents) return;
+          for (const d of dirents) {
+            const full = path.join(dir, d.name);
+            const rel = path.relative(status.cwd!, full).split(path.sep).join("/");
+            if (d.isDirectory()) {
+              entries.push({ path: rel, type: "directory" });
+              await walk(full);
+            } else {
+              entries.push({ path: rel, type: d.isFile() ? "file" : "other" });
+            }
+          }
+        };
+        await walk(status.cwd);
         return c.json({
           root: status.cwd,
-          entries: entries.map((d) => ({
-            path: d.name,
-            type: d.isDirectory() ? "directory" : d.isFile() ? "file" : "other",
-          })),
+          entries: entries.slice(0, 10_000),
         });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
