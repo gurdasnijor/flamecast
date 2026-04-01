@@ -371,6 +371,9 @@ importers:
       '@flamecast/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@flamecast/restate':
+        specifier: workspace:*
+        version: link:../flamecast-restate
       '@flamecast/session-host-go':
         specifier: workspace:*
         version: link:../session-host-go
@@ -383,6 +386,9 @@ importers:
       '@restatedev/pubsub-client':
         specifier: ^0.1.0
         version: 0.1.0(@restatedev/restate-sdk-clients@1.11.1)
+      '@restatedev/restate-sdk-clients':
+        specifier: ^1.5.0
+        version: 1.11.1
       hono:
         specifier: ^4.12.8
         version: 4.12.8
