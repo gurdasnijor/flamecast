@@ -174,36 +174,12 @@ export function createApi(flamecast: FlamecastApi) {
       const sessionId = c.req.param("id");
       try {
         const { text } = await c.req.json() as { text: string };
-
-        // Check if the conversation loop is already running and waiting
-        const status = await ingress
+        // Always use sendPrompt — the conversation loop is started
+        // by startSession and is always suspended waiting for a prompt.
+        await ingress
           .objectClient(AgentSession, sessionId)
-          .getStatus() as Record<string, unknown> | null;
-
-        if (status) {
-          // Try sendPrompt first (resolves awaiting-prompt awakeable).
-          // If no pending prompt, fall back to starting a new runAgent.
-          try {
-            await ingress
-              .objectClient(AgentSession, sessionId)
-              .sendPrompt({ text });
-            return c.json({ ok: true, turn: "continued" });
-          } catch {
-            // No pending prompt — start a new conversation loop.
-            // Use objectSendClient (fire-and-forget) since runAgent
-            // is a long-lived handler that loops.
-            ingress
-              .objectSendClient(AgentSession, sessionId)
-              .runAgent({ text });
-            return c.json({ ok: true, turn: "started" });
-          }
-        }
-
-        // No session status — start fresh
-        ingress
-          .objectSendClient(AgentSession, sessionId)
-          .runAgent({ text });
-        return c.json({ ok: true, turn: "started" });
+          .sendPrompt({ text });
+        return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
       }
@@ -351,10 +327,10 @@ export function createApi(flamecast: FlamecastApi) {
             env: config.runtime.env,
           });
 
-        // Fire-and-forget: send prompt to child
-        ingress
-          .objectSendClient(AgentSession, childId)
-          .runAgent({ text: body.text });
+        // Send the first prompt to the child (conversation loop already started)
+        await ingress
+          .objectClient(AgentSession, childId)
+          .sendPrompt({ text: body.text });
 
         return c.json({ parentId, childId }, 201);
       } catch (error) {

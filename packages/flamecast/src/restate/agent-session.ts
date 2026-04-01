@@ -170,6 +170,11 @@ export const AgentSession = restate.object({
 
       const handle = toSessionHandle(runtime.key, agent, connection);
       runtime.emit({ type: "session.created", meta });
+
+      // Start the conversation loop in the background.
+      // It immediately suspends waiting for the first prompt.
+      ctx.objectSendClient(AgentSession, ctx.key).runAgent({ text: "" });
+
       return handle;
     },
 
@@ -208,12 +213,23 @@ export const AgentSession = restate.object({
       }
 
       // ── Stdio conversation loop ──────────────────────────────────────
+      // Loop: suspend → receive prompt → drive agent → emit result → repeat.
+      // Every prompt comes via sendPrompt resolving the awakeable.
       await ensureStdioProcess(handle.sessionId, agent);
       const topic = `session:${handle.sessionId}`;
-      let currentText = input.text;
 
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        // Suspend and wait for the next prompt
+        const { id: promptId, promise: promptPromise } =
+          ctx.awakeable<{ text: string } | null>();
+        runtime.state.set("pending_prompt", { awakeableId: promptId });
+
+        const next = await promptPromise;
+        runtime.state.clear("pending_prompt");
+
+        if (!next) break; // null = conversation terminated
+
         // Drive the agent with this turn's text
         const result = await new Promise<PromptResult>((resolve) => {
           getRuntimeHost().prompt(
@@ -222,7 +238,7 @@ export const AgentSession = restate.object({
               strategy: "local",
               agentName: handle.agent.name,
             },
-            currentText,
+            next.text,
             {
               onEvent(event) {
                 pubsub.publish(topic, event).catch(() => {});
@@ -269,27 +285,12 @@ export const AgentSession = restate.object({
         // Emit the result for this turn
         runtime.state.set("lastRun", result);
         runtime.emit({ type: "complete", result });
-
-        // Wait for the next prompt (or null = conversation over).
-        // This suspends the handler at zero compute cost.
-        const { id: nextPromptId, promise: nextPromptPromise } =
-          ctx.awakeable<{ text: string } | null>();
-        runtime.state.set("pending_prompt", { awakeableId: nextPromptId });
-        pubsub.publish(topic, {
-          type: "awaiting_prompt",
-          awakeableId: nextPromptId,
-        } as any).catch(() => {});
-
-        const next = await nextPromptPromise;
-        runtime.state.clear("pending_prompt");
-
-        if (!next) {
-          // Conversation terminated
-          return result;
-        }
-
-        currentText = next.text;
+        // Loop back to top — suspend on next awakeable
       }
+
+      // Conversation terminated (null sent via sendPrompt)
+      const lastRun = await runtime.state.get<PromptResult>("lastRun");
+      return lastRun ?? { status: "completed" };
     },
 
     cancelAgent: async (
