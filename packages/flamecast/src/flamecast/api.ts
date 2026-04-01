@@ -121,6 +121,39 @@ export function createApi(flamecast: FlamecastApi) {
     // Thin proxy: resolves template → calls Restate VO ingress.
     // Other session ops (prompt, cancel, steer, terminate, getStatus)
     // go directly to Restate ingress from the client.
+    .get("/sessions", async (c) => {
+      try {
+        // Derive admin URL from ingress URL (18080 → 19070)
+        const adminUrl = flamecast.restateUrl.replace(/:\d+$/, ":19070");
+        const sessions: Record<string, unknown>[] = [];
+
+        for (const service of ["ZedAgentSession", "IbmAgentSession"]) {
+          const res = await fetch(`${adminUrl}/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: `SELECT service_key, value FROM state WHERE service_name = '${service}' AND key = 'meta'`,
+            }),
+          });
+          if (!res.ok) continue;
+          const body = await res.json() as { rows?: string[][] };
+          if (!body.rows) continue;
+          for (const [serviceKey, hexValue] of body.rows) {
+            try {
+              const json = Buffer.from(hexValue, "hex").toString("utf8");
+              const meta = JSON.parse(json);
+              sessions.push({ id: serviceKey, ...meta });
+            } catch {
+              // skip malformed entries
+            }
+          }
+        }
+
+        return c.json(sessions);
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
     .post("/sessions", async (c) => {
       try {
         const body = await c.req.json() as {

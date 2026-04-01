@@ -36,9 +36,7 @@ export function createFlamecastClient(opts: FlamecastClientOptions) {
     createSession: (body: { agentTemplateId: string; cwd?: string; runtimeInstance?: string }) =>
       client.createSession(body),
     fetchSession: (id: string) => client.fetchSession(id),
-    fetchSessions: async () => {
-      throw new Error("Session listing moved to Restate VOs.");
-    },
+    fetchSessions: () => client.listSessions(),
     terminateSession: async (_id: string) => {
       throw new Error("Session termination moved to Restate VOs. Use terminateSession handler.");
     },
@@ -111,6 +109,11 @@ export class FlamecastClient {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return res.json();
+  }
+
+  async listSessions(): Promise<Record<string, unknown>[]> {
+    const res = await this.request("/sessions");
     return res.json();
   }
 
