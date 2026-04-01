@@ -135,13 +135,17 @@ export const AgentSession = restate.object({
         capabilities = raw.agent.capabilities;
         connection = { url: raw.connection.url };
       } else {
-        // Spawn outside ctx.run() — live process can't be journaled
+        // Spawn outside ctx.run() — live process can't be journaled.
+        // We journal ONLY the deterministic agent identity (name, endpoint),
+        // NOT the pid (which changes on every spawn/replay).
+        // Spawn is ephemeral — don't use its output for journaled state.
+        // Agent identity comes from the deterministic input config.
         const adapter = new StdioAdapter(getRuntimeHost());
-        const raw = await adapter.start({ ...input, sessionId: runtime.key });
-        name = raw.agent.name;
-        description = raw.agent.description;
-        capabilities = raw.agent.capabilities;
-        connection = { pid: raw.connection.pid };
+        await adapter.start({ ...input, sessionId: runtime.key });
+        name = input.agent.split("/").pop() ?? "agent";
+        description = undefined;
+        capabilities = undefined;
+        connection = {};
       }
 
       const agent: AgentManifest = {
