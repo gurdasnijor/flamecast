@@ -85,12 +85,18 @@ export function FileSystemPanel({
     setSelectedPath(path);
     setExpandedPaths((current) => {
       const next = new Set(current);
-      for (const parentPath of getParentPaths(path)) {
-        next.add(parentPath);
-      }
       const entry = fileEntryMap.get(path);
       if (entry?.type === "directory") {
-        next.add(path);
+        // Toggle: collapse if expanded, expand if collapsed
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+        }
+      }
+      // Ensure parent paths are expanded so the selection is visible
+      for (const parentPath of getParentPaths(path)) {
+        next.add(parentPath);
       }
       return next;
     });
