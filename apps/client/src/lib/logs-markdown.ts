@@ -109,10 +109,9 @@ export function sessionLogsToSegments(logs: SessionLog[]): SessionLogMarkdownSeg
     if (log.type === "text") {
       const d = log.data;
       if (isRecord(d) && typeof d.text === "string" && d.text.length > 0) {
-        if (d.role === "assistant") {
+        if (d.role === "assistant" || d.role === "thinking") {
           appendAssistant(segments, d.text);
         }
-        // thinking chunks could be rendered differently in the future
       }
       continue;
     }
