@@ -65,7 +65,7 @@ export class FlamecastClient {
 
   constructor(opts: FlamecastClientOptions) {
     this.baseUrl = normalizeBaseUrl(opts.baseUrl);
-    this.fetchFn = opts.fetch ?? globalThis.fetch;
+    this.fetchFn = opts.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
