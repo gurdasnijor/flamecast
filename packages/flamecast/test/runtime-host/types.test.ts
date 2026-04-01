@@ -6,7 +6,7 @@ import type {
   RuntimeHostCallbacks,
   PermissionRequest,
   StreamingEvent,
-} from "../src/types.js";
+} from "../../src/runtime-host/types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
 
 describe("RuntimeHost types", () => {

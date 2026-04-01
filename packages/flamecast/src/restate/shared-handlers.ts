@@ -18,7 +18,7 @@ import type {
   WebhookConfig,
 } from "./adapter.js";
 import type { SessionEvent } from "@flamecast/protocol/session";
-import type { AgentRuntime } from "@flamecast/runtime";
+import type { AgentRuntime } from "../runtime/types.js";
 
 // ─── Publish helper (still needed for shared handlers that lack AgentRuntime) ─
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTestRuntime } from "../src/test.js";
+import { createTestRuntime } from "../../src/runtime/test.js";
 
 describe("createTestRuntime", () => {
   it("step() calls fn and returns its value", async () => {

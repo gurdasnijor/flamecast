@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { StdioAdapter } from "../src/stdio.js";
+import { StdioAdapter } from "../../src/adapters/stdio.js";
 import type {
   RuntimeHost,
   ProcessHandle,
   AgentSpec,
   RuntimeHostCallbacks,
-} from "@flamecast/runtime-host";
+} from "../../src/runtime-host/types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
 
 function createMockRuntimeHost(): RuntimeHost & {

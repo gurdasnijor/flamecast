@@ -14,11 +14,11 @@
 
 import * as restate from "@restatedev/restate-sdk";
 import type { PromptResult, AgentStartConfig, SessionMeta, SessionHandle } from "./adapter.js";
-import type { AgentRuntime } from "@flamecast/runtime";
-import { createRestateRuntime } from "@flamecast/runtime/restate";
-import { StdioAdapter } from "@flamecast/adapters/stdio";
-import { A2AAdapter } from "@flamecast/adapters/a2a";
-import { InProcessRuntimeHost } from "@flamecast/runtime-host/local";
+import type { AgentRuntime } from "../runtime/types.js";
+import { createRestateRuntime } from "../runtime/restate.js";
+import { StdioAdapter } from "../adapters/stdio.js";
+import { A2AAdapter } from "../adapters/a2a.js";
+import { InProcessRuntimeHost } from "../runtime-host/local.js";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { sharedHandlers, handleResult } from "./shared-handlers.js";
 

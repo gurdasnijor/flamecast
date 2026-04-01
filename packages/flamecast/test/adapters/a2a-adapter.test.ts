@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mapA2AEvent, type A2ATaskEvent } from "../src/a2a.js";
+import { mapA2AEvent, type A2ATaskEvent } from "../../src/adapters/a2a.js";
 
 describe("mapA2AEvent", () => {
   it("maps artifact text to text event", () => {

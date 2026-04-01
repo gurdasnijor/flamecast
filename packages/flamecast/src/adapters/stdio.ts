@@ -14,10 +14,9 @@
 import type {
   RuntimeHost,
   ProcessHandle,
-  AgentSpec,
+
   RuntimeHostCallbacks,
-} from "@flamecast/runtime-host";
-import type { PromptResultPayload } from "@flamecast/protocol/session";
+} from "../runtime-host/types.js";
 
 // ─── Types matching the VO's expectations ─────────────────────────────────
 

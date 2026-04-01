@@ -13,8 +13,7 @@
  * Reference: docs/re-arch-unification.md Change 4
  */
 
-import type { PromptResultPayload } from "@flamecast/protocol/session";
-import type { AgentInfo, SessionHandle, AgentStartConfig, ConfigOption } from "./stdio.js";
+import type { SessionHandle, AgentStartConfig, ConfigOption } from "./stdio.js";
 
 // ─── A2A Types ────────────────────────────────────────────────────────────
 
