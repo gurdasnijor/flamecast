@@ -115,7 +115,7 @@ export const AgentSession = restate.object({
         // Spawn OUTSIDE ctx.run() — live process handle can't be journaled.
         // On replay, this re-spawns (idempotent — new process for new session).
         const adapter = new StdioAdapter(getRuntimeHost());
-        const raw = await adapter.start(input);
+        const raw = await adapter.start({ ...input, sessionId: runtime.key });
         name = raw.agent.name;
         description = raw.agent.description;
         capabilities = raw.agent.capabilities;
