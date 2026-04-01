@@ -12,7 +12,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       reportsDirectory: "./coverage/api-server",
-      include: ["src/flamecast/**/*.ts", "src/server/**/*.ts"],
+      include: ["src/**/*.ts", "src/server/**/*.ts"],
       exclude: [
         "src/flamecast/storage.ts",
         "src/flamecast/runtime.ts",

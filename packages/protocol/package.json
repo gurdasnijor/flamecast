@@ -7,10 +7,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./runtime": {
-      "types": "./dist/runtime.d.ts",
-      "import": "./dist/runtime.js"
-    },
     "./session-host": {
       "types": "./dist/session-host.d.ts",
       "import": "./dist/session-host.js"
@@ -22,10 +18,6 @@
     "./session/zod": {
       "types": "./src/session-zod.ts",
       "import": "./src/session-zod.ts"
-    },
-    "./storage": {
-      "types": "./dist/storage.d.ts",
-      "import": "./dist/storage.js"
     },
     "./ws": {
       "types": "./dist/ws.d.ts",

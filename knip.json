@@ -9,8 +9,8 @@
       "entry": [
         "src/cli.ts",
         "src/client/api.ts",
-        "src/flamecast/agent.ts",
-        "src/flamecast/index.ts",
+        "test/fixtures/example-agent.ts",
+        "src/index.ts",
         "src/index.ts",
         "test/**/*.test.ts"
       ],

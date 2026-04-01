@@ -2,7 +2,7 @@
  * A2AAdapter — HTTP adapter for Agent-to-Agent protocol.
  *
  * Wire protocol: A2A (JSON-RPC 2.0 over HTTP, SSE for streaming).
- * Replaces IbmAcpAdapter for all HTTP-based agents.
+ * HTTP adapter for A2A protocol agents.
  *
  * Discovery: GET /.well-known/agent.json → AgentCard
  * Send:      POST / { jsonrpc: '2.0', method: 'message/send', params }
