@@ -122,7 +122,7 @@ function SessionDetailPage() {
     const event = wsEvents.find(
       (e) => e.type === "permission_request" && e.data?.requestId === requestId,
     );
-    if (!event?.data?.awakeableId || !event?.data?.generation) return;
+    if (!event?.data?.awakeableId) return;
 
     fetch(`/api/sessions/${id}/resume`, {
       method: "POST",
@@ -130,7 +130,6 @@ function SessionDetailPage() {
       body: JSON.stringify({
         awakeableId: event.data.awakeableId,
         payload: "optionId" in body ? body : { optionId: "" },
-        generation: event.data.generation,
       }),
     })
       .then(() => {
