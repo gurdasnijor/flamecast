@@ -37,3 +37,8 @@ export { sharedHandlers, handleResult, handleAwaiting, publish } from "./shared-
 export { IbmAgentSession } from "./ibm-agent-session.js";
 export { ZedAgentSession } from "./zed-agent-session.js";
 export { watchAgentRun, type WatchAgentRunOptions } from "./watch-agent-run.js";
+export {
+  createSessionSSEStream,
+  pullSessionEvents,
+  type SessionSSEOptions,
+} from "./session-sse.js";
