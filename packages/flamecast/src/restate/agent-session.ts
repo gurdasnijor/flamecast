@@ -170,42 +170,39 @@ export const AgentSession = restate.object({
 
         return handleResult(ctx, runtime, adapter as any, handle, result);
       } else {
-        // Stdio: fire-and-forget. RuntimeHost drives the agent and
-        // publishes all events (text, tool, complete) to pubsub via SSE.
-        // The client already has an EventSource open — no need to wait.
-        getRuntimeHost().prompt(
-          {
-            sessionId: handle.sessionId,
-            strategy: "local",
-            agentName: handle.agent.name,
-          },
-          input.text,
-          {
-            onEvent(event) {
-              runtime.emit(event as any);
+        // Stdio: handler stays alive while agent works (ephemeral, not
+        // inside ctx.run). This keeps ctx alive so runtime.emit() works.
+        const result = await new Promise<PromptResult>((resolve) => {
+          getRuntimeHost().prompt(
+            {
+              sessionId: handle.sessionId,
+              strategy: "local",
+              agentName: handle.agent.name,
             },
-            async onPermission(request) {
-              // TODO: durable permission handling via awakeable
-              return { optionId: request.options[0]?.optionId ?? "approved" };
-            },
-            onComplete(result) {
-              runtime.emit({ type: "complete", result: result as any });
-            },
-            onError(err) {
-              runtime.emit({
-                type: "complete",
-                result: {
+            input.text,
+            {
+              onEvent(event) {
+                runtime.emit(event as any);
+              },
+              async onPermission(request) {
+                // TODO: durable permission handling
+                return { optionId: request.options[0]?.optionId ?? "approved" };
+              },
+              onComplete(r) {
+                resolve(r as PromptResult);
+              },
+              onError(err) {
+                resolve({
                   status: "failed",
                   error: err.message,
                   runId: handle.sessionId,
-                },
-              });
+                });
+              },
             },
-          },
-        );
+          );
+        });
 
-        // Return immediately — events stream via SSE
-        return { status: "completed", runId: handle.sessionId };
+        return handleResult(ctx, runtime, { cancel: async () => {}, close: async () => {} } as any, handle, result);
       }
     },
 
