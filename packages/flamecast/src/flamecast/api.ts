@@ -158,5 +158,25 @@ export function createApi(flamecast: FlamecastApi) {
         const msg = toErrorMessage(error);
         return c.json({ error: msg }, isClientError(error) ? 404 : 500);
       }
+    })
+    .get("/sessions/:id", async (c) => {
+      const sessionId = c.req.param("id");
+      // Try both VO types — one will have the session
+      for (const voName of ["ZedAgentSession", "IbmAgentSession"]) {
+        try {
+          const res = await fetch(`${flamecast.restateUrl}/${voName}/${sessionId}/getStatus`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (res.ok) {
+            const meta = await res.json();
+            if (meta) return c.json({ id: sessionId, ...meta });
+          }
+        } catch {
+          // Try next VO type
+        }
+      }
+      return c.json({ error: "Session not found" }, 404);
     });
 }

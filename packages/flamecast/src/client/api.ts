@@ -35,9 +35,7 @@ export function createFlamecastClient(opts: FlamecastClientOptions) {
     // Session creation proxied through the API (resolves template → calls VO)
     createSession: (body: { agentTemplateId: string; cwd?: string; runtimeInstance?: string }) =>
       client.createSession(body),
-    fetchSession: async (_id: string) => {
-      throw new Error("Session queries moved to Restate VOs. Use getStatus handler.");
-    },
+    fetchSession: (id: string) => client.fetchSession(id),
     fetchSessions: async () => {
       throw new Error("Session listing moved to Restate VOs.");
     },
@@ -113,6 +111,11 @@ export class FlamecastClient {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return res.json();
+  }
+
+  async fetchSession(id: string): Promise<Record<string, unknown>> {
+    const res = await this.request(`/sessions/${id}`);
     return res.json();
   }
 
