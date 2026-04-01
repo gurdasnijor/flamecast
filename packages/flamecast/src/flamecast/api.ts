@@ -130,16 +130,18 @@ export function createApi(flamecast: FlamecastApi) {
         for (const service of ["ZedAgentSession", "IbmAgentSession"]) {
           const res = await fetch(`${adminUrl}/query`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "Accept": "application/json" },
             body: JSON.stringify({
               query: `SELECT service_key, value FROM state WHERE service_name = '${service}' AND key = 'meta'`,
             }),
           });
           if (!res.ok) continue;
-          const body = await res.json() as { rows?: string[][] };
+          const body = await res.json() as { rows?: Record<string, string>[] };
           if (!body.rows) continue;
-          for (const [serviceKey, hexValue] of body.rows) {
+          for (const row of body.rows) {
             try {
+              const serviceKey = row.service_key;
+              const hexValue = row.value;
               const json = Buffer.from(hexValue, "hex").toString("utf8");
               const meta = JSON.parse(json);
               sessions.push({ id: serviceKey, ...meta });
