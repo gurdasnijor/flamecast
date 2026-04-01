@@ -40,14 +40,24 @@ const httpConnections = new Map<string, HttpJsonRpcConnection>();
 
 // ─── Flamecast Client (handles agent→client callbacks) ──────────────────────
 
+/** Callback injected by the VO handler so permissions go through awakeables. */
+type PermissionHandler = (
+  params: acp.RequestPermissionRequest,
+) => Promise<acp.RequestPermissionResponse>;
+
 class FlamecastClient implements acp.Client {
   private eventSink: ((event: AgentEvent) => void) | null = null;
   /** Accumulated text chunks from session/update notifications (for promptSync). */
   private collectedText: string[] = [];
   private collecting = false;
+  private permissionHandler: PermissionHandler | null = null;
 
   setEventSink(sink: ((event: AgentEvent) => void) | null): void {
     this.eventSink = sink;
+  }
+
+  setPermissionHandler(handler: PermissionHandler | null): void {
+    this.permissionHandler = handler;
   }
 
   startCollecting(): void {
@@ -71,7 +81,10 @@ class FlamecastClient implements acp.Client {
   async requestPermission(
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse> {
-    // Auto-approve first option (Flamecast handles permissions at the VO layer)
+    if (this.permissionHandler) {
+      return this.permissionHandler(params);
+    }
+    // Fallback: auto-approve first option
     const firstOption = params.options[0];
     return {
       outcome: { outcome: "selected", optionId: firstOption.optionId },
@@ -179,6 +192,18 @@ function stopReasonToStatus(
 // ─── Adapter ────────────────────────────────────────────────────────────────
 
 export class ZedAcpAdapter implements AgentAdapter {
+  /**
+   * Inject a permission handler on the FlamecastClient for a given session.
+   * The VO handler uses this to route permissions through awakeables + pubsub.
+   */
+  setPermissionHandler(
+    session: SessionHandle,
+    handler: ((params: acp.RequestPermissionRequest) => Promise<acp.RequestPermissionResponse>) | null,
+  ): void {
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) entry.client.setPermissionHandler(handler);
+  }
+
   // --- Core lifecycle ---
 
   async start(config: AgentStartConfig): Promise<SessionHandle> {

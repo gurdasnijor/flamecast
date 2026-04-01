@@ -234,6 +234,31 @@ export function createApi(flamecast: FlamecastApi) {
         return c.json({ error: toErrorMessage(error) }, 500);
       }
     })
+    .post("/sessions/:id/resume", async (c) => {
+      const sessionId = c.req.param("id");
+      try {
+        const body = await c.req.json() as {
+          awakeableId: string;
+          payload: unknown;
+          generation: number;
+        };
+        const res = await fetch(
+          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/resumeAgent`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok) {
+          const err = await res.text();
+          return c.json({ error: err }, res.status as 400);
+        }
+        return c.json(await res.json());
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
     .post("/sessions/:id/cancel", async (c) => {
       const sessionId = c.req.param("id");
       try {

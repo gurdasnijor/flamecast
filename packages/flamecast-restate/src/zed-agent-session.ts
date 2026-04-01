@@ -1,9 +1,10 @@
 /**
  * ZedAgentSession — Restate Virtual Object for Zed ACP agents.
  *
- * Single blocking promptSync pattern: `ctx.run("prompt")` blocks until the
- * agent responds. This is different from IbmAgentSession which uses
- * create + awakeable (zero compute while waiting).
+ * promptSync runs OUTSIDE ctx.run() so the FlamecastClient's
+ * requestPermission() callback can create awakeables and publish
+ * to pubsub. The prompt itself is ephemeral (not journaled); only
+ * the final result + permission awakeables are durable.
  *
  * Token streaming for Zed is via session-host WebSocket (client-direct),
  * NOT through the VO.
@@ -23,6 +24,49 @@ import type {
 } from "./adapter.js";
 import { ZedAcpAdapter } from "./zed-acp-adapter.js";
 import { sharedHandlers, publish, handleResult } from "./shared-handlers.js";
+
+/**
+ * Create a permission handler that uses Restate awakeables + pubsub.
+ * Follows the same generation counter pattern as handleAwaiting in
+ * shared-handlers.ts.
+ */
+function createPermissionHandler(ctx: restate.ObjectContext) {
+  return async (params: import("@agentclientprotocol/sdk").RequestPermissionRequest) => {
+    const generation = ((await ctx.get<number>("generation")) ?? 0) + 1;
+    ctx.set("generation", generation);
+
+    const permissionRequest = {
+      requestId: params.toolCall.toolCallId,
+      toolCallId: params.toolCall.toolCallId,
+      title: params.toolCall.title ?? "Permission required",
+      kind: params.toolCall.kind ?? undefined,
+      options: params.options.map((o) => ({
+        optionId: o.optionId,
+        name: o.name,
+        kind: o.kind,
+      })),
+    };
+
+    const { id: awakeableId, promise } = ctx.awakeable<{ optionId: string }>();
+    ctx.set("pending_pause", {
+      awakeableId,
+      generation,
+      request: permissionRequest,
+    });
+
+    publish(ctx, `session:${ctx.key}`, {
+      type: "permission_request",
+      data: { ...permissionRequest, awakeableId, generation },
+    });
+
+    const response = await promise;
+    ctx.clear("pending_pause");
+
+    return {
+      outcome: { outcome: "selected" as const, optionId: response.optionId },
+    };
+  };
+}
 
 export const ZedAgentSession = restate.object({
   name: "ZedAgentSession",
@@ -59,9 +103,11 @@ export const ZedAgentSession = restate.object({
     },
 
     /**
-     * Run the agent — single blocking promptSync pattern.
-     * ctx.run("prompt") blocks until the agent responds.
-     * Needs increased inactivity timeout for long-running agents.
+     * Run the agent — ephemeral prompt with durable permission awakeables.
+     *
+     * promptSync runs OUTSIDE ctx.run() so permission callbacks can create
+     * awakeables and publish to pubsub. The prompt is ephemeral; only the
+     * final result is journaled via handleResult.
      */
     runAgent: async (
       ctx: restate.ObjectContext,
@@ -71,10 +117,15 @@ export const ZedAgentSession = restate.object({
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new ZedAcpAdapter();
 
-      // Single ctx.run — blocks until agent responds.
-      const result = await ctx.run("prompt", () =>
-        adapter.promptSync(session, input.text),
-      );
+      // Inject permission handler that uses awakeables + pubsub
+      adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+
+      // Run prompt OUTSIDE ctx.run() — ephemeral, not journaled.
+      // Permission callbacks inside will create awakeables (durable).
+      const result = await adapter.promptSync(session, input.text);
+
+      // Clean up permission handler
+      adapter.setPermissionHandler(session, null);
 
       return handleResult(ctx, adapter, session, result);
     },
@@ -116,10 +167,10 @@ export const ZedAgentSession = restate.object({
         );
       }
 
-      // Re-prompt with the new text (blocking pattern)
-      const result = await ctx.run("re-prompt", () =>
-        adapter.promptSync(session, input.newText),
-      );
+      // Re-prompt with permission handler (same ephemeral pattern)
+      adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+      const result = await adapter.promptSync(session, input.newText);
+      adapter.setPermissionHandler(session, null);
 
       return handleResult(ctx, adapter, session, result);
     },

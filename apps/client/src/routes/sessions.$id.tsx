@@ -108,10 +108,24 @@ function SessionDetailPage() {
   const markdownSegments = useMemo(() => sessionLogsToSegments(logs), [logs]);
 
   const handlePermission = (
-    _requestId: string,
-    _body: { optionId: string } | { outcome: "cancelled" },
+    requestId: string,
+    body: { optionId: string } | { outcome: "cancelled" },
   ) => {
-    // TODO: wire up permission responses via REST when resumeAgent endpoint is added
+    // Find the matching permission event to get awakeableId + generation
+    const event = wsEvents.find(
+      (e) => e.type === "permission_request" && e.data?.requestId === requestId,
+    );
+    if (!event?.data?.awakeableId || !event?.data?.generation) return;
+
+    fetch(`/api/sessions/${id}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        awakeableId: event.data.awakeableId,
+        payload: "optionId" in body ? body : { optionId: "" },
+        generation: event.data.generation,
+      }),
+    }).catch(() => {});
   };
 
   const handleSend = () => {
