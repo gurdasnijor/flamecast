@@ -15,6 +15,7 @@ import {
   UpdateAgentTemplateBodySchema,
   createRegisterAgentTemplateBodySchema,
 } from "../shared/session.js";
+import { createSessionSSEStream } from "@flamecast/restate";
 
 export type FlamecastApi = Pick<
   Flamecast,
@@ -178,5 +179,61 @@ export function createApi(flamecast: FlamecastApi) {
         }
       }
       return c.json({ error: "Session not found" }, 404);
+    })
+    .post("/sessions/:id/prompt", async (c) => {
+      const sessionId = c.req.param("id");
+      try {
+        const body = await c.req.json() as { text: string };
+        const res = await fetch(
+          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/runAgent`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: body.text }),
+          },
+        );
+        if (!res.ok) {
+          const err = await res.text();
+          return c.json({ error: err }, res.status as 400);
+        }
+        return c.json(await res.json());
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
+    .post("/sessions/:id/cancel", async (c) => {
+      const sessionId = c.req.param("id");
+      try {
+        const res = await fetch(
+          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/cancelAgent`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          },
+        );
+        if (!res.ok) {
+          const err = await res.text();
+          return c.json({ error: err }, res.status as 400);
+        }
+        return c.json(await res.json());
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
+    .get("/sessions/:id/events", (c) => {
+      const sessionId = c.req.param("id");
+      const lastEventId = c.req.header("Last-Event-ID");
+      const stream = createSessionSSEStream(sessionId, {
+        restateUrl: flamecast.restateUrl,
+        lastEventId,
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
     });
 }

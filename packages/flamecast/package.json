@@ -45,6 +45,7 @@
     "@flamecast/protocol": "workspace:*",
     "@flamecast/session-host-go": "workspace:*",
     "@flamecast/storage-psql": "workspace:*",
+    "@flamecast/restate": "workspace:*",
     "@hono/node-server": "^1.19.11",
     "@hono/zod-validator": "^0.7.6",
     "drizzle-kit": "^0.31.10",
