@@ -1,53 +1,84 @@
 /**
  * AgentSession — unified Restate Virtual Object for all ACP agents.
  *
- * Replaces ZedAgentSession + IbmAgentSession. Protocol-selected adapter:
- * - stdio: StdioAdapter + InProcessRuntimeHost (local Zed ACP agents)
- * - a2a: A2AAdapter (HTTP A2A agents — LangGraph, CrewAI, ADK, etc.)
+ * VO state is decomposed into three concerns with different lifetimes:
  *
- * For stdio agents, promptSync runs OUTSIDE ctx.run() so the FlamecastClient's
- * permission/streaming callbacks can access Restate context (awakeables, pubsub).
- * This is the same ephemeral prompt + durable awakeables pattern from the old
- * ZedAgentSession, preserved here.
+ * 'agent'      — AgentManifest: identity + protocol. Set once, never changes.
+ * 'connection' — ConnectionHandle: live connection info. Set at start, may update.
+ * 'meta'       — SessionMeta: status + timestamps. Updated throughout.
+ * 'cwd'        — Working directory. Set at start.
  *
- * For a2a agents, the two-phase create + awakeable pattern is used (same as
- * old IbmAgentSession). RuntimeHost resolves the awakeable on terminal state.
+ * Adapter selection: agent.protocol → stdio or a2a. No inference.
  *
- * Reference: docs/re-arch-unification.md Change 4
+ * Reference: docs/re-arch-unification.md
  */
 
 import * as restate from "@restatedev/restate-sdk";
-import type { SessionHandle, PromptResult, AgentStartConfig, SessionMeta } from "./adapter.js";
+import type { PromptResult, AgentStartConfig, SessionMeta, SessionHandle } from "./adapter.js";
 import type { SessionEvent } from "@flamecast/protocol/session";
 import type { AgentRuntime } from "@flamecast/runtime";
 import { createRestateRuntime } from "@flamecast/runtime/restate";
-import { StdioAdapter } from "@flamecast/adapters/stdio";
-import { A2AAdapter } from "@flamecast/adapters/a2a";
-import { InProcessRuntimeHost } from "@flamecast/runtime-host/local";
 import { ZedAcpAdapter } from "./zed-acp-adapter.js";
-import { sharedHandlers, publish, handleResult } from "./shared-handlers.js";
+import { IbmAcpAdapter } from "./ibm-acp-adapter.js";
+import { sharedHandlers, handleResult } from "./shared-handlers.js";
 
 const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Singleton RuntimeHost — holds all live agent processes in-process.
-// Survives across VO handler invocations (processes can't survive suspension,
-// but they persist in the Node process between handler calls).
-let runtimeHostInstance: InProcessRuntimeHost | null = null;
-function getRuntimeHost(): InProcessRuntimeHost {
-  if (!runtimeHostInstance) {
-    runtimeHostInstance = new InProcessRuntimeHost();
-  }
-  return runtimeHostInstance;
+// ─── Decomposed state types ──────────────────────────────────────────────
+
+/** Stable agent identity — set once at startSession, never changes. */
+interface AgentManifest {
+  protocol: "stdio" | "a2a";
+  name: string;
+  description?: string;
+  capabilities?: Record<string, unknown>;
+  endpoint: string;
+  args?: string[];
 }
+
+/** Connection info — set at start, may update on reconnect. */
+interface ConnectionHandle {
+  url?: string;
+  pid?: number;
+  containerId?: string;
+  sandboxId?: string;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
 
 function makeRuntime(ctx: restate.ObjectContext): AgentRuntime {
   return createRestateRuntime(ctx, { objectName: "AgentSession" });
 }
 
-/**
- * Create a permission handler for stdio agents.
- * Uses Restate awakeables + pubsub — same pattern as before.
- */
+/** Reconstruct a SessionHandle from decomposed state (for adapter calls). */
+function toSessionHandle(
+  sessionId: string,
+  agent: AgentManifest,
+  connection: ConnectionHandle,
+): SessionHandle {
+  return {
+    sessionId,
+    protocol: agent.protocol === "a2a" ? "ibm" : "zed",
+    agent: {
+      name: agent.name,
+      description: agent.description,
+      capabilities: agent.capabilities,
+    },
+    connection,
+  };
+}
+
+/** Read agent + connection from state, build session handle. */
+async function loadSession(
+  runtime: AgentRuntime,
+): Promise<{ agent: AgentManifest; handle: SessionHandle }> {
+  const agent = await runtime.state.get<AgentManifest>("agent");
+  if (!agent) throw new restate.TerminalError("No active session");
+  const connection =
+    (await runtime.state.get<ConnectionHandle>("connection")) ?? {};
+  return { agent, handle: toSessionHandle(runtime.key, agent, connection) };
+}
+
 function createPermissionHandler(runtime: AgentRuntime) {
   return async (
     params: import("@agentclientprotocol/sdk").RequestPermissionRequest,
@@ -89,6 +120,8 @@ function createPermissionHandler(runtime: AgentRuntime) {
   };
 }
 
+// ─── Virtual Object ──────────────────────────────────────────────────────
+
 export const AgentSession = restate.object({
   name: "AgentSession",
   handlers: {
@@ -101,18 +134,30 @@ export const AgentSession = restate.object({
       const runtime = makeRuntime(ctx);
       const protocol = input.protocol ?? "stdio";
 
+      // Start via the protocol-appropriate adapter
       let session: SessionHandle;
       if (protocol === "a2a") {
-        const adapter = new A2AAdapter();
-        const a2aSession = await runtime.step("start", () => adapter.start(input));
-        session = {
-          ...a2aSession,
-          protocol: "ibm" as const,
-        };
+        const raw = await runtime.step("start", () =>
+          new IbmAcpAdapter().start(input),
+        );
+        session = { ...raw, protocol: "ibm" as const };
       } else {
-        const adapter = new ZedAcpAdapter();
-        session = await runtime.step("start", () => adapter.start(input));
+        session = await runtime.step("start", () =>
+          new ZedAcpAdapter().start(input),
+        );
       }
+
+      // Decompose into separate state keys
+      const agent: AgentManifest = {
+        protocol,
+        name: session.agent.name,
+        description: session.agent.description,
+        capabilities: session.agent.capabilities,
+        endpoint: input.agent,
+        args: input.args,
+      };
+
+      const connection: ConnectionHandle = { ...session.connection };
 
       const now = runtime.now();
       const meta: SessionMeta = {
@@ -123,7 +168,9 @@ export const AgentSession = restate.object({
         startedAt: now,
         lastUpdatedAt: now,
       };
-      runtime.state.set("session", session);
+
+      runtime.state.set("agent", agent);
+      runtime.state.set("connection", connection);
       runtime.state.set("meta", meta);
       if (input.cwd) runtime.state.set("cwd", input.cwd);
 
@@ -136,41 +183,34 @@ export const AgentSession = restate.object({
       input: { text: string },
     ): Promise<PromptResult> => {
       const runtime = makeRuntime(ctx);
-      const session = await runtime.state.get<SessionHandle>("session");
-      if (!session) throw new restate.TerminalError("No active session");
+      const { agent, handle } = await loadSession(runtime);
 
-      if (session.protocol === "ibm" || session.connection.url) {
-        // A2A / IBM two-phase pattern: journal runId → suspend on awakeable
-        const { IbmAcpAdapter } = await import("./ibm-acp-adapter.js");
+      if (agent.protocol === "a2a") {
         const adapter = new IbmAcpAdapter();
-
         const { runId } = await runtime.step("create-run", () =>
-          adapter.createRun(session, input.text),
+          adapter.createRun(handle, input.text),
         );
         runtime.emit({ type: "run.started", runId });
 
         const { id: awakeableId, promise } = ctx.awakeable<PromptResult>();
         runtime.state.set("pending_run", { awakeableId, runId });
-
         const result = await promise;
         runtime.state.clear("pending_run");
 
-        return handleResult(ctx, runtime, adapter, session, result);
+        return handleResult(ctx, runtime, adapter, handle, result);
       } else {
-        // Stdio: ephemeral prompt + durable awakeables (existing pattern)
         const adapter = new ZedAcpAdapter();
-
-        adapter.setPermissionHandler(session, createPermissionHandler(runtime));
-        adapter.setPublishSink(session, (event) => {
+        adapter.setPermissionHandler(handle, createPermissionHandler(runtime));
+        adapter.setPublishSink(handle, (event) => {
           runtime.emit(event as SessionEvent);
         });
 
-        const result = await adapter.promptSync(session, input.text);
+        const result = await adapter.promptSync(handle, input.text);
 
-        adapter.setPermissionHandler(session, null);
-        adapter.setPublishSink(session, null);
+        adapter.setPermissionHandler(handle, null);
+        adapter.setPublishSink(handle, null);
 
-        return handleResult(ctx, runtime, adapter, session, result);
+        return handleResult(ctx, runtime, adapter, handle, result);
       }
     },
 
@@ -178,18 +218,12 @@ export const AgentSession = restate.object({
       ctx: restate.ObjectContext,
     ): Promise<{ cancelled: boolean }> => {
       const runtime = makeRuntime(ctx);
-      const session = await runtime.state.get<SessionHandle>("session");
-      if (!session) throw new restate.TerminalError("No active session");
+      const { agent, handle } = await loadSession(runtime);
 
-      if (session.protocol === "ibm" || session.connection.url) {
-        const { IbmAcpAdapter } = await import("./ibm-acp-adapter.js");
-        await runtime.step("cancel", () =>
-          new IbmAcpAdapter().cancel(session),
-        );
+      if (agent.protocol === "a2a") {
+        await runtime.step("cancel", () => new IbmAcpAdapter().cancel(handle));
       } else {
-        await runtime.step("cancel", () =>
-          new ZedAcpAdapter().cancel(session),
-        );
+        await runtime.step("cancel", () => new ZedAcpAdapter().cancel(handle));
       }
 
       runtime.state.clear("pending_pause");
@@ -202,27 +236,32 @@ export const AgentSession = restate.object({
       input: { newText: string; mode?: string; model?: string },
     ): Promise<PromptResult> => {
       const runtime = makeRuntime(ctx);
-      const session = await runtime.state.get<SessionHandle>("session");
-      if (!session) throw new restate.TerminalError("No active session");
+      const { agent, handle } = await loadSession(runtime);
 
-      const isHttp = session.protocol === "ibm" || !!session.connection.url;
-      const adapter = isHttp
-        ? new (await import("./ibm-acp-adapter.js")).IbmAcpAdapter()
-        : new ZedAcpAdapter();
-
-      await runtime.step("cancel", () => adapter.cancel(session));
-      if (input.mode) {
-        await runtime.step("set-mode", () =>
-          adapter.setConfigOption(session, "mode", input.mode!),
-        );
+      if (agent.protocol === "a2a") {
+        const adapter = new IbmAcpAdapter();
+        await runtime.step("cancel", () => adapter.cancel(handle));
+        if (input.mode)
+          await runtime.step("set-mode", () =>
+            adapter.setConfigOption(handle, "mode", input.mode!),
+          );
+        if (input.model)
+          await runtime.step("set-model", () =>
+            adapter.setConfigOption(handle, "model", input.model!),
+          );
+      } else {
+        const adapter = new ZedAcpAdapter();
+        await runtime.step("cancel", () => adapter.cancel(handle));
+        if (input.mode)
+          await runtime.step("set-mode", () =>
+            adapter.setConfigOption(handle, "mode", input.mode!),
+          );
+        if (input.model)
+          await runtime.step("set-model", () =>
+            adapter.setConfigOption(handle, "model", input.model!),
+          );
       }
-      if (input.model) {
-        await runtime.step("set-model", () =>
-          adapter.setConfigOption(session, "model", input.model!),
-        );
-      }
 
-      // Re-run via self-call
       return ctx
         .objectClient(AgentSession, ctx.key)
         .runAgent({ text: input.newText });
@@ -230,17 +269,22 @@ export const AgentSession = restate.object({
 
     terminateSession: async (ctx: restate.ObjectContext): Promise<void> => {
       const runtime = makeRuntime(ctx);
-      const session = await runtime.state.get<SessionHandle>("session");
-      if (session) {
-        const isHttp = session.protocol === "ibm" || !!session.connection.url;
-        if (isHttp) {
-          const { IbmAcpAdapter } = await import("./ibm-acp-adapter.js");
+      const agentManifest = await runtime.state.get<AgentManifest>("agent");
+      if (agentManifest) {
+        const connection =
+          (await runtime.state.get<ConnectionHandle>("connection")) ?? {};
+        const handle = toSessionHandle(
+          runtime.key,
+          agentManifest,
+          connection,
+        );
+        if (agentManifest.protocol === "a2a") {
           await runtime.step("close", () =>
-            new IbmAcpAdapter().close(session),
+            new IbmAcpAdapter().close(handle),
           );
         } else {
           await runtime.step("close", () =>
-            new ZedAcpAdapter().close(session),
+            new ZedAcpAdapter().close(handle),
           );
         }
       }
