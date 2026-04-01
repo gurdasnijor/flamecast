@@ -105,6 +105,34 @@ export function sessionLogsToSegments(logs: SessionLog[]): SessionLogMarkdownSeg
       continue;
     }
 
+    // Streaming: real-time text chunks from the agent
+    if (log.type === "text") {
+      const d = log.data;
+      if (isRecord(d) && typeof d.text === "string" && d.text.length > 0) {
+        if (d.role === "assistant") {
+          appendAssistant(segments, d.text);
+        }
+        // thinking chunks could be rendered differently in the future
+      }
+      continue;
+    }
+
+    // Streaming: tool call status updates
+    if (log.type === "tool") {
+      const d = log.data;
+      if (isRecord(d)) {
+        const toolCallId = typeof d.toolCallId === "string" ? d.toolCallId : "";
+        const title = typeof d.title === "string" ? d.title : "";
+        const status = typeof d.status === "string" ? d.status : "running";
+        if (title) {
+          segments.push({ kind: "tool", toolCallId, title, status });
+        } else {
+          applyToolSegmentStatus(segments, toolCallId, status);
+        }
+      }
+      continue;
+    }
+
     // Restate pubsub: session.created — no display content
     if (log.type === "session.created" || log.type === "session.terminated" || log.type === "run.started") {
       continue;

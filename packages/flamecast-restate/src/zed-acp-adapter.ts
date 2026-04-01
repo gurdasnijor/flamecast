@@ -45,12 +45,16 @@ type PermissionHandler = (
   params: acp.RequestPermissionRequest,
 ) => Promise<acp.RequestPermissionResponse>;
 
+/** Callback injected by the VO handler to publish streaming events to pubsub. */
+type PublishSink = (event: AgentEvent) => void;
+
 class FlamecastClient implements acp.Client {
   private eventSink: ((event: AgentEvent) => void) | null = null;
   /** Accumulated text chunks from session/update notifications (for promptSync). */
   private collectedText: string[] = [];
   private collecting = false;
   private permissionHandler: PermissionHandler | null = null;
+  private publishSink: PublishSink | null = null;
 
   setEventSink(sink: ((event: AgentEvent) => void) | null): void {
     this.eventSink = sink;
@@ -58,6 +62,10 @@ class FlamecastClient implements acp.Client {
 
   setPermissionHandler(handler: PermissionHandler | null): void {
     this.permissionHandler = handler;
+  }
+
+  setPublishSink(sink: PublishSink | null): void {
+    this.publishSink = sink;
   }
 
   startCollecting(): void {
@@ -99,42 +107,52 @@ class FlamecastClient implements acp.Client {
           if (this.collecting) {
             this.collectedText.push(update.content.text ?? "");
           }
-          this.eventSink?.({
+          const textEvent: AgentEvent = {
             type: "text",
             text: update.content.text ?? "",
             role: "assistant",
-          });
+          };
+          this.eventSink?.(textEvent);
+          this.publishSink?.(textEvent);
         }
         break;
       case "agent_thought_chunk":
         if (update.content.type === "text") {
-          this.eventSink?.({
+          const thinkEvent: AgentEvent = {
             type: "text",
             text: update.content.text ?? "",
             role: "thinking",
-          });
+          };
+          this.eventSink?.(thinkEvent);
+          this.publishSink?.(thinkEvent);
         }
         break;
-      case "tool_call":
-        this.eventSink?.({
+      case "tool_call": {
+        const toolEvent: AgentEvent = {
           type: "tool",
           toolCallId: update.toolCallId,
           title: update.title,
           status: mapToolStatus(update.status),
           input: update.rawInput,
           output: update.rawOutput,
-        });
+        };
+        this.eventSink?.(toolEvent);
+        this.publishSink?.(toolEvent);
         break;
-      case "tool_call_update":
-        this.eventSink?.({
+      }
+      case "tool_call_update": {
+        const toolUpdateEvent: AgentEvent = {
           type: "tool",
           toolCallId: update.toolCallId,
           title: "",
           status: mapToolStatus(update.status),
           input: update.rawInput,
           output: update.rawOutput,
-        });
+        };
+        this.eventSink?.(toolUpdateEvent);
+        this.publishSink?.(toolUpdateEvent);
         break;
+      }
     }
   }
 }
@@ -202,6 +220,18 @@ export class ZedAcpAdapter implements AgentAdapter {
   ): void {
     const entry = sdkConnections.get(session.sessionId);
     if (entry) entry.client.setPermissionHandler(handler);
+  }
+
+  /**
+   * Inject a publish sink for real-time streaming events during promptSync.
+   * The VO handler uses this to publish text/tool events to pubsub.
+   */
+  setPublishSink(
+    session: SessionHandle,
+    sink: ((event: AgentEvent) => void) | null,
+  ): void {
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) entry.client.setPublishSink(sink);
   }
 
   // --- Core lifecycle ---

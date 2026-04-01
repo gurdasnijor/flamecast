@@ -121,15 +121,20 @@ export const ZedAgentSession = restate.object({
       if (!session) throw new restate.TerminalError("No active session");
       const adapter = new ZedAcpAdapter();
 
-      // Inject permission handler that uses awakeables + pubsub
+      // Inject permission handler + publish sink for real-time streaming
       adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+      adapter.setPublishSink(session, (event) => {
+        publish(ctx, `session:${ctx.key}`, event as SessionEvent);
+      });
 
       // Run prompt OUTSIDE ctx.run() — ephemeral, not journaled.
       // Permission callbacks inside will create awakeables (durable).
+      // Streaming events publish to pubsub in real-time via the sink.
       const result = await adapter.promptSync(session, input.text);
 
-      // Clean up permission handler
+      // Clean up handlers
       adapter.setPermissionHandler(session, null);
+      adapter.setPublishSink(session, null);
 
       return handleResult(ctx, adapter, session, result);
     },
@@ -171,10 +176,14 @@ export const ZedAgentSession = restate.object({
         );
       }
 
-      // Re-prompt with permission handler (same ephemeral pattern)
+      // Re-prompt with permission handler + streaming (same ephemeral pattern)
       adapter.setPermissionHandler(session, createPermissionHandler(ctx));
+      adapter.setPublishSink(session, (event) => {
+        publish(ctx, `session:${ctx.key}`, event as SessionEvent);
+      });
       const result = await adapter.promptSync(session, input.newText);
       adapter.setPermissionHandler(session, null);
+      adapter.setPublishSink(session, null);
 
       return handleResult(ctx, adapter, session, result);
     },

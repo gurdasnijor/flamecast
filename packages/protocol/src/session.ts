@@ -112,6 +112,16 @@ export type SessionEvent =
       options: PendingPermissionOption[];
       awakeableId: string;
       generation: number;
+    }
+  // Streaming events — published in real-time as the agent works
+  | { type: "text"; text: string; role: "assistant" | "thinking" }
+  | {
+      type: "tool";
+      toolCallId: string;
+      title: string;
+      status: "pending" | "running" | "completed" | "failed";
+      input?: unknown;
+      output?: unknown;
     };
 
 // ---------------------------------------------------------------------------
