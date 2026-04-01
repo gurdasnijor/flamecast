@@ -17,6 +17,7 @@ import type {
   SessionMeta,
   WebhookConfig,
 } from "./adapter.js";
+import type { SessionEvent } from "@flamecast/protocol/session";
 
 // ─── Publish helper ───────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ import type {
 export function publish(
   ctx: restate.Context,
   topic: string,
-  event: unknown,
+  event: SessionEvent,
 ): void {
   const client = ctx.objectSendClient<{ publish: (msg: unknown) => void }>(
     { name: "pubsub" },

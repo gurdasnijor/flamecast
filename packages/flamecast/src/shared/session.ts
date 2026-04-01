@@ -7,7 +7,6 @@ import type {
   FileSystemSnapshot,
   PendingPermission,
   PendingPermissionOption,
-  PromptQueueState,
   RegisterAgentTemplateBody,
   Session,
   SessionLog,
@@ -28,9 +27,13 @@ export type {
   FileSystemSnapshot,
   PendingPermission,
   PermissionResponseBody,
+  PromptResultPayload,
   RegisterAgentTemplateBody,
   Session,
+  SessionAgentInfo,
+  SessionEvent,
   SessionLog,
+  SessionMeta,
   WebhookConfig,
   WebhookEventType,
 } from "@flamecast/protocol/session";
@@ -145,20 +148,6 @@ export const FilePreviewSchema = z.object({
   maxChars: z.number().int().nonnegative(),
 }) satisfies z.ZodType<FilePreview>;
 
-const PromptQueueItemSchema = z.object({
-  queueId: z.string(),
-  text: z.string(),
-  enqueuedAt: z.string(),
-  position: z.number().int().nonnegative(),
-});
-
-export const PromptQueueStateSchema = z.object({
-  processing: z.boolean(),
-  paused: z.boolean(),
-  items: z.array(PromptQueueItemSchema),
-  size: z.number().int().nonnegative(),
-}) satisfies z.ZodType<PromptQueueState>;
-
 export const SessionSchema = z.object({
   id: z.string(),
   agentName: z.string(),
@@ -169,7 +158,6 @@ export const SessionSchema = z.object({
   logs: z.array(SessionLogSchema),
   pendingPermission: PendingPermissionSchema.nullable(),
   fileSystem: FileSystemSnapshotSchema.nullable(),
-  promptQueue: PromptQueueStateSchema.nullable(),
   websocketUrl: z.string().optional(),
   runtime: z.string().optional(),
 }) satisfies z.ZodType<Session>;

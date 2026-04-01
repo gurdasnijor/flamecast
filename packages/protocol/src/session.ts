@@ -26,7 +26,7 @@ export interface AgentTemplate {
 }
 
 // ---------------------------------------------------------------------------
-// Session state (API responses + WS events)
+// Session state (API responses + SSE events)
 // ---------------------------------------------------------------------------
 
 export interface SessionLog {
@@ -63,25 +63,60 @@ export interface FilePreview {
   maxChars: number;
 }
 
-export interface QueuedPromptResponse {
-  queued: true;
-  queueId: string;
-  position: number;
+/** Agent info as stored in VO state. */
+export interface SessionAgentInfo {
+  name: string;
+  description?: string;
+  capabilities?: Record<string, unknown>;
 }
 
-export interface PromptQueueItem {
-  queueId: string;
-  text: string;
-  enqueuedAt: string;
-  position: number;
+/** Metadata stored in VO state — returned by getStatus. */
+export interface SessionMeta {
+  sessionId: string;
+  protocol: "zed" | "ibm";
+  agent: SessionAgentInfo;
+  status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
+  startedAt: string;
+  lastUpdatedAt: string;
+  cwd?: string;
 }
 
-export interface PromptQueueState {
-  processing: boolean;
-  paused: boolean;
-  items: PromptQueueItem[];
-  size: number;
+/** Result of a prompt run — journaled by the VO. */
+export interface PromptResultPayload {
+  status: "completed" | "awaiting" | "failed" | "cancelled";
+  output?: Array<{
+    role: "user" | "assistant";
+    parts: Array<{ contentType: string; content?: string; contentUrl?: string }>;
+  }>;
+  runId?: string;
+  error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Session events (published by VOs to pubsub, consumed by frontend via SSE)
+// All events are FLAT — type at top level, all fields at top level.
+// ---------------------------------------------------------------------------
+
+export type SessionEvent =
+  | { type: "session.created"; meta: SessionMeta }
+  | { type: "session.terminated" }
+  | { type: "run.started"; runId: string }
+  | { type: "complete"; result: PromptResultPayload }
+  | { type: "pause"; request: unknown; generation: number }
+  | {
+      type: "permission_request";
+      requestId: string;
+      toolCallId: string;
+      title: string;
+      kind?: string;
+      options: PendingPermissionOption[];
+      awakeableId: string;
+      generation: number;
+    };
+
+// ---------------------------------------------------------------------------
+// Legacy Session interface (used by storage layer)
+// ---------------------------------------------------------------------------
 
 export interface Session {
   id: string;
@@ -93,9 +128,7 @@ export interface Session {
   logs: SessionLog[];
   pendingPermission: PendingPermission | null;
   fileSystem: FileSystemSnapshot | null;
-  promptQueue: PromptQueueState | null;
   websocketUrl?: string;
-  /** Runtime instance name this session is scoped to. */
   runtime?: string;
 }
 
@@ -108,7 +141,6 @@ export interface CreateSessionBody {
   agentTemplateId?: string;
   spawn?: AgentSpawn;
   name?: string;
-  /** Runtime instance name to run this session on. Required for multi-instance runtimes. */
   runtimeInstance?: string;
   webhooks?: Omit<WebhookConfig, "id">[];
 }
@@ -130,19 +162,15 @@ export type PermissionResponseBody = { optionId: string } | { outcome: "cancelle
 // Webhook delivery
 // ---------------------------------------------------------------------------
 
-/** Event types deliverable via webhooks. */
 export type WebhookEventType = "permission_request" | "end_turn" | "error" | "session_end";
 
-/** Webhook registration — per-session or global. */
 export interface WebhookConfig {
-  /** Stable internal ID assigned at registration. */
   id: string;
   url: string;
   secret: string;
   events?: WebhookEventType[];
 }
 
-/** Payload delivered to webhook endpoints. */
 export interface WebhookPayload {
   sessionId: string;
   eventId: string;

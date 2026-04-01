@@ -2,7 +2,7 @@ import type { RuntimeInstance } from "./runtime.js";
 import type { AgentTemplate, Session, WebhookConfig } from "./session.js";
 
 /** Durable slice of {@link Session} (everything except runtime-only state). */
-export type SessionMeta = Omit<Session, "fileSystem" | "logs" | "promptQueue">;
+export type SessionMeta = Omit<Session, "fileSystem" | "logs">;
 
 /** Runtime connection info persisted alongside a session for recovery after restart. */
 export interface SessionRuntimeInfo {

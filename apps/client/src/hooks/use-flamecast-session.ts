@@ -21,16 +21,12 @@ export function useFlamecastSession(sessionId: string) {
     es.onmessage = (ev) => {
       try {
         const parsed = JSON.parse(ev.data);
-        // Pubsub events with a nested `data` object (e.g. permission_request)
-        // need unwrapping so the page can parse them directly.
-        const data =
-          parsed.data && typeof parsed.data === "object" && !Array.isArray(parsed.data)
-            ? parsed.data
-            : parsed;
+        // SessionEvent is flat — type at top level, all fields at top level.
+        // Store the whole object as log.data so the page can access any field.
         const log: SessionLog = {
           type: parsed.type ?? "unknown",
-          data,
-          timestamp: parsed.timestamp ?? new Date().toISOString(),
+          data: parsed,
+          timestamp: new Date().toISOString(),
         };
         setEvents((prev) => [...prev, log]);
       } catch {

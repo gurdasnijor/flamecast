@@ -22,6 +22,7 @@ import type {
   AgentStartConfig,
   SessionMeta,
 } from "./adapter.js";
+import type { SessionEvent } from "@flamecast/protocol/session";
 import { ZedAcpAdapter } from "./zed-acp-adapter.js";
 import { sharedHandlers, publish, handleResult } from "./shared-handlers.js";
 
@@ -54,10 +55,13 @@ function createPermissionHandler(ctx: restate.ObjectContext) {
       request: permissionRequest,
     });
 
-    publish(ctx, `session:${ctx.key}`, {
+    const event: SessionEvent = {
       type: "permission_request",
-      data: { ...permissionRequest, awakeableId, generation },
-    });
+      ...permissionRequest,
+      awakeableId,
+      generation,
+    };
+    publish(ctx, `session:${ctx.key}`, event);
 
     const response = await promise;
     ctx.clear("pending_pause");
