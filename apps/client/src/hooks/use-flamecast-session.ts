@@ -82,12 +82,17 @@ export function useFlamecastSession(sessionId: string) {
     [sessionId],
   );
 
+  const addEvent = useCallback((log: SessionLog) => {
+    setEvents((prev) => [...prev, log]);
+  }, []);
+
   return {
     events,
     connectionState,
     isConnected: connectionState === "connected",
     prompt,
     cancel,
+    addEvent,
     requestFilePreview,
     requestFsSnapshot,
   };

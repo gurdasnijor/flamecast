@@ -41,6 +41,7 @@ function SessionDetailPage() {
     events: wsEvents,
     isConnected,
     prompt: wsPrompt,
+    addEvent,
     requestFilePreview,
     requestFsSnapshot,
   } = useFlamecastSession(id);
@@ -65,9 +66,15 @@ function SessionDetailPage() {
         if (typeof rid === "string") resolvedIds.add(rid);
       }
     }
+    // A complete event means the prompt finished — all permissions are resolved
+    const lastComplete = wsEvents.findLastIndex((e) => e.type === "complete");
+
     const pending: PermissionRequestEvent[] = [];
-    for (const event of wsEvents) {
+    for (let i = 0; i < wsEvents.length; i++) {
+      const event = wsEvents[i];
       if (event.type === "permission_request") {
+        // Skip permissions that came before the last complete event
+        if (lastComplete >= 0 && i < lastComplete) continue;
         const parsed = PendingPermissionSchema.safeParse(event.data);
         if (parsed.success && !resolvedIds.has(parsed.data.requestId)) {
           pending.push(parsed.data);
@@ -125,7 +132,15 @@ function SessionDetailPage() {
         payload: "optionId" in body ? body : { optionId: "" },
         generation: event.data.generation,
       }),
-    }).catch(() => {});
+    })
+      .then(() => {
+        addEvent({
+          type: "permission_responded",
+          data: { requestId },
+          timestamp: new Date().toISOString(),
+        });
+      })
+      .catch(() => {});
   };
 
   const handleSend = () => {
