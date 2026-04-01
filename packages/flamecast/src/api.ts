@@ -7,15 +7,41 @@
  */
 
 import { Hono } from "hono";
+import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import type { Flamecast } from "./flamecast-class.js";
 import { AgentSession } from "./restate/agent-session.js";
-import {
-  RegisterAgentTemplateBodySchema,
-  UpdateAgentTemplateBodySchema,
-} from "./shared/session.js";
+
+// ─── Zod schemas for API input validation ─────────────────────────────────
+
+const AgentSpawnSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
+
+const AgentTemplateRuntimeSchema = z.object({
+  provider: z.string().min(1),
+  image: z.string().optional(),
+  dockerfile: z.string().optional(),
+  setup: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+const RegisterAgentTemplateBodySchema = z.object({
+  name: z.string().min(1),
+  spawn: AgentSpawnSchema,
+  runtime: AgentTemplateRuntimeSchema.optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+const UpdateAgentTemplateBodySchema = z.object({
+  name: z.string().min(1).optional(),
+  spawn: AgentSpawnSchema.optional(),
+  runtime: AgentTemplateRuntimeSchema.partial().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
 
 export type FlamecastApi = Pick<
   Flamecast,

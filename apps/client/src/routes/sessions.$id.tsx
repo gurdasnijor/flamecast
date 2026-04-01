@@ -15,7 +15,7 @@ import { Streamdown } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { ArrowLeftIcon, ChevronDownIcon, SendIcon } from "lucide-react";
 import type { FileSystemEntry, SessionLog } from "@flamecast/sdk/session";
-import { PendingPermissionSchema } from "@flamecast/sdk/session";
+import { PendingPermissionSchema } from "@flamecast/protocol/session/zod";
 import type { PermissionRequestEvent } from "@flamecast/protocol/session-host";
 import { useFlamecastSession } from "@/hooks/use-flamecast-session";
 

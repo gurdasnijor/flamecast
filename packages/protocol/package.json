@@ -16,8 +16,12 @@
       "import": "./dist/session-host.js"
     },
     "./session": {
-      "types": "./dist/session.d.ts",
-      "import": "./dist/session.js"
+      "types": "./src/session.ts",
+      "import": "./src/session.ts"
+    },
+    "./session/zod": {
+      "types": "./src/session-zod.ts",
+      "import": "./src/session-zod.ts"
     },
     "./storage": {
       "types": "./dist/storage.d.ts",

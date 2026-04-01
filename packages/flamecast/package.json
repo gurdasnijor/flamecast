@@ -27,10 +27,6 @@
       "types": "./src/client/api.ts",
       "import": "./src/client/api.ts"
     },
-    "./session": {
-      "types": "./src/shared/session.ts",
-      "import": "./src/shared/session.ts"
-    },
     "./restate": {
       "types": "./src/restate/index.ts",
       "import": "./src/restate/index.ts"

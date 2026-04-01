@@ -6,7 +6,7 @@
  * Session lifecycle uses @restatedev/restate-sdk-clients.
  */
 
-import type { AgentTemplate, RegisterAgentTemplateBody } from "../shared/session.js";
+import type { AgentTemplate, RegisterAgentTemplateBody } from "@flamecast/protocol/session";
 import type { RuntimeInfo, RuntimeInstance } from "@flamecast/protocol/runtime";
 
 export type FlamecastClientOptions = {

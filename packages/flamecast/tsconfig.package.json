@@ -15,7 +15,6 @@
     "src/edge.ts",
     "src/api.ts",
     "src/flamecast-class.ts",
-    "src/shared/**/*.ts",
     "src/restate/**/*.ts",
     "src/runtime/**/*.ts",
     "src/runtime-host/**/*.ts",
