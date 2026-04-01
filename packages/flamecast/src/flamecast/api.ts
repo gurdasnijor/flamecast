@@ -346,10 +346,32 @@ export function createApi(flamecast: FlamecastApi) {
         name: "pubsub",
         ingressUrl: flamecast.restateUrl,
       });
-      const stream = client.sse({
+
+      // Use pull() instead of sse() so we can emit id: fields for replay.
+      // The pubsub client's sse() method omits id: from SSE frames,
+      // making Last-Event-ID reconnection impossible.
+      const encoder = new TextEncoder();
+      const messages = client.pull({
         topic: `session:${sessionId}`,
         offset: Number.isFinite(offset) ? offset : undefined,
       });
+      let seq = offset ?? 0;
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            controller.enqueue(encoder.encode("event: ping\n\n"));
+            for await (const message of messages) {
+              seq++;
+              const frame = `id: ${seq}\ndata: ${JSON.stringify(message)}\n\n`;
+              controller.enqueue(encoder.encode(frame));
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        },
+      });
+
       return new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
