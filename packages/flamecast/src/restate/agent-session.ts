@@ -269,14 +269,13 @@ export const AgentSession = restate.object({
         });
 
         // Emit the result for this turn
-        runtime.state.set("lastRun", result);
-        runtime.emit({ type: "complete", result });
+        // Publish result via external pubsub (not ctx — non-deterministic value).
+        // Don't store in VO state — the agent response changes on replay.
+        pubsub.publish(topic, { type: "complete", result }).catch(() => {});
         // Loop back to top — suspend on next awakeable
       }
 
-      // Conversation terminated (null sent via sendPrompt)
-      const lastRun = await runtime.state.get<PromptResult>("lastRun");
-      return lastRun ?? { status: "completed" };
+      return { status: "completed" };
     },
 
     cancelAgent: async (
