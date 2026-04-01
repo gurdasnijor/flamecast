@@ -213,8 +213,34 @@ export const AgentSession = restate.object({
                 pubsub.publish(topic, event).catch(() => {});
               },
               async onPermission(request) {
-                // TODO: durable permission handling
-                return { optionId: request.options[0]?.optionId ?? "approved" };
+                // Durable permission handling via awakeable + pubsub.
+                // Handler is alive (awaiting prompt Promise), so runtime works.
+                const generation =
+                  ((await runtime.state.get<number>("generation")) ?? 0) + 1;
+                runtime.state.set("generation", generation);
+
+                const dp = runtime.createDurablePromise<{ optionId: string }>(
+                  "permission",
+                  generation,
+                );
+
+                // Publish via external pubsub (not ctx) so frontend sees it
+                pubsub.publish(topic, {
+                  type: "permission_request",
+                  requestId: request.toolCallId,
+                  toolCallId: request.toolCallId,
+                  title: request.title,
+                  kind: request.kind,
+                  options: request.options,
+                  awakeableId: dp.id,
+                  generation,
+                }).catch(() => {});
+
+                // Block until user responds via POST /resume
+                const response = await dp.promise;
+                runtime.state.clear("pending_pause");
+
+                return { optionId: response.optionId };
               },
               onComplete(r) {
                 resolve(r as PromptResult);
