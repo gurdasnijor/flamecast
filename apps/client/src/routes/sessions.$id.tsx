@@ -36,15 +36,14 @@ function SessionDetailPage() {
     staleTime: Infinity, // runtime WS handles live updates
   });
 
-  // Direct runtime WS for session events/control, server API for filesystem reads
+  // SSE for live session events, REST for prompt/cancel/filesystem
   const {
     events: wsEvents,
     isConnected,
     prompt: wsPrompt,
-    respondToPermission: wsRespondToPermission,
     requestFilePreview,
     requestFsSnapshot,
-  } = useFlamecastSession(id, session?.websocketUrl);
+  } = useFlamecastSession(id);
 
   // Merge: use WS events if available, fall back to REST logs
   const logs: SessionLog[] = useMemo(() => {
@@ -109,10 +108,10 @@ function SessionDetailPage() {
   const markdownSegments = useMemo(() => sessionLogsToSegments(logs), [logs]);
 
   const handlePermission = (
-    requestId: string,
-    body: { optionId: string } | { outcome: "cancelled" },
+    _requestId: string,
+    _body: { optionId: string } | { outcome: "cancelled" },
   ) => {
-    wsRespondToPermission(requestId, body);
+    // TODO: wire up permission responses via REST when resumeAgent endpoint is added
   };
 
   const handleSend = () => {
@@ -162,11 +161,11 @@ function SessionDetailPage() {
           </code>
           {isConnected ? (
             <Badge variant="outline" className="text-green-600">
-              WS
+              SSE
             </Badge>
           ) : (
             <Badge variant="outline" className="text-muted-foreground">
-              SSE
+              Offline
             </Badge>
           )}
         </div>
