@@ -162,7 +162,7 @@ export const AgentSession = restate.object({
         args: input.args,
       };
 
-      const now = runtime.now();
+      const now = await runtime.now();
       const meta: SessionMeta = {
         sessionId: runtime.key,
         protocol,
@@ -336,7 +336,7 @@ export const AgentSession = restate.object({
         runtime.state.set("meta", {
           ...meta,
           status: "killed" as const,
-          lastUpdatedAt: runtime.now(),
+          lastUpdatedAt: await runtime.now(),
         });
       }
 

@@ -48,7 +48,7 @@ export interface AgentRuntime {
    * Deterministic current timestamp.
    * Journaled — returns the same value on replay, never live wall clock.
    */
-  now(): string;
+  now(): Promise<string>;
 
   // ── Durable promises ───────────────────────────────────────────────────
 

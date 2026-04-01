@@ -36,7 +36,7 @@ export function createTestRuntime(
 
     step: (_n, fn) => fn(),
     sleep: () => Promise.resolve(),
-    now: () => new Date().toISOString(),
+    now: () => Promise.resolve(new Date().toISOString()),
 
     createDurablePromise<T>(
       tag: string,

@@ -39,7 +39,7 @@ export function createRestateRuntime(
 
     step: (name, fn) => ctx.run(name, fn),
     sleep: (ms) => ctx.sleep(ms),
-    now: () => new Date().toISOString(),
+    now: () => ctx.date.toJSON(),
 
     createDurablePromise<T>(
       tag: string,
