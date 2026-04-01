@@ -21,8 +21,6 @@ import { createRestateRuntime } from "@flamecast/runtime/restate";
 import { StdioAdapter } from "@flamecast/adapters/stdio";
 import { A2AAdapter } from "@flamecast/adapters/a2a";
 import { InProcessRuntimeHost } from "@flamecast/runtime-host/local";
-import type { RuntimeHostCallbacks } from "@flamecast/runtime-host";
-import type { PromptResultPayload } from "@flamecast/protocol/session";
 import { sharedHandlers, handleResult } from "./shared-handlers.js";
 
 const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
