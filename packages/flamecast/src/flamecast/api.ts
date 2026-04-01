@@ -15,7 +15,7 @@ import {
   UpdateAgentTemplateBodySchema,
   createRegisterAgentTemplateBodySchema,
 } from "../shared/session.js";
-import { createSessionSSEStream } from "@flamecast/restate";
+import { createPubsubClient } from "@restatedev/pubsub-client";
 
 export type FlamecastApi = Pick<
   Flamecast,
@@ -280,9 +280,14 @@ export function createApi(flamecast: FlamecastApi) {
     .get("/sessions/:id/events", (c) => {
       const sessionId = c.req.param("id");
       const lastEventId = c.req.header("Last-Event-ID");
-      const stream = createSessionSSEStream(sessionId, {
-        restateUrl: flamecast.restateUrl,
-        lastEventId,
+      const offset = lastEventId ? parseInt(lastEventId, 10) : undefined;
+      const client = createPubsubClient({
+        name: "pubsub",
+        ingressUrl: flamecast.restateUrl,
+      });
+      const stream = client.sse({
+        topic: `session:${sessionId}`,
+        offset: Number.isFinite(offset) ? offset : undefined,
       });
       return new Response(stream, {
         headers: {

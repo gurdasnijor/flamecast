@@ -16,12 +16,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.16.1",
     "@flamecast/protocol": "workspace:*",
     "@flamecast/sdk": "workspace:*",
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",
     "@restatedev/restate-sdk": "^1.5.0",
-    "@restatedev/restate-sdk-clients": "^1.5.0"
+    "@restatedev/restate-sdk-clients": "^1.5.0",
+    "acp-sdk": "^1.0.3"
   },
   "devDependencies": {
     "@restatedev/restate-sdk-testcontainers": "^1.11.1",
