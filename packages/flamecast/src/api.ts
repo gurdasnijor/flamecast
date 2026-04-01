@@ -185,16 +185,14 @@ export function createApi(flamecast: FlamecastApi) {
       }
     })
     .post("/sessions/:id/resume", async (c) => {
-      const sessionId = c.req.param("id");
       try {
         const body = await c.req.json() as {
           awakeableId: string;
           payload: unknown;
-          generation: number;
         };
-        await ingress
-          .objectClient(AgentSession, sessionId)
-          .resumeAgent(body);
+        // Resolve the awakeable directly — no generation check needed.
+        // Each permission has its own unique awakeable.
+        ingress.resolveAwakeable(body.awakeableId, body.payload);
         return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);

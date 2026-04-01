@@ -230,14 +230,10 @@ export const AgentSession = restate.object({
                 pubsub.publish(topic, event).catch(() => {});
               },
               async onPermission(request) {
-                const generation =
-                  ((await runtime.state.get<number>("generation")) ?? 0) + 1;
-                runtime.state.set("generation", generation);
-
-                const dp = runtime.createDurablePromise<{ optionId: string }>(
-                  "permission",
-                  generation,
-                );
+                // Each permission gets its own awakeable — supports
+                // concurrent permissions without overwriting shared state.
+                const { id: awakeableId, promise } =
+                  ctx.awakeable<{ optionId: string }>();
 
                 pubsub.publish(topic, {
                   type: "permission_request",
@@ -246,12 +242,13 @@ export const AgentSession = restate.object({
                   title: request.title,
                   kind: request.kind,
                   options: request.options,
-                  awakeableId: dp.id,
-                  generation,
+                  awakeableId,
+                  generation: 0, // not used for direct awakeable resolution
                 }).catch(() => {});
 
-                const response = await dp.promise;
-                runtime.state.clear("pending_pause");
+                // Frontend POSTs /resume with { awakeableId, payload }
+                // which calls resolveAwakeable directly
+                const response = await promise;
                 return { optionId: response.optionId };
               },
               onComplete(r) {
