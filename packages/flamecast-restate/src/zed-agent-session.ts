@@ -52,6 +52,7 @@ export const ZedAgentSession = restate.object({
       };
       ctx.set("session", session);
       ctx.set("meta", meta);
+      ctx.set("cwd", input.cwd);
 
       publish(ctx, `session:${ctx.key}`, { type: "session.created", meta });
       return session;
