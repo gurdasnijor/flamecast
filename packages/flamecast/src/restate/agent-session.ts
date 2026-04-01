@@ -1,11 +1,9 @@
 /**
  * AgentSession — unified Restate Virtual Object.
  *
- * Two protocols, same pattern:
+ * Two protocols:
  * - stdio: StdioAdapter + InProcessRuntimeHost
  * - a2a: A2AAdapter (HTTP)
- *
- * Both follow: create awakeable → kick off work → suspend → resume on completion.
  *
  * State decomposed by concern:
  * - 'agent': AgentManifest (identity, protocol). Set once.
@@ -24,8 +22,8 @@ import { InProcessRuntimeHost } from "@flamecast/runtime-host/local";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { sharedHandlers, handleResult } from "./shared-handlers.js";
 
-// External pubsub client — publishes via Restate ingress, not via ctx.
-// Used for streaming events during prompt execution (idempotent, replay-safe).
+// External pubsub client for streaming events during prompt execution.
+// Per Restate docs: https://docs.restate.dev/ai/patterns/streaming-responses
 const RESTATE_URL = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
 const pubsub = createPubsubClient({ name: "pubsub", ingressUrl: RESTATE_URL });
 
@@ -89,6 +87,27 @@ async function loadSession(
   return { agent, handle: toSessionHandle(runtime.key, agent, connection) };
 }
 
+/**
+ * Ensure a stdio agent process exists in RuntimeHost.
+ * If the process died (crash, replay), re-spawn it.
+ */
+async function ensureStdioProcess(
+  sessionId: string,
+  agent: AgentManifest,
+): Promise<void> {
+  const host = getRuntimeHost();
+  if (host.has(sessionId)) return;
+
+  // Re-spawn — process died or this is a replay
+  const adapter = new StdioAdapter(host);
+  await adapter.start({
+    agent: agent.endpoint,
+    args: agent.args,
+    sessionId,
+    cwd: undefined, // cwd is stored separately in VO state
+  });
+}
+
 // ─── Virtual Object ──────────────────────────────────────────────────────
 
 export const AgentSession = restate.object({
@@ -116,8 +135,7 @@ export const AgentSession = restate.object({
         capabilities = raw.agent.capabilities;
         connection = { url: raw.connection.url };
       } else {
-        // Spawn OUTSIDE ctx.run() — live process handle can't be journaled.
-        // On replay, this re-spawns (idempotent — new process for new session).
+        // Spawn outside ctx.run() — live process can't be journaled
         const adapter = new StdioAdapter(getRuntimeHost());
         const raw = await adapter.start({ ...input, sessionId: runtime.key });
         name = raw.agent.name;
@@ -176,9 +194,11 @@ export const AgentSession = restate.object({
 
         return handleResult(ctx, runtime, adapter as any, handle, result);
       } else {
-        // Stdio: handler stays alive while agent works.
-        // Streaming events publish via external pubsub client (not ctx),
-        // per Restate docs: https://docs.restate.dev/ai/patterns/streaming-responses
+        // Ensure process exists (may have died or this is a replay)
+        await ensureStdioProcess(handle.sessionId, agent);
+
+        // Handler stays alive while agent works. Streaming events
+        // publish via external pubsub client (not ctx).
         const topic = `session:${handle.sessionId}`;
         const result = await new Promise<PromptResult>((resolve) => {
           getRuntimeHost().prompt(
@@ -210,8 +230,10 @@ export const AgentSession = restate.object({
           );
         });
 
-        // Journal the final result + emit complete via runtime (ctx still alive here)
-        return handleResult(ctx, runtime, { cancel: async () => {}, close: async () => {} } as any, handle, result);
+        // Final result — ctx is still alive, runtime.emit works
+        runtime.state.set("lastRun", result);
+        runtime.emit({ type: "complete", result });
+        return result;
       }
     },
 
@@ -224,9 +246,8 @@ export const AgentSession = restate.object({
       if (agent.protocol === "a2a") {
         await runtime.step("cancel", () => new A2AAdapter().cancel(handle));
       } else {
-        await runtime.step("cancel", () =>
-          new StdioAdapter(getRuntimeHost()).cancel(handle),
-        );
+        // Ephemeral — cancel the live process directly, not via ctx.run
+        await new StdioAdapter(getRuntimeHost()).cancel(handle);
       }
 
       runtime.state.clear("pending_pause");
@@ -244,9 +265,7 @@ export const AgentSession = restate.object({
       if (agent.protocol === "a2a") {
         await runtime.step("cancel", () => new A2AAdapter().cancel(handle));
       } else {
-        await runtime.step("cancel", () =>
-          new StdioAdapter(getRuntimeHost()).cancel(handle),
-        );
+        await new StdioAdapter(getRuntimeHost()).cancel(handle);
       }
 
       return ctx
@@ -264,9 +283,8 @@ export const AgentSession = restate.object({
         if (agentManifest.protocol === "a2a") {
           await runtime.step("close", () => new A2AAdapter().close(handle));
         } else {
-          await runtime.step("close", () =>
-            new StdioAdapter(getRuntimeHost()).close(handle),
-          );
+          // Ephemeral — kill the live process directly
+          await new StdioAdapter(getRuntimeHost()).close(handle);
         }
       }
 
