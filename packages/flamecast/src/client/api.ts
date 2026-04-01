@@ -32,10 +32,9 @@ export function createFlamecastClient(opts: FlamecastClientOptions) {
     startRuntime: (typeName: string, name?: string) => client.startRuntime(typeName, name),
     stopRuntime: (name: string) => client.stopRuntime(name),
     pauseRuntime: (name: string) => client.pauseRuntime(name),
-    // Session stubs — these now go through Restate ingress directly
-    createSession: async (_body: unknown) => {
-      throw new Error("Session management moved to Restate VOs. Use @restatedev/restate-sdk-clients.");
-    },
+    // Session creation proxied through the API (resolves template → calls VO)
+    createSession: (body: { agentTemplateId: string; cwd?: string; runtimeInstance?: string }) =>
+      client.createSession(body),
     fetchSession: async (_id: string) => {
       throw new Error("Session queries moved to Restate VOs. Use getStatus handler.");
     },
@@ -99,6 +98,20 @@ export class FlamecastClient {
     const res = await this.request(`/agent-templates/${id}`, {
       method: "PUT",
       body: JSON.stringify(patch),
+    });
+    return res.json();
+  }
+
+  // ── Sessions ─────────────────────────────────────────────────────────
+
+  async createSession(body: {
+    agentTemplateId: string;
+    cwd?: string;
+    runtimeInstance?: string;
+  }): Promise<{ id: string }> {
+    const res = await this.request("/sessions", {
+      method: "POST",
+      body: JSON.stringify(body),
     });
     return res.json();
   }

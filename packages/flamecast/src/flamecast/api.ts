@@ -114,23 +114,49 @@ export function createApi(flamecast: FlamecastApi) {
         const msg = toErrorMessage(error);
         return c.json({ error: msg }, msg.includes("not found") ? 404 : 500);
       }
-    });
+    })
 
     // ── Session routes ────────────────────────────────────────────────
-    // Session lifecycle (create, prompt, cancel, steer, terminate) and
-    // event streaming are handled directly by Restate VOs. The client
-    // calls the Restate ingress API:
-    //
-    //   POST /IbmAgentSession/{key}/startSession
-    //   POST /IbmAgentSession/{key}/runAgent
-    //   POST /ZedAgentSession/{key}/startSession
-    //   POST /ZedAgentSession/{key}/runAgent
-    //   POST /{Ibm|Zed}AgentSession/{key}/cancelAgent
-    //   POST /{Ibm|Zed}AgentSession/{key}/steerAgent
-    //   POST /{Ibm|Zed}AgentSession/{key}/terminateSession
-    //   POST /{Ibm|Zed}AgentSession/{key}/getStatus
-    //   POST /{Ibm|Zed}AgentSession/{key}/resumeAgent
-    //
-    // SSE events: use createSessionSSEStream() from @flamecast/restate
-    // which reads from Restate pubsub.
+    // Thin proxy: resolves template → calls Restate VO ingress.
+    // Other session ops (prompt, cancel, steer, terminate, getStatus)
+    // go directly to Restate ingress from the client.
+    .post("/sessions", async (c) => {
+      try {
+        const body = await c.req.json() as {
+          agentTemplateId: string;
+          cwd?: string;
+          runtimeInstance?: string;
+        };
+
+        const config = flamecast.resolveSessionConfig({
+          agentTemplateId: body.agentTemplateId,
+          runtimeInstance: body.runtimeInstance,
+        });
+
+        const sessionId = crypto.randomUUID();
+        const voName = "ZedAgentSession"; // TODO: route by protocol when IBM templates exist
+
+        const res = await fetch(`${flamecast.restateUrl}/${voName}/${sessionId}/startSession`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: config.spawn.command,
+            args: config.spawn.args,
+            cwd: body.cwd,
+            env: config.runtime.env,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          return c.json({ error: err }, res.status as 400);
+        }
+
+        const session = await res.json();
+        return c.json({ id: sessionId, ...session }, 201);
+      } catch (error) {
+        const msg = toErrorMessage(error);
+        return c.json({ error: msg }, isClientError(error) ? 404 : 500);
+      }
+    });
 }
