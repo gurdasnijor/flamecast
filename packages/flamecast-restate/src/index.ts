@@ -3,7 +3,7 @@ export {
   FlamecastSession,
   pubsubObject,
   type FlamecastSessionApi,
-  type SessionMeta,
+  type SessionMeta as LegacySessionMeta,
   type StartSessionInput,
   type WaitForInput,
   type ScheduleInput,
@@ -15,3 +15,25 @@ export { serve, services } from "./endpoint.js";
 export { RestateStorage } from "./restate-storage.js";
 export type { SessionRuntime } from "./session-runtime.js";
 export { createRestateSessionRuntime } from "./session-runtime-restate.js";
+
+// ─── ACP Agent Orchestration (new) ─────────────────────────────────────────
+export type {
+  AgentAdapter,
+  AgentEvent,
+  AgentMessage,
+  AgentInfo,
+  AgentStartConfig,
+  AgentCallbacks,
+  ConfigOption,
+  IbmAcpAdapterInterface,
+  PromptResult,
+  SessionHandle,
+  SessionMeta,
+  WebhookConfig,
+} from "./adapter.js";
+export { IbmAcpAdapter } from "./ibm-acp-adapter.js";
+export { ZedAcpAdapter } from "./zed-acp-adapter.js";
+export { sharedHandlers, handleResult, handleAwaiting, publish } from "./shared-handlers.js";
+export { IbmAgentSession } from "./ibm-agent-session.js";
+export { ZedAgentSession } from "./zed-agent-session.js";
+export { watchAgentRun, type WatchAgentRunOptions } from "./watch-agent-run.js";
