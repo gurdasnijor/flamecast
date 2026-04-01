@@ -254,7 +254,8 @@ export function createApi(flamecast: FlamecastApi) {
           const err = await res.text();
           return c.json({ error: err }, res.status as 400);
         }
-        return c.json(await res.json());
+        // resumeAgent returns void — don't try to parse empty body
+        return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
       }
