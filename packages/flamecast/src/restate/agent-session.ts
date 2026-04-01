@@ -20,7 +20,7 @@ import { StdioAdapter } from "../adapters/stdio.js";
 import { A2AAdapter } from "../adapters/a2a.js";
 import { InProcessRuntimeHost } from "../runtime-host/local.js";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import { sharedHandlers, handleResult } from "./shared-handlers.js";
+import { sharedHandlers } from "./shared-handlers.js";
 
 // External pubsub client for streaming events during prompt execution.
 // Per Restate docs: https://docs.restate.dev/ai/patterns/streaming-responses
@@ -172,49 +172,26 @@ export const AgentSession = restate.object({
       runtime.emit({ type: "session.created", meta });
 
       // Start the conversation loop in the background.
-      // It immediately suspends waiting for the first prompt.
-      ctx.objectSendClient(AgentSession, ctx.key).runAgent({ text: "" });
+      // It immediately suspends waiting for the first prompt via sendPrompt.
+      ctx.objectSendClient(AgentSession, ctx.key).conversationLoop();
 
       return handle;
     },
 
     /**
-     * Run the agent — single invocation for the entire conversation.
+     * Conversation loop — single invocation for the entire session.
      *
-     * For stdio: loops prompt → response → wait for next prompt.
-     * The handler stays alive across turns. Each turn:
-     * 1. Drive the agent with the current text
-     * 2. Emit the result
-     * 3. Create an awakeable and suspend (zero compute)
-     * 4. Frontend sends next prompt → resolves awakeable → loop continues
+     * Kicked off by startSession (fire-and-forget). Loops:
+     *   suspend → receive prompt (via sendPrompt) → drive agent → emit result → repeat
      *
-     * For a2a: two-phase create + awakeable per turn (agent is stateless HTTP).
+     * One Restate invocation per session. Zero compute between turns.
      */
-    runAgent: async (
+    conversationLoop: async (
       ctx: restate.ObjectContext,
-      input: { text: string },
     ): Promise<PromptResult> => {
       const runtime = makeRuntime(ctx);
       const { agent, handle } = await loadSession(runtime);
 
-      if (agent.protocol === "a2a") {
-        const adapter = new A2AAdapter();
-        const { runId } = await runtime.step("create-run", () =>
-          adapter.createRun(handle, input.text),
-        );
-        runtime.emit({ type: "run.started", runId });
-
-        const { id: awakeableId, promise } = ctx.awakeable<PromptResult>();
-        runtime.state.set("pending_run", { awakeableId, runId });
-        const result = await promise;
-        runtime.state.clear("pending_run");
-
-        return handleResult(ctx, runtime, adapter as any, handle, result);
-      }
-
-      // ── Stdio conversation loop ──────────────────────────────────────
-      // Loop: suspend → receive prompt → drive agent → emit result → repeat.
-      // Every prompt comes via sendPrompt resolving the awakeable.
       await ensureStdioProcess(handle.sessionId, agent);
       const topic = `session:${handle.sessionId}`;
 
@@ -324,9 +301,10 @@ export const AgentSession = restate.object({
         await new StdioAdapter(getRuntimeHost()).cancel(handle);
       }
 
+      // Send the new prompt — the conversation loop will pick it up
       return ctx
         .objectClient(AgentSession, ctx.key)
-        .runAgent({ text: input.newText });
+        .sendPrompt({ text: input.newText }) as unknown as Promise<PromptResult>;
     },
 
     terminateSession: async (ctx: restate.ObjectContext): Promise<void> => {
