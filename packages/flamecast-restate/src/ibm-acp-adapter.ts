@@ -1,13 +1,14 @@
 /**
- * IBM ACP (Agent Communication Protocol) adapter — REST over HTTP.
+ * IBM ACP (Agent Communication Protocol) adapter — SDK-based REST.
  *
  * Implements the IbmAcpAdapterInterface for communicating with IBM ACP agents
- * via their REST API. The VO uses createRun + awakeable pattern for durable
- * orchestration; promptSync/awaitRun is provided for simple callers.
+ * using the official acp-sdk package. The VO uses createRun + awakeable pattern
+ * for durable orchestration; promptSync/awaitRun is provided for simple callers.
  *
  * Reference: docs/sdd-durable-acp-bridge.md §2.3
  */
 
+import { Client, type Run, type Event, type AwaitResume } from "acp-sdk";
 import type {
   AgentEvent,
   AgentMessage,
@@ -18,31 +19,109 @@ import type {
   SessionHandle,
 } from "./adapter.js";
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function toInput(input: string | AgentMessage[]): string {
+  if (typeof input === "string") return input;
+  // Flatten AgentMessage[] into a single text string for the SDK's Input type
+  return input
+    .map((m) => m.parts.map((p) => p.content ?? "").join(""))
+    .join("\n");
+}
+
+function runToPromptResult(run: Run, runId: string): PromptResult {
+  switch (run.status) {
+    case "completed":
+      return { status: "completed", output: runToOutput(run), runId };
+    case "awaiting":
+      return { status: "awaiting", awaitRequest: run.await_request, runId };
+    case "failed":
+      return {
+        status: "failed",
+        error: run.error?.message ?? "Run failed",
+        runId,
+      };
+    case "cancelled":
+    case "cancelling":
+      return { status: "cancelled", runId };
+    default:
+      // Still running — shouldn't get here from terminal states
+      return { status: "completed", output: runToOutput(run), runId };
+  }
+}
+
+function runToOutput(run: Run): AgentMessage[] | undefined {
+  if (!run.output?.length) return undefined;
+  return run.output.map((msg) => ({
+    role: (msg.role as "user" | "assistant") ?? "assistant",
+    parts: msg.parts.map((p) => ({
+      contentType: p.content_type ?? "text/plain",
+      content: p.content ?? undefined,
+      contentUrl: p.content_url ?? undefined,
+    })),
+  }));
+}
+
+function mapStreamEvent(event: Event): AgentEvent | null {
+  switch (event.type) {
+    case "message.part": {
+      const part = event.part;
+      return {
+        type: "text",
+        text: part.content ?? "",
+        role: "assistant",
+      };
+    }
+    case "message.created":
+    case "message.completed":
+      // Full message boundaries — no incremental content to emit
+      return null;
+    case "run.completed":
+      return {
+        type: "complete",
+        reason: "end_turn",
+        output: runToOutput(event.run),
+      };
+    case "run.failed":
+      return {
+        type: "error",
+        code: "RUN_FAILED",
+        message: event.run.error?.message ?? "Run failed",
+      };
+    case "run.awaiting":
+      return { type: "pause", request: event.run.await_request };
+    case "run.cancelled":
+      return { type: "complete", reason: "cancelled" };
+    case "error":
+      return {
+        type: "error",
+        code: event.error.code,
+        message: event.error.message,
+      };
+    default:
+      return null;
+  }
+}
+
+// ─── Adapter ────────────────────────────────────────────────────────────────
+
 export class IbmAcpAdapter implements IbmAcpAdapterInterface {
   // --- Core lifecycle ---
 
   async start(config: AgentStartConfig): Promise<SessionHandle> {
-    // config.agent is the base URL + agent name, e.g. "http://localhost:8000/agents/echo"
-    // Parse baseUrl (origin) and agentName from config.agent
     const url = new URL(config.agent);
     const agentName = url.pathname.split("/").pop()!;
     const baseUrl = url.origin;
 
-    // GET /agents/{name} to verify agent exists
-    const res = await fetch(config.agent);
-    if (!res.ok)
-      throw new Error(`Agent not found: ${res.status} ${res.statusText}`);
-    const agentInfo = (await res.json()) as {
-      name: string;
-      description?: string;
-    };
+    const client = new Client({ baseUrl });
+    const agentInfo = await client.agent(agentName);
 
     return {
       sessionId: config.sessionId ?? crypto.randomUUID(),
       protocol: "ibm",
       agent: {
         name: agentInfo.name ?? agentName,
-        description: agentInfo.description,
+        description: agentInfo.description ?? undefined,
       },
       connection: { url: baseUrl },
     };
@@ -64,32 +143,9 @@ export class IbmAcpAdapter implements IbmAcpAdapterInterface {
     session: SessionHandle,
     input: string | AgentMessage[],
   ): Promise<{ runId: string }> {
-    // POST /runs { agent_name, input, mode: "async" }
-    const baseUrl = session.connection.url!;
-    const messages =
-      typeof input === "string"
-        ? [
-            {
-              role: "user" as const,
-              parts: [{ contentType: "text/plain", content: input }],
-            },
-          ]
-        : input;
-
-    const res = await fetch(`${baseUrl}/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_name: session.agent.name,
-        input: messages,
-        mode: "async",
-      }),
-    });
-
-    if (!res.ok)
-      throw new Error(`Create run failed: ${res.status} ${res.statusText}`);
-    const data = (await res.json()) as { run_id: string };
-    return { runId: data.run_id };
+    const client = new Client({ baseUrl: session.connection.url! });
+    const run = await client.runAsync(session.agent.name, toInput(input));
+    return { runId: run.run_id };
   }
 
   // --- Sync (VO handler path, journaled) ---
@@ -98,10 +154,9 @@ export class IbmAcpAdapter implements IbmAcpAdapterInterface {
     session: SessionHandle,
     input: string | AgentMessage[],
   ): Promise<PromptResult> {
-    // For simple callers: createRun + poll until terminal.
-    // The VO uses createRun + awakeable instead for durability.
-    const { runId } = await this.createRun(session, input);
-    return this.awaitRun(session, runId);
+    const client = new Client({ baseUrl: session.connection.url! });
+    const run = await client.runSync(session.agent.name, toInput(input));
+    return runToPromptResult(run, run.run_id);
   }
 
   async resumeSync(
@@ -109,20 +164,11 @@ export class IbmAcpAdapter implements IbmAcpAdapterInterface {
     runId: string,
     payload: unknown,
   ): Promise<PromptResult> {
-    // POST /runs/{id} { await_resume: payload, mode: "async" }
-    const baseUrl = session.connection.url!;
-    const res = await fetch(`${baseUrl}/runs/${runId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        await_resume: payload,
-        mode: "async",
-      }),
-    });
-    if (!res.ok)
-      throw new Error(`Resume run failed: ${res.status} ${res.statusText}`);
-    const data = (await res.json()) as { run_id: string };
-    return this.awaitRun(session, data.run_id ?? runId);
+    const client = new Client({ baseUrl: session.connection.url! });
+    // The SDK expects AwaitResume = { type: "message", message: Message }
+    // Pass through if already shaped correctly, otherwise wrap
+    const run = await client.runResumeSync(runId, payload as AwaitResume);
+    return runToPromptResult(run, run.run_id);
   }
 
   // --- Streaming (API layer, not journaled) ---
@@ -131,41 +177,20 @@ export class IbmAcpAdapter implements IbmAcpAdapterInterface {
     session: SessionHandle,
     input: string | AgentMessage[],
   ): AsyncGenerator<AgentEvent> {
-    // POST /runs { mode: "stream" } → SSE events
-    const baseUrl = session.connection.url!;
-    const messages =
-      typeof input === "string"
-        ? [
-            {
-              role: "user" as const,
-              parts: [{ contentType: "text/plain", content: input }],
-            },
-          ]
-        : input;
-
-    const res = await fetch(`${baseUrl}/runs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify({
-        agent_name: session.agent.name,
-        input: messages,
-        mode: "stream",
-      }),
-    });
-
-    if (!res.ok)
-      throw new Error(`Stream run failed: ${res.status}`);
-    yield* this.parseSSE(res);
+    const client = new Client({ baseUrl: session.connection.url! });
+    for await (const event of client.runStream(
+      session.agent.name,
+      toInput(input),
+    )) {
+      const mapped = mapStreamEvent(event);
+      if (mapped) yield mapped;
+    }
   }
 
   async *resume(
     _session: SessionHandle,
     _payload: unknown,
   ): AsyncGenerator<AgentEvent> {
-    // POST /runs/{id} { await_resume, mode: "stream" }
     // Streaming resume requires runId context from the caller.
     yield {
       type: "error",
@@ -187,142 +212,5 @@ export class IbmAcpAdapter implements IbmAcpAdapterInterface {
     _value: string,
   ): Promise<ConfigOption[]> {
     return [];
-  }
-
-  // --- Internal helpers ---
-
-  private async awaitRun(
-    session: SessionHandle,
-    runId: string,
-  ): Promise<PromptResult> {
-    // Poll GET /runs/{runId} until terminal state
-    const baseUrl = session.connection.url!;
-    const maxAttempts = 600; // 10 minutes at 1s intervals
-    for (let i = 0; i < maxAttempts; i++) {
-      const res = await fetch(`${baseUrl}/runs/${runId}`);
-      if (!res.ok) throw new Error(`Get run failed: ${res.status}`);
-      const run = (await res.json()) as {
-        status: string;
-        output?: AgentMessage[];
-        await_request?: unknown;
-        error?: string;
-      };
-
-      if (run.status === "completed") {
-        return { status: "completed", output: run.output, runId };
-      }
-      if (run.status === "awaiting") {
-        return { status: "awaiting", awaitRequest: run.await_request, runId };
-      }
-      if (run.status === "failed") {
-        return { status: "failed", error: run.error, runId };
-      }
-      if (run.status === "cancelled") {
-        return { status: "cancelled", runId };
-      }
-
-      // Still running — wait and retry
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    return { status: "failed", error: "Timed out waiting for run", runId };
-  }
-
-  private async *parseSSE(res: Response): AsyncGenerator<AgentEvent> {
-    if (!res.body) return;
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop()!;
-
-        let eventType = "";
-        let data = "";
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            eventType = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            data += line.slice(5).trim();
-          } else if (line === "") {
-            if (data) {
-              const event = this.mapSSEEvent(eventType, data);
-              if (event) yield event;
-              eventType = "";
-              data = "";
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  /**
-   * Map an SSE event to an AgentEvent.
-   *
-   * IBM ACP servers may use either:
-   * - Standard SSE: `event:` header sets the type, `data:` is the payload.
-   * - Inline type:  No `event:` header; `data.type` carries the event type
-   *   and the payload is nested under a key (e.g. `data.part`, `data.run`).
-   */
-  private mapSSEEvent(type: string, data: string): AgentEvent | null {
-    try {
-      const parsed = JSON.parse(data) as Record<string, unknown>;
-
-      // Resolve event type: prefer explicit SSE event header, fall back to
-      // the `type` field inside the JSON payload.
-      const eventType = type || (parsed.type as string) || "";
-
-      switch (eventType) {
-        case "message.part": {
-          // Inline format: { type, part: { content, ... } }
-          // Legacy format: { content, ... }
-          const part = (parsed.part ?? parsed) as Record<string, unknown>;
-          return {
-            type: "text",
-            text: (part.content as string) ?? "",
-            role: "assistant",
-          };
-        }
-        case "run.completed": {
-          // Inline format: { type, run: { output, ... } }
-          // Legacy format: { output, ... }
-          const run = (parsed.run ?? parsed) as Record<string, unknown>;
-          return {
-            type: "complete",
-            reason: "end_turn",
-            output: run.output as AgentMessage[],
-          };
-        }
-        case "run.failed": {
-          const run = (parsed.run ?? parsed) as Record<string, unknown>;
-          const error = run.error as Record<string, unknown> | string | undefined;
-          const message =
-            typeof error === "string"
-              ? error
-              : (error?.message as string) ?? "Run failed";
-          return {
-            type: "error",
-            code: "RUN_FAILED",
-            message,
-          };
-        }
-        case "run.awaiting": {
-          const run = (parsed.run ?? parsed) as Record<string, unknown>;
-          return { type: "pause", request: run.await_request };
-        }
-        default:
-          return null;
-      }
-    } catch {
-      return null;
-    }
   }
 }

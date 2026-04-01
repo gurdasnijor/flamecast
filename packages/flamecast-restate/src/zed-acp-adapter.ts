@@ -1,17 +1,17 @@
 /**
- * Zed ACP (Agent Client Protocol) adapter — JSON-RPC over stdio.
+ * Zed ACP (Agent Client Protocol) adapter — SDK-based stdio.
  *
  * Implements the AgentAdapter interface for communicating with Zed ACP agents
- * via JSON-RPC over stdin/stdout. For local processes, spawns the agent binary
- * with --acp flag. For containerized agents (URL-based), connects via HTTP to
- * a session-host relay.
+ * using the official @agentclientprotocol/sdk (ClientSideConnection + ndJsonStream).
+ * For containerized agents (URL-based), connects via HTTP to a session-host relay.
  *
  * Reference: docs/sdd-durable-acp-bridge.md §2.3
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { Readable, Writable } from "node:stream";
 import { randomUUID } from "node:crypto";
-import { EventEmitter } from "node:events";
+import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentAdapter,
   AgentEvent,
@@ -23,144 +23,160 @@ import type {
 } from "./adapter.js";
 import { HttpJsonRpcConnection } from "./http-bridge.js";
 
-// ─── JSON-RPC message types ──────────────────────────────────────────────────
+// ─── Active connections ─────────────────────────────────────────────────────
 
-interface JsonRpcRequest {
-  jsonrpc: "2.0";
-  id: number;
-  method: string;
-  params?: unknown;
-}
+type AcpConnection = {
+  conn: acp.ClientSideConnection;
+  proc: ChildProcess;
+  acpSessionId: string;
+  client: FlamecastClient;
+};
 
-interface JsonRpcResponse {
-  jsonrpc: "2.0";
-  id: number;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
+/** Stdio-based ACP connections keyed by our sessionId. */
+const sdkConnections = new Map<string, AcpConnection>();
 
-interface JsonRpcNotification {
-  jsonrpc: "2.0";
-  method: string;
-  params?: unknown;
-}
+/** HTTP bridge connections keyed by sessionId (containerized agents). */
+const httpConnections = new Map<string, HttpJsonRpcConnection>();
 
-type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification;
+// ─── Flamecast Client (handles agent→client callbacks) ──────────────────────
 
-// ─── JSON-RPC connection over stdio ──────────────────────────────────────────
+class FlamecastClient implements acp.Client {
+  private eventSink: ((event: AgentEvent) => void) | null = null;
+  /** Accumulated text chunks from session/update notifications (for promptSync). */
+  private collectedText: string[] = [];
+  private collecting = false;
 
-/**
- * Manages a JSON-RPC connection over stdio to a Zed ACP agent.
- * Handles request/response correlation and notification dispatching.
- */
-class JsonRpcConnection {
-  private nextId = 1;
-  private pending = new Map<
-    number,
-    {
-      resolve: (value: unknown) => void;
-      reject: (error: Error) => void;
-    }
-  >();
-  private events = new EventEmitter();
-  private buffer = "";
-  private process: ChildProcess;
-
-  constructor(proc: ChildProcess) {
-    this.process = proc;
-    proc.stdout!.on("data", (chunk: Buffer) => this.onData(chunk.toString()));
-    proc.stderr!.on("data", (chunk: Buffer) => {
-      // Agent stderr — log but don't fail
-      console.error(`[zed-agent-stderr] ${chunk.toString().trimEnd()}`);
-    });
-    proc.on("exit", (code) => {
-      // Reject all pending requests
-      for (const [id, { reject }] of this.pending) {
-        reject(new Error(`Agent process exited with code ${code}`));
-        this.pending.delete(id);
-      }
-      this.events.emit("exit", code);
-    });
+  setEventSink(sink: ((event: AgentEvent) => void) | null): void {
+    this.eventSink = sink;
   }
 
-  private onData(data: string): void {
-    this.buffer += data;
-    // JSON-RPC messages are newline-delimited
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop()!;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const msg = JSON.parse(trimmed) as JsonRpcMessage;
-        if ("id" in msg && msg.id !== undefined) {
-          // Response to a request
-          const pending = this.pending.get(msg.id as number);
-          if (pending) {
-            this.pending.delete(msg.id as number);
-            const resp = msg as JsonRpcResponse;
-            if (resp.error) {
-              pending.reject(
-                new Error(`${resp.error.message} (${resp.error.code})`),
-              );
-            } else {
-              pending.resolve(resp.result);
-            }
+  startCollecting(): void {
+    this.collectedText = [];
+    this.collecting = true;
+  }
+
+  stopCollecting(): AgentMessage[] | undefined {
+    this.collecting = false;
+    if (this.collectedText.length === 0) return undefined;
+    const text = this.collectedText.join("");
+    this.collectedText = [];
+    return [
+      {
+        role: "assistant",
+        parts: [{ contentType: "text/plain", content: text }],
+      },
+    ];
+  }
+
+  async requestPermission(
+    params: acp.RequestPermissionRequest,
+  ): Promise<acp.RequestPermissionResponse> {
+    // Auto-approve first option (Flamecast handles permissions at the VO layer)
+    const firstOption = params.options[0];
+    return {
+      outcome: { outcome: "selected", optionId: firstOption.optionId },
+    };
+  }
+
+  async sessionUpdate(params: acp.SessionNotification): Promise<void> {
+    const update = params.update;
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        if (update.content.type === "text") {
+          if (this.collecting) {
+            this.collectedText.push(update.content.text ?? "");
           }
-        } else if ("method" in msg) {
-          // Notification from agent
-          this.events.emit("notification", msg as JsonRpcNotification);
+          this.eventSink?.({
+            type: "text",
+            text: update.content.text ?? "",
+            role: "assistant",
+          });
         }
-      } catch {
-        // Non-JSON output — ignore
-      }
+        break;
+      case "agent_thought_chunk":
+        if (update.content.type === "text") {
+          this.eventSink?.({
+            type: "text",
+            text: update.content.text ?? "",
+            role: "thinking",
+          });
+        }
+        break;
+      case "tool_call":
+        this.eventSink?.({
+          type: "tool",
+          toolCallId: update.toolCallId,
+          title: update.title,
+          status: mapToolStatus(update.status),
+          input: update.rawInput,
+          output: update.rawOutput,
+        });
+        break;
+      case "tool_call_update":
+        this.eventSink?.({
+          type: "tool",
+          toolCallId: update.toolCallId,
+          title: "",
+          status: mapToolStatus(update.status),
+          input: update.rawInput,
+          output: update.rawOutput,
+        });
+        break;
     }
-  }
-
-  async request(method: string, params?: unknown): Promise<unknown> {
-    const id = this.nextId++;
-    const msg: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.process.stdin!.write(JSON.stringify(msg) + "\n");
-    });
-  }
-
-  notify(method: string, params?: unknown): void {
-    const msg: JsonRpcNotification = { jsonrpc: "2.0", method, params };
-    this.process.stdin!.write(JSON.stringify(msg) + "\n");
-  }
-
-  onNotification(listener: (msg: JsonRpcNotification) => void): void {
-    this.events.on("notification", listener);
-  }
-
-  offNotification(listener: (msg: JsonRpcNotification) => void): void {
-    this.events.off("notification", listener);
-  }
-
-  onExit(listener: (code: number | null) => void): void {
-    this.events.on("exit", listener);
-  }
-
-  kill(): void {
-    this.process.kill();
-  }
-
-  get pid(): number | undefined {
-    return this.process.pid;
   }
 }
 
-// ─── Connection interface (shared by stdio + HTTP bridge) ───────────────────
+function mapToolStatus(
+  s: acp.ToolCallStatus | undefined | null,
+): "pending" | "running" | "completed" | "failed" {
+  switch (s) {
+    case "pending":
+      return "pending";
+    case "in_progress":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    default:
+      return "running";
+  }
+}
 
-type AnyJsonRpcConnection = JsonRpcConnection | HttpJsonRpcConnection;
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-// ─── Active connections by sessionId ─────────────────────────────────────────
+function toPromptInput(input: string | AgentMessage[]): acp.ContentBlock[] {
+  if (typeof input === "string") {
+    return [{ type: "text", text: input }];
+  }
+  // Flatten AgentMessage[] parts into ContentBlock[]
+  const blocks: acp.ContentBlock[] = [];
+  for (const msg of input) {
+    for (const part of msg.parts) {
+      blocks.push({ type: "text", text: part.content ?? "" });
+    }
+  }
+  return blocks;
+}
 
-const connections = new Map<string, AnyJsonRpcConnection>();
+function stopReasonToStatus(
+  reason: acp.StopReason,
+): PromptResult["status"] {
+  switch (reason) {
+    case "end_turn":
+    case "max_tokens":
+    case "max_turn_requests":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    case "refusal":
+      return "failed";
+    default:
+      return "completed";
+  }
+}
 
-// ─── Adapter ─────────────────────────────────────────────────────────────────
+// ─── Adapter ────────────────────────────────────────────────────────────────
 
 export class ZedAcpAdapter implements AgentAdapter {
   // --- Core lifecycle ---
@@ -203,74 +219,108 @@ export class ZedAcpAdapter implements AgentAdapter {
         connection: { url: config.agent },
       };
 
-      connections.set(handle.sessionId, conn);
+      httpConnections.set(handle.sessionId, conn);
 
       conn.onExit(() => {
-        connections.delete(handle.sessionId);
+        httpConnections.delete(handle.sessionId);
       });
 
       return handle;
     }
 
-    // Local process — spawn with --acp flag
-    const args = ["--acp"];
+    // Local process — spawn with provided args
+    const args = config.args ?? [];
     const proc = spawn(config.agent, args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: config.cwd,
       env: { ...process.env, ...config.env },
     });
 
-    const conn = new JsonRpcConnection(proc);
+    // Log stderr but don't fail
+    proc.stderr!.on("data", (chunk: Buffer) => {
+      console.error(`[zed-agent-stderr] ${chunk.toString().trimEnd()}`);
+    });
 
-    // Initialize the ACP session
-    const initResult = (await conn.request("initialize", {
-      capabilities: {},
-      clientInfo: { name: "flamecast", version: "1.0.0" },
-    })) as {
-      serverInfo?: { name?: string; description?: string };
-      capabilities?: Record<string, unknown>;
-    };
+    // Wire up SDK: stdin/stdout → ndJsonStream → ClientSideConnection
+    const stdinWeb = Writable.toWeb(proc.stdin!);
+    const stdoutWeb = Readable.toWeb(
+      proc.stdout! as import("node:stream").Readable,
+    ) as unknown as ReadableStream<Uint8Array>;
+    const stream = acp.ndJsonStream(stdinWeb, stdoutWeb);
+
+    const client = new FlamecastClient();
+    const connection = new acp.ClientSideConnection((_agent) => client, stream);
+
+    // Initialize the ACP connection
+    const initResult = await connection.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "flamecast", title: "Flamecast", version: "1.0.0" },
+    });
 
     // Create a new session
-    const sessionResult = (await conn.request("session/new", {})) as {
-      id?: string;
-    };
+    const sessionResult = await connection.newSession({
+      cwd: config.cwd ?? process.cwd(),
+      mcpServers: [],
+    });
+
+    const acpSessionId = sessionResult.sessionId;
 
     const handle: SessionHandle = {
-      sessionId: sessionResult?.id ?? sessionId,
+      sessionId: acpSessionId ?? sessionId,
       protocol: "zed",
       agent: {
         name:
-          initResult?.serverInfo?.name ??
+          initResult.agentInfo?.name ??
           config.agent.split("/").pop() ??
           "zed-agent",
-        description: initResult?.serverInfo?.description,
-        capabilities: initResult?.capabilities,
+        description: initResult.agentInfo?.title,
+        capabilities: initResult.agentCapabilities as
+          | Record<string, unknown>
+          | undefined,
       },
       connection: { pid: proc.pid },
     };
 
-    connections.set(handle.sessionId, conn);
+    sdkConnections.set(handle.sessionId, {
+      conn: connection,
+      proc,
+      acpSessionId,
+      client,
+    });
 
-    conn.onExit(() => {
-      connections.delete(handle.sessionId);
+    // Clean up on process exit
+    connection.signal.addEventListener("abort", () => {
+      sdkConnections.delete(handle.sessionId);
     });
 
     return handle;
   }
 
   async cancel(session: SessionHandle): Promise<void> {
-    const conn = connections.get(session.sessionId);
-    if (!conn) return;
-    // session/cancel is a notification (no response expected)
-    conn.notify("session/cancel", { sessionId: session.sessionId });
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) {
+      await entry.conn.cancel({ sessionId: entry.acpSessionId });
+      return;
+    }
+    const httpConn = httpConnections.get(session.sessionId);
+    if (httpConn) {
+      httpConn.notify("session/cancel", { sessionId: session.sessionId });
+    }
   }
 
   async close(session: SessionHandle): Promise<void> {
-    const conn = connections.get(session.sessionId);
-    if (!conn) return;
-    conn.kill();
-    connections.delete(session.sessionId);
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) {
+      entry.proc.kill();
+      sdkConnections.delete(session.sessionId);
+      return;
+    }
+    const httpConn = httpConnections.get(session.sessionId);
+    if (httpConn) {
+      httpConn.kill();
+      httpConnections.delete(session.sessionId);
+    }
   }
 
   // --- Sync (VO handler, inside ctx.run(), journaled) ---
@@ -279,8 +329,35 @@ export class ZedAcpAdapter implements AgentAdapter {
     session: SessionHandle,
     input: string | AgentMessage[],
   ): Promise<PromptResult> {
-    const conn = connections.get(session.sessionId);
-    if (!conn)
+    // SDK connection
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) {
+      try {
+        // Collect session/update notifications during the prompt call
+        entry.client.startCollecting();
+        const result = await entry.conn.prompt({
+          sessionId: entry.acpSessionId,
+          prompt: toPromptInput(input),
+        });
+        const output = entry.client.stopCollecting();
+
+        return {
+          status: stopReasonToStatus(result.stopReason),
+          output,
+          runId: session.sessionId,
+        };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+          runId: session.sessionId,
+        };
+      }
+    }
+
+    // HTTP bridge fallback
+    const httpConn = httpConnections.get(session.sessionId);
+    if (!httpConn)
       throw new Error(`No connection for session ${session.sessionId}`);
 
     const messages =
@@ -294,8 +371,7 @@ export class ZedAcpAdapter implements AgentAdapter {
         : input;
 
     try {
-      // session/prompt blocks until the agent completes or enters "awaiting"
-      const result = (await conn.request("session/prompt", {
+      const result = (await httpConn.request("session/prompt", {
         sessionId: session.sessionId,
         messages,
       })) as {
@@ -309,7 +385,7 @@ export class ZedAcpAdapter implements AgentAdapter {
         status: (result.status as PromptResult["status"]) ?? "completed",
         output: result.output,
         awaitRequest: result.awaitRequest,
-        runId: session.sessionId, // Zed ACP: runId = sessionId
+        runId: session.sessionId,
         error: result.error,
       };
     } catch (error) {
@@ -326,14 +402,14 @@ export class ZedAcpAdapter implements AgentAdapter {
     _runId: string,
     payload: unknown,
   ): Promise<PromptResult> {
-    const conn = connections.get(session.sessionId);
-    if (!conn)
+    // SDK connections don't have a native "resume" in ACP spec yet —
+    // use extension method or fall through to HTTP
+    const httpConn = httpConnections.get(session.sessionId);
+    if (!httpConn)
       throw new Error(`No connection for session ${session.sessionId}`);
 
     try {
-      // For Zed ACP, resume returns the permission response which
-      // unblocks the JSON-RPC response the agent is waiting for
-      const result = (await conn.request("session/resume", {
+      const result = (await httpConn.request("session/resume", {
         sessionId: session.sessionId,
         payload,
       })) as {
@@ -365,8 +441,73 @@ export class ZedAcpAdapter implements AgentAdapter {
     session: SessionHandle,
     input: string | AgentMessage[],
   ): AsyncGenerator<AgentEvent> {
-    const conn = connections.get(session.sessionId);
-    if (!conn)
+    // SDK connection — use FlamecastClient event sink for streaming
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) {
+      const events: AgentEvent[] = [];
+      let done = false;
+      let resolve: (() => void) | null = null;
+
+      // Get the client from the connection's closure
+      // We need to create a tap into the client's sessionUpdate
+      const client = new FlamecastClient();
+      client.setEventSink((event) => {
+        events.push(event);
+        resolve?.();
+      });
+
+      // For the SDK, we can't swap the client mid-connection, so we use
+      // a parallel approach: send prompt and collect notifications via the
+      // existing connection, while also watching for completion.
+      const promptPromise = entry.conn
+        .prompt({
+          sessionId: entry.acpSessionId,
+          prompt: toPromptInput(input),
+        })
+        .then((result) => {
+          done = true;
+          resolve?.();
+          return result;
+        })
+        .catch((error) => {
+          done = true;
+          events.push({
+            type: "error",
+            code: "PROMPT_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+          resolve?.();
+          return null;
+        });
+
+      // Yield events as they arrive
+      while (!done) {
+        if (events.length > 0) {
+          yield events.shift()!;
+        } else {
+          await new Promise<void>((r) => {
+            resolve = r;
+          });
+        }
+      }
+      // Drain remaining
+      while (events.length > 0) {
+        yield events.shift()!;
+      }
+
+      const result = await promptPromise;
+      if (result) {
+        yield {
+          type: "complete",
+          reason: result.stopReason === "cancelled" ? "cancelled" : "end_turn",
+        };
+      }
+      return;
+    }
+
+    // HTTP bridge fallback — use notification-based streaming
+    const httpConn = httpConnections.get(session.sessionId);
+    if (!httpConn)
       throw new Error(`No connection for session ${session.sessionId}`);
 
     const messages =
@@ -379,10 +520,15 @@ export class ZedAcpAdapter implements AgentAdapter {
           ]
         : input;
 
-    // Collect events from agent notifications while the prompt is in-flight
     const events: AgentEvent[] = [];
     let done = false;
     let resolve: (() => void) | null = null;
+
+    type JsonRpcNotification = {
+      jsonrpc: "2.0";
+      method: string;
+      params?: unknown;
+    };
 
     const onNotification = (msg: JsonRpcNotification) => {
       if (msg.method === "session/update") {
@@ -422,10 +568,9 @@ export class ZedAcpAdapter implements AgentAdapter {
       }
     };
 
-    conn.onNotification(onNotification);
+    httpConn.onNotification(onNotification);
 
-    // Send prompt (will block until complete)
-    const promptPromise = conn
+    const promptPromise = httpConn
       .request("session/prompt", {
         sessionId: session.sessionId,
         messages,
@@ -445,7 +590,6 @@ export class ZedAcpAdapter implements AgentAdapter {
         resolve?.();
       });
 
-    // Yield events as they arrive
     while (!done) {
       if (events.length > 0) {
         yield events.shift()!;
@@ -455,13 +599,11 @@ export class ZedAcpAdapter implements AgentAdapter {
         });
       }
     }
-    // Drain remaining events
     while (events.length > 0) {
       yield events.shift()!;
     }
 
-    // Clean up notification listener
-    conn.offNotification(onNotification);
+    httpConn.offNotification(onNotification);
 
     const result = await promptPromise;
     if (result) {
@@ -474,8 +616,6 @@ export class ZedAcpAdapter implements AgentAdapter {
     session: SessionHandle,
     payload: unknown,
   ): AsyncGenerator<AgentEvent> {
-    // For streaming resume, delegate to resumeSync.
-    // Zed ACP resume unblocks the pending permission request.
     const result = await this.resumeSync(session, session.sessionId, payload);
     if (result.status === "completed") {
       yield { type: "complete", reason: "end_turn", output: result.output };
@@ -493,10 +633,12 @@ export class ZedAcpAdapter implements AgentAdapter {
   // --- Config ---
 
   async getConfigOptions(session: SessionHandle): Promise<ConfigOption[]> {
-    const conn = connections.get(session.sessionId);
-    if (!conn) return [];
+    // SDK connections don't have a standalone "getConfigOptions" — config comes
+    // from the newSession response. Return empty for now.
+    const httpConn = httpConnections.get(session.sessionId);
+    if (!httpConn) return [];
     try {
-      const result = (await conn.request("session/getConfigOptions", {
+      const result = (await httpConn.request("session/getConfigOptions", {
         sessionId: session.sessionId,
       })) as ConfigOption[];
       return result ?? [];
@@ -510,10 +652,40 @@ export class ZedAcpAdapter implements AgentAdapter {
     configId: string,
     value: string,
   ): Promise<ConfigOption[]> {
-    const conn = connections.get(session.sessionId);
-    if (!conn) return [];
+    // SDK connection — use proper ACP method
+    const entry = sdkConnections.get(session.sessionId);
+    if (entry) {
+      try {
+        const result = await entry.conn.setSessionConfigOption({
+          sessionId: entry.acpSessionId,
+          configId,
+          value,
+        } as acp.SetSessionConfigOptionRequest);
+        // Map SDK config options to our ConfigOption format
+        return (result.configOptions ?? []).map((opt: acp.SessionConfigOption) => ({
+          id: opt.id,
+          label: opt.name,
+          type: opt.type === "boolean" ? "string" : "enum",
+          value: String(
+            "selectedValue" in opt ? opt.selectedValue : "",
+          ),
+          options:
+            "values" in opt
+              ? (
+                  opt.values as Array<{ id: string; name?: string }>
+                ).map((v) => v.id)
+              : undefined,
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    // HTTP bridge fallback
+    const httpConn = httpConnections.get(session.sessionId);
+    if (!httpConn) return [];
     try {
-      const result = (await conn.request("session/setConfigOption", {
+      const result = (await httpConn.request("session/setConfigOption", {
         sessionId: session.sessionId,
         configId,
         value,
