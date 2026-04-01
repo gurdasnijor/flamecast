@@ -10,12 +10,10 @@
   },
   "include": [
     "src/cli.ts",
+    "src/cli-app.ts",
     "src/index.ts",
     "src/edge.ts",
-    "src/worker.ts",
-    "src/node/**/*.ts",
     "src/api.ts",
-    "src/app.ts",
     "src/flamecast-class.ts",
     "src/shared/**/*.ts",
     "src/restate/**/*.ts",

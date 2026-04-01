@@ -1,4 +1,4 @@
-import { Flamecast, listen } from "@flamecast/sdk";
+import { Flamecast } from "@flamecast/sdk";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -11,14 +11,10 @@ const flamecast = new Flamecast({
   restateUrl: restateIngressUrl,
 });
 
-listen(flamecast, { port: 3001 }, (info) => {
+const server = flamecast.listen(3001, (info) => {
   console.log(`Flamecast running on http://localhost:${info.port}`);
   console.log(`  Restate ingress: ${restateIngressUrl}`);
 });
 
-async function shutdown() {
-  await flamecast.close();
-  process.exit(0);
-}
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => server.close().then(() => process.exit(0)));
+process.on("SIGTERM", () => server.close().then(() => process.exit(0)));

@@ -5,7 +5,6 @@
  * Session lifecycle is managed by Restate VOs.
  */
 
-import { serve } from "@hono/node-server";
 import { Flamecast } from "./index.js";
 
 type Command =
@@ -69,11 +68,9 @@ async function runServeCommand(flags: CliFlags): Promise<number> {
   const restateUrl =
     flags.restateUrl ?? process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
 
-  const flamecast = new Flamecast({
-    restateUrl,
-  });
+  const flamecast = new Flamecast({ restateUrl });
 
-  serve({ fetch: flamecast.app.fetch, port }, () => {
+  const server = flamecast.listen(port, () => {
     console.log(`Flamecast running on http://localhost:${port}`);
     console.log(`  Restate ingress: ${restateUrl}`);
   });
@@ -84,7 +81,7 @@ async function runServeCommand(flags: CliFlags): Promise<number> {
       if (shuttingDown) return;
       shuttingDown = true;
       console.log("\nShutting down...");
-      await flamecast.close();
+      await server.close();
       resolve(0);
     }
     process.on("SIGINT", shutdown);

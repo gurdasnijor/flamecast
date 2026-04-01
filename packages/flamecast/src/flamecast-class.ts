@@ -1,21 +1,24 @@
 /**
  * Flamecast — agent orchestration SDK.
  *
- * Flamecast is a thin control plane:
+ * Thin control plane:
  * - Agent template management (in-memory, passed at init)
  * - Hono app with API routes that delegate session ops to Restate VOs
  *
  * Session lifecycle, event streaming, permissions, and agent process
- * management are all handled by AgentSession VO in @flamecast/restate.
+ * management are handled by AgentSession VO.
  */
 
+import { Hono } from "hono";
+import { serve as honoServe } from "@hono/node-server";
+import type { AddressInfo } from "node:net";
 import type {
   AgentSpawn,
   AgentTemplate,
   AgentTemplateRuntime,
   RegisterAgentTemplateBody,
 } from "./shared/session.js";
-import { createServerApp } from "./app.js";
+import { createApi } from "./api.js";
 
 const randomUUID = (): string => crypto.randomUUID();
 
@@ -40,16 +43,30 @@ export class Flamecast {
   private readonly templates: AgentTemplate[];
   readonly restateUrl: string;
 
-  /** The Hono app. Use with any runtime: Node, CF Workers, Vercel, etc. */
-  readonly app;
+  /** The Hono app. Mount it on any runtime: Node, CF Workers, Vercel, etc. */
+  readonly app: Hono;
 
-  constructor(opts: FlamecastOptions) {
+  constructor(opts: FlamecastOptions = {}) {
     this.templates = opts.agentTemplates ? [...opts.agentTemplates] : [];
     this.restateUrl = opts.restateUrl ?? "http://localhost:18080";
-    this.app = createServerApp(this);
+    this.app = new Hono();
+    this.app.route("/api", createApi(this));
   }
 
-  async close(): Promise<void> {}
+  /**
+   * Start listening on the given port (Node.js only).
+   */
+  listen(
+    port: number,
+    callback?: (info: AddressInfo) => void,
+  ): { close(): Promise<void> } {
+    const server = honoServe({ fetch: this.app.fetch, port }, callback);
+    return {
+      async close() {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
 
   // ─── Agent Templates (in-memory) ───────────────────────────────────────
 
@@ -102,9 +119,6 @@ export class Flamecast {
     return updated;
   }
 
-  /**
-   * Resolve a session definition from a template ID or inline spawn config.
-   */
   resolveSessionConfig(opts: {
     agentTemplateId?: string;
     spawn?: AgentSpawn;
