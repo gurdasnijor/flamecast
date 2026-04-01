@@ -1,7 +1,7 @@
 /**
  * Shared VO handlers for ACP agent session orchestration.
  *
- * Defines handlers that are spread into both IbmAgentSession and
+ * Defines handlers that are spread into both 
  * ZedAgentSession VOs via `...sharedHandlers`. Also exports the
  * shared `handleResult` and `handleAwaiting` functions used by
  * both VOs' `runAgent` handlers.
