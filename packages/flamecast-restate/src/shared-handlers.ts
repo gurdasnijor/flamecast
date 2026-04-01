@@ -62,7 +62,10 @@ export async function handleResult(
     return await handleAwaiting(ctx, adapter, session, result);
   }
   if (result.status === "failed") {
-    throw new restate.TerminalError(`Agent run failed: ${result.error}`);
+    const msg = typeof result.error === "string"
+      ? result.error
+      : JSON.stringify(result.error);
+    throw new restate.TerminalError(`Agent run failed: ${msg}`);
   }
   return result;
 }

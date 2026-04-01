@@ -374,7 +374,7 @@ export class ZedAcpAdapter implements AgentAdapter {
       } catch (error) {
         return {
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
+          error: error instanceof Error ? error.message : JSON.stringify(error),
           runId: session.sessionId,
         };
       }
