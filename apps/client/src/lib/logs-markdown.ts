@@ -86,6 +86,38 @@ export function sessionLogsToSegments(logs: SessionLog[]): SessionLogMarkdownSeg
       continue;
     }
 
+    // Restate pubsub: complete event with agent output
+    if (log.type === "complete") {
+      const d = log.data;
+      if (isRecord(d) && isRecord(d.result)) {
+        const output = d.result.output;
+        if (Array.isArray(output)) {
+          for (const msg of output) {
+            if (!isRecord(msg) || msg.role !== "assistant" || !Array.isArray(msg.parts)) continue;
+            for (const part of msg.parts) {
+              if (isRecord(part) && typeof part.content === "string" && part.content.length > 0) {
+                appendAssistant(segments, part.content);
+              }
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    // Restate pubsub: session.created — no display content
+    if (log.type === "session.created" || log.type === "session.terminated" || log.type === "run.started") {
+      continue;
+    }
+
+    // Restate pubsub: pause event — agent awaiting input
+    if (log.type === "pause") {
+      const d = log.data;
+      const title = isRecord(d) && typeof d.request === "string" ? d.request : "Awaiting input";
+      segments.push({ kind: "tool", toolCallId: "", title: String(title), status: "paused" });
+      continue;
+    }
+
     if (log.type === "session_update") {
       const d = log.data;
       if (isRecord(d)) {

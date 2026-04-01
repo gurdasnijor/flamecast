@@ -45,6 +45,10 @@ export function useFlamecastSession(sessionId: string) {
 
   const prompt = useCallback(
     (text: string) => {
+      setEvents((prev) => [
+        ...prev,
+        { type: "prompt_sent", data: { text }, timestamp: new Date().toISOString() },
+      ]);
       fetch(`/api/sessions/${sessionId}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
