@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
 import { Switch } from "@/components/ui/switch";
 import { FileCode2Icon, FolderTreeIcon } from "lucide-react";
-import type { FileSystemEntry } from "@flamecast/sdk/session";
+import type { FileSystemEntry } from "@flamecast/protocol/session";
 
 type TreeNode = {
   name: string;
