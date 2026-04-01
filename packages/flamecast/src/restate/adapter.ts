@@ -1,5 +1,5 @@
 /**
- * AgentAdapter interface + types for ACP agent orchestration.
+ * Types for ACP agent orchestration.
  *
  * Defines the unified interface that abstracts Zed ACP (stdio JSON-RPC)
  * and IBM ACP (REST HTTP) protocols. The VO calls the adapter without
@@ -97,14 +97,6 @@ export interface ConfigOption {
   options?: string[];
 }
 
-// ─── Webhook Config ────────────────────────────────────────────────────────
-
-export interface WebhookConfig {
-  url: string;
-  events: string[];
-  secret?: string;
-}
-
 // ─── Session Metadata (stored in VO state as "meta") ───────────────────────
 
 export interface SessionMeta {
@@ -114,55 +106,5 @@ export interface SessionMeta {
   status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
   startedAt: string;
   lastUpdatedAt: string;
-}
-
-// ─── Adapter Interface ─────────────────────────────────────────────────────
-
-/**
- * Unified adapter interface for ACP agent communication.
- *
- * Methods fall into three categories:
- * - Core lifecycle: start, cancel, close
- * - Streaming (API layer, not journaled): prompt, resume
- * - Sync (VO handler, inside ctx.run(), journaled): promptSync, resumeSync
- * - Config (journaled via ctx.run() directly): getConfigOptions, setConfigOption
- *
- * `steer` is NOT an adapter method — it's a VO handler that composes
- * cancel() → setConfigOption() → promptSync() as separate ctx.run() steps.
- */
-export interface AgentAdapter {
-  // --- Core lifecycle ---
-  start(config: AgentStartConfig): Promise<SessionHandle>;
-  cancel(session: SessionHandle): Promise<void>;
-  close(session: SessionHandle): Promise<void>;
-
-  // --- Streaming (API layer / client-direct, not journaled) ---
-  prompt(
-    session: SessionHandle,
-    input: string | AgentMessage[],
-  ): AsyncIterable<AgentEvent>;
-  resume(
-    session: SessionHandle,
-    payload: unknown,
-  ): AsyncIterable<AgentEvent>;
-
-  // --- Sync (VO handler, inside ctx.run(), journaled) ---
-  promptSync(
-    session: SessionHandle,
-    input: string | AgentMessage[],
-  ): Promise<PromptResult>;
-  resumeSync(
-    session: SessionHandle,
-    runId: string,
-    payload: unknown,
-  ): Promise<PromptResult>;
-
-  // --- Config (journaled via ctx.run() directly) ---
-  getConfigOptions(session: SessionHandle): Promise<ConfigOption[]>;
-  setConfigOption(
-    session: SessionHandle,
-    configId: string,
-    value: string,
-  ): Promise<ConfigOption[]>;
 }
 
