@@ -221,6 +221,62 @@ export function createApi(flamecast: FlamecastApi) {
         return c.json({ error: toErrorMessage(error) }, 500);
       }
     })
+    .get("/sessions/:id/fs", async (c) => {
+      const sessionId = c.req.param("id");
+      try {
+        const statusRes = await fetch(
+          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/getStatus`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+        );
+        if (!statusRes.ok) return c.json({ error: "Session not found" }, 404);
+        const status = await statusRes.json() as { cwd?: string };
+        if (!status?.cwd) return c.json({ error: "No cwd for session" }, 400);
+
+        const { readdir } = await import("node:fs/promises");
+        const entries = await readdir(status.cwd, { withFileTypes: true });
+        return c.json({
+          root: status.cwd,
+          entries: entries.map((d) => ({
+            path: d.name,
+            type: d.isDirectory() ? "directory" : d.isFile() ? "file" : "other",
+          })),
+        });
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
+    .get("/sessions/:id/files", async (c) => {
+      const sessionId = c.req.param("id");
+      const reqPath = c.req.query("path");
+      if (!reqPath) return c.json({ error: "Missing ?path= parameter" }, 400);
+
+      try {
+        const statusRes = await fetch(
+          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/getStatus`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+        );
+        if (!statusRes.ok) return c.json({ error: "Session not found" }, 404);
+        const status = await statusRes.json() as { cwd?: string };
+        if (!status?.cwd) return c.json({ error: "No cwd for session" }, 400);
+
+        const path = await import("node:path");
+        // Validate path doesn't escape cwd
+        if (reqPath.includes("\0") || path.isAbsolute(reqPath)) {
+          return c.json({ error: "Invalid path" }, 400);
+        }
+        const resolved = path.resolve(status.cwd, reqPath);
+        const rel = path.relative(status.cwd, resolved);
+        if (rel.startsWith("..")) {
+          return c.json({ error: "Path outside workspace" }, 403);
+        }
+
+        const { readFile } = await import("node:fs/promises");
+        const content = await readFile(resolved, "utf8");
+        return c.json({ path: reqPath, content });
+      } catch (error) {
+        return c.json({ error: toErrorMessage(error) }, 500);
+      }
+    })
     .get("/sessions/:id/events", (c) => {
       const sessionId = c.req.param("id");
       const lastEventId = c.req.header("Last-Event-ID");

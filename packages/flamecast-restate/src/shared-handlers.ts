@@ -155,11 +155,15 @@ export const sharedHandlers = {
     },
   ),
 
-  /** Return session metadata. */
+  /** Return session metadata (includes cwd if set). */
   getStatus: restate.handlers.object.shared(
     { enableLazyState: true },
-    async (ctx: restate.ObjectSharedContext) =>
-      ctx.get<SessionMeta>("meta"),
+    async (ctx: restate.ObjectSharedContext) => {
+      const meta = await ctx.get<SessionMeta>("meta");
+      if (!meta) return null;
+      const cwd = await ctx.get<string>("cwd");
+      return { ...meta, ...(cwd ? { cwd } : {}) };
+    },
   ),
 
   /** Return webhook configurations. */
