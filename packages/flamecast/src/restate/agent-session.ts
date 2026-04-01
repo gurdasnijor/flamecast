@@ -21,7 +21,13 @@ import { createRestateRuntime } from "@flamecast/runtime/restate";
 import { StdioAdapter } from "@flamecast/adapters/stdio";
 import { A2AAdapter } from "@flamecast/adapters/a2a";
 import { InProcessRuntimeHost } from "@flamecast/runtime-host/local";
+import { createPubsubClient } from "@restatedev/pubsub-client";
 import { sharedHandlers, handleResult } from "./shared-handlers.js";
+
+// External pubsub client — publishes via Restate ingress, not via ctx.
+// Used for streaming events during prompt execution (idempotent, replay-safe).
+const RESTATE_URL = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
+const pubsub = createPubsubClient({ name: "pubsub", ingressUrl: RESTATE_URL });
 
 const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -170,8 +176,10 @@ export const AgentSession = restate.object({
 
         return handleResult(ctx, runtime, adapter as any, handle, result);
       } else {
-        // Stdio: handler stays alive while agent works (ephemeral, not
-        // inside ctx.run). This keeps ctx alive so runtime.emit() works.
+        // Stdio: handler stays alive while agent works.
+        // Streaming events publish via external pubsub client (not ctx),
+        // per Restate docs: https://docs.restate.dev/ai/patterns/streaming-responses
+        const topic = `session:${handle.sessionId}`;
         const result = await new Promise<PromptResult>((resolve) => {
           getRuntimeHost().prompt(
             {
@@ -182,7 +190,7 @@ export const AgentSession = restate.object({
             input.text,
             {
               onEvent(event) {
-                runtime.emit(event as any);
+                pubsub.publish(topic, event).catch(() => {});
               },
               async onPermission(request) {
                 // TODO: durable permission handling
@@ -202,6 +210,7 @@ export const AgentSession = restate.object({
           );
         });
 
+        // Journal the final result + emit complete via runtime (ctx still alive here)
         return handleResult(ctx, runtime, { cancel: async () => {}, close: async () => {} } as any, handle, result);
       }
     },
