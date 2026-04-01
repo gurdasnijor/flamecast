@@ -143,7 +143,7 @@ export function createApi(flamecast: FlamecastApi) {
           body: JSON.stringify({
             agent: config.spawn.command,
             args: config.spawn.args,
-            cwd: body.cwd,
+            cwd: body.cwd ?? process.cwd(),
             env: config.runtime.env,
           }),
         });
