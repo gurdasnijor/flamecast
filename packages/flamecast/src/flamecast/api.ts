@@ -10,12 +10,11 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import { AgentSession } from "@flamecast/restate";
 import type { Flamecast } from "./index.js";
+import { AgentSession } from "../restate/agent-session.js";
 import {
   RegisterAgentTemplateBodySchema,
   UpdateAgentTemplateBodySchema,
-  createRegisterAgentTemplateBodySchema,
 } from "../shared/session.js";
 
 export type FlamecastApi = Pick<
@@ -24,12 +23,7 @@ export type FlamecastApi = Pick<
   | "getAgentTemplate"
   | "registerAgentTemplate"
   | "updateAgentTemplate"
-  | "listRuntimes"
-  | "startRuntime"
-  | "stopRuntime"
-  | "pauseRuntime"
   | "resolveSessionConfig"
-  | "runtimeNames"
   | "restateUrl"
 >;
 
@@ -48,11 +42,6 @@ function isClientError(error: unknown): boolean {
 }
 
 export function createApi(flamecast: FlamecastApi) {
-  const [first, ...rest] = flamecast.runtimeNames;
-  const registerSchema = first
-    ? createRegisterAgentTemplateBodySchema([first, ...rest])
-    : RegisterAgentTemplateBodySchema;
-
   // Typed Restate ingress client — used for all VO calls
   const ingress = clients.connect({ url: flamecast.restateUrl });
 
@@ -63,7 +52,7 @@ export function createApi(flamecast: FlamecastApi) {
     .get("/agent-templates", (c) => {
       return c.json(flamecast.listAgentTemplates());
     })
-    .post("/agent-templates", zValidator("json", registerSchema), (c) => {
+    .post("/agent-templates", zValidator("json", RegisterAgentTemplateBodySchema), (c) => {
       try {
         const body = c.req.valid("json");
         const template = flamecast.registerAgentTemplate(body);
@@ -82,52 +71,13 @@ export function createApi(flamecast: FlamecastApi) {
       }
     })
 
-    // ── Runtime Lifecycle ──────────────────────────────────────────────
-    .get("/runtimes", async (c) => {
-      try {
-        return c.json(await flamecast.listRuntimes());
-      } catch (error) {
-        return c.json({ error: toErrorMessage(error) }, 500);
-      }
-    })
-    .post("/runtimes/:typeName/start", async (c) => {
-      try {
-        const typeName = c.req.param("typeName");
-        const body = await c.req.json().catch(() => ({}));
-        const name = body && typeof body === "object" && "name" in body ? body.name : undefined;
-        const instance = await flamecast.startRuntime(typeName, name);
-        return c.json(instance, 201);
-      } catch (error) {
-        const msg = toErrorMessage(error);
-        return c.json({ error: msg }, isClientError(error) ? 400 : 500);
-      }
-    })
-    .post("/runtimes/:instanceName/stop", async (c) => {
-      try {
-        await flamecast.stopRuntime(c.req.param("instanceName"));
-        return c.json({ ok: true });
-      } catch (error) {
-        const msg = toErrorMessage(error);
-        return c.json({ error: msg }, msg.includes("not found") ? 404 : 500);
-      }
-    })
-    .post("/runtimes/:instanceName/pause", async (c) => {
-      try {
-        await flamecast.pauseRuntime(c.req.param("instanceName"));
-        return c.json({ ok: true });
-      } catch (error) {
-        const msg = toErrorMessage(error);
-        return c.json({ error: msg }, msg.includes("not found") ? 404 : 500);
-      }
-    })
-
     // ── Session routes (typed Restate ingress client) ─────────────────
     .get("/sessions", async (c) => {
       try {
         const adminUrl = flamecast.restateUrl.replace(/:\d+$/, ":19070");
         const sessions: Record<string, unknown>[] = [];
 
-        for (const service of ["AgentSession", "ZedAgentSession", "IbmAgentSession"]) {
+        for (const service of ["AgentSession"]) {
           const res = await fetch(`${adminUrl}/query`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -159,12 +109,10 @@ export function createApi(flamecast: FlamecastApi) {
         const body = await c.req.json() as {
           agentTemplateId: string;
           cwd?: string;
-          runtimeInstance?: string;
         };
 
         const config = flamecast.resolveSessionConfig({
           agentTemplateId: body.agentTemplateId,
-          runtimeInstance: body.runtimeInstance,
         });
 
         const sessionId = crypto.randomUUID();
@@ -191,26 +139,10 @@ export function createApi(flamecast: FlamecastApi) {
           .objectClient(AgentSession, sessionId)
           .getStatus();
         if (meta) return c.json({ id: sessionId, ...meta });
+        return c.json({ error: "Session not found" }, 404);
       } catch {
-        // Try legacy VOs
+        return c.json({ error: "Session not found" }, 404);
       }
-      // Legacy fallback via raw fetch (different VO types)
-      for (const voName of ["ZedAgentSession", "IbmAgentSession"]) {
-        try {
-          const res = await fetch(`${flamecast.restateUrl}/${voName}/${sessionId}/getStatus`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: "{}",
-          });
-          if (res.ok) {
-            const meta = await res.json();
-            if (meta) return c.json({ id: sessionId, ...meta });
-          }
-        } catch {
-          // Try next
-        }
-      }
-      return c.json({ error: "Session not found" }, 404);
     })
     .post("/sessions/:id/prompt", async (c) => {
       const sessionId = c.req.param("id");

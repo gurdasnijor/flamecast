@@ -51,13 +51,13 @@ export interface AgentInfo {
 
 export interface SessionHandle {
   sessionId: string;
-  protocol: "zed" | "ibm";
+  protocol: "stdio" | "a2a";
   agent: AgentInfo;
   connection: {
-    url?: string; // HTTP URL for IBM / containerized Zed agents
-    pid?: number; // Local process PID (non-durable — dies on restart)
-    containerId?: string; // Docker container ID (may survive restart)
-    sandboxId?: string; // E2B sandbox ID (may survive restart)
+    url?: string;
+    pid?: number;
+    containerId?: string;
+    sandboxId?: string;
   };
 }
 
@@ -109,7 +109,7 @@ export interface WebhookConfig {
 
 export interface SessionMeta {
   sessionId: string;
-  protocol: "zed" | "ibm";
+  protocol: "stdio" | "a2a";
   agent: AgentInfo;
   status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
   startedAt: string;
@@ -166,16 +166,3 @@ export interface AgentAdapter {
   ): Promise<ConfigOption[]>;
 }
 
-// ─── IBM-specific: createRun (used by IbmAgentSession VO separately) ──────
-
-/**
- * Extended interface for IBM ACP adapters.
- * The VO calls createRun and awaitRun as separate ctx.run() steps
- * so the runId is visible immediately for client SSE subscription.
- */
-export interface IbmAcpAdapterInterface extends AgentAdapter {
-  createRun(
-    session: SessionHandle,
-    input: string | AgentMessage[],
-  ): Promise<{ runId: string }>;
-}

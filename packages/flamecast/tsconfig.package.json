@@ -15,6 +15,7 @@
     "src/worker.ts",
     "src/node/**/*.ts",
     "src/flamecast/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/shared/**/*.ts",
+    "src/restate/**/*.ts"
   ]
 }

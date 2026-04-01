@@ -1,4 +1,4 @@
-import { Flamecast, NodeRuntime, listen } from "@flamecast/sdk";
+import { Flamecast, listen } from "@flamecast/sdk";
 import dotenv from "dotenv";
 import { createAgentTemplates } from "./agent-templates.js";
 
@@ -6,12 +6,7 @@ dotenv.config();
 
 const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
 
-const runtimes = {
-  default: new NodeRuntime(),
-};
-
 const flamecast = new Flamecast({
-  runtimes,
   agentTemplates: createAgentTemplates(),
   restateUrl: restateIngressUrl,
 });

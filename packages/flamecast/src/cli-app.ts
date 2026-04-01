@@ -6,7 +6,7 @@
  */
 
 import { serve } from "@hono/node-server";
-import { Flamecast, NodeRuntime } from "./index.js";
+import { Flamecast } from "./index.js";
 
 type Command =
   | { kind: "help" }
@@ -70,7 +70,6 @@ async function runServeCommand(flags: CliFlags): Promise<number> {
     flags.restateUrl ?? process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
 
   const flamecast = new Flamecast({
-    runtimes: { default: new NodeRuntime() },
     restateUrl,
   });
 

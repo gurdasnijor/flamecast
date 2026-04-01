@@ -73,7 +73,7 @@ export interface SessionAgentInfo {
 /** Metadata stored in VO state — returned by getStatus. */
 export interface SessionMeta {
   sessionId: string;
-  protocol: "zed" | "ibm";
+  protocol: "stdio" | "a2a";
   agent: SessionAgentInfo;
   status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
   startedAt: string;

@@ -31,28 +31,39 @@
       "types": "./dist/shared/session.d.ts",
       "import": "./dist/shared/session.js"
     },
+    "./restate": {
+      "types": "./dist/restate/index.d.ts",
+      "import": "./dist/restate/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "pnpm run build:package",
     "build:package": "tsc -p tsconfig.package.json && cp src/flamecast/agent.ts dist/flamecast/agent.ts",
     "start": "node dist/cli.js",
+    "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
+    "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run --config vitest.integration.config.ts",
     "test:api:coverage": "vitest run --coverage --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
+    "@flamecast/adapters": "workspace:*",
     "@flamecast/protocol": "workspace:*",
-    "@flamecast/session-host-go": "workspace:*",
-    "@flamecast/restate": "workspace:*",
+    "@flamecast/runtime": "workspace:*",
+    "@flamecast/runtime-host": "workspace:*",
     "@hono/node-server": "^1.19.11",
-    "@restatedev/restate-sdk-clients": "^1.5.0",
     "@hono/zod-validator": "^0.7.6",
+    "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",
+    "@restatedev/restate-sdk": "^1.5.0",
+    "@restatedev/restate-sdk-clients": "^1.5.0",
     "hono": "^4.12.8",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@restatedev/restate-sdk-testcontainers": "^1.11.1",
+    "@restatedev/restate-server": "^1.6.2",
     "@vitest/coverage-v8": "^4.1.0",
     "knip": "^6.0.1",
     "vitest": "^4.1.0"
