@@ -173,6 +173,18 @@ export const AgentSession = restate.object({
       return handle;
     },
 
+    /**
+     * Run the agent — single invocation for the entire conversation.
+     *
+     * For stdio: loops prompt → response → wait for next prompt.
+     * The handler stays alive across turns. Each turn:
+     * 1. Drive the agent with the current text
+     * 2. Emit the result
+     * 3. Create an awakeable and suspend (zero compute)
+     * 4. Frontend sends next prompt → resolves awakeable → loop continues
+     *
+     * For a2a: two-phase create + awakeable per turn (agent is stateless HTTP).
+     */
     runAgent: async (
       ctx: restate.ObjectContext,
       input: { text: string },
@@ -193,13 +205,16 @@ export const AgentSession = restate.object({
         runtime.state.clear("pending_run");
 
         return handleResult(ctx, runtime, adapter as any, handle, result);
-      } else {
-        // Ensure process exists (may have died or this is a replay)
-        await ensureStdioProcess(handle.sessionId, agent);
+      }
 
-        // Handler stays alive while agent works. Streaming events
-        // publish via external pubsub client (not ctx).
-        const topic = `session:${handle.sessionId}`;
+      // ── Stdio conversation loop ──────────────────────────────────────
+      await ensureStdioProcess(handle.sessionId, agent);
+      const topic = `session:${handle.sessionId}`;
+      let currentText = input.text;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Drive the agent with this turn's text
         const result = await new Promise<PromptResult>((resolve) => {
           getRuntimeHost().prompt(
             {
@@ -207,14 +222,12 @@ export const AgentSession = restate.object({
               strategy: "local",
               agentName: handle.agent.name,
             },
-            input.text,
+            currentText,
             {
               onEvent(event) {
                 pubsub.publish(topic, event).catch(() => {});
               },
               async onPermission(request) {
-                // Durable permission handling via awakeable + pubsub.
-                // Handler is alive (awaiting prompt Promise), so runtime works.
                 const generation =
                   ((await runtime.state.get<number>("generation")) ?? 0) + 1;
                 runtime.state.set("generation", generation);
@@ -224,7 +237,6 @@ export const AgentSession = restate.object({
                   generation,
                 );
 
-                // Publish via external pubsub (not ctx) so frontend sees it
                 pubsub.publish(topic, {
                   type: "permission_request",
                   requestId: request.toolCallId,
@@ -236,10 +248,8 @@ export const AgentSession = restate.object({
                   generation,
                 }).catch(() => {});
 
-                // Block until user responds via POST /resume
                 const response = await dp.promise;
                 runtime.state.clear("pending_pause");
-
                 return { optionId: response.optionId };
               },
               onComplete(r) {
@@ -256,10 +266,29 @@ export const AgentSession = restate.object({
           );
         });
 
-        // Final result — ctx is still alive, runtime.emit works
+        // Emit the result for this turn
         runtime.state.set("lastRun", result);
         runtime.emit({ type: "complete", result });
-        return result;
+
+        // Wait for the next prompt (or null = conversation over).
+        // This suspends the handler at zero compute cost.
+        const { id: nextPromptId, promise: nextPromptPromise } =
+          ctx.awakeable<{ text: string } | null>();
+        runtime.state.set("pending_prompt", { awakeableId: nextPromptId });
+        pubsub.publish(topic, {
+          type: "awaiting_prompt",
+          awakeableId: nextPromptId,
+        } as any).catch(() => {});
+
+        const next = await nextPromptPromise;
+        runtime.state.clear("pending_prompt");
+
+        if (!next) {
+          // Conversation terminated
+          return result;
+        }
+
+        currentText = next.text;
       }
     },
 

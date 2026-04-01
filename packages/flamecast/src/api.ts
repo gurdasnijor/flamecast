@@ -174,10 +174,36 @@ export function createApi(flamecast: FlamecastApi) {
       const sessionId = c.req.param("id");
       try {
         const { text } = await c.req.json() as { text: string };
-        const result = await ingress
+
+        // Check if the conversation loop is already running and waiting
+        const status = await ingress
           .objectClient(AgentSession, sessionId)
+          .getStatus() as Record<string, unknown> | null;
+
+        if (status) {
+          // Try sendPrompt first (resolves awaiting-prompt awakeable).
+          // If no pending prompt, fall back to starting a new runAgent.
+          try {
+            await ingress
+              .objectClient(AgentSession, sessionId)
+              .sendPrompt({ text });
+            return c.json({ ok: true, turn: "continued" });
+          } catch {
+            // No pending prompt — start a new conversation loop.
+            // Use objectSendClient (fire-and-forget) since runAgent
+            // is a long-lived handler that loops.
+            ingress
+              .objectSendClient(AgentSession, sessionId)
+              .runAgent({ text });
+            return c.json({ ok: true, turn: "started" });
+          }
+        }
+
+        // No session status — start fresh
+        ingress
+          .objectSendClient(AgentSession, sessionId)
           .runAgent({ text });
-        return c.json(result);
+        return c.json({ ok: true, turn: "started" });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
       }

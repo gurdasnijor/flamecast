@@ -159,6 +159,28 @@ export const sharedHandlers = {
     },
   ),
 
+  /**
+   * Send a prompt to a running conversation.
+   * Resolves the "awaiting next prompt" awakeable in the runAgent loop.
+   * This is a shared handler so it runs concurrently with the suspended
+   * exclusive runAgent handler.
+   */
+  sendPrompt: restate.handlers.object.shared(
+    { enableLazyState: true },
+    async (
+      ctx: restate.ObjectSharedContext,
+      input: { text: string },
+    ) => {
+      const pending = await ctx.get<{ awakeableId: string }>("pending_prompt");
+      if (!pending) {
+        throw new restate.TerminalError(
+          "No pending prompt — session may not be running or is mid-turn",
+        );
+      }
+      ctx.resolveAwakeable(pending.awakeableId, { text: input.text });
+    },
+  ),
+
   /** Return session metadata (includes cwd if set). */
   getStatus: restate.handlers.object.shared(
     { enableLazyState: true },
