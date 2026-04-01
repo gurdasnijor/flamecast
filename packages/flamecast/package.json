@@ -20,8 +20,8 @@
       "import": "./dist/edge.js"
     },
     "./api": {
-      "types": "./dist/flamecast/api.d.ts",
-      "import": "./dist/flamecast/api.js"
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
     },
     "./client": {
       "types": "./src/client/api.ts",

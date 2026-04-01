@@ -1,1 +1,1 @@
-export * from "./flamecast/index.js";
+export * from "./flamecast-class.js";

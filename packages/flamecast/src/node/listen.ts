@@ -3,7 +3,7 @@
  */
 import { serve as honoServe } from "@hono/node-server";
 import type { AddressInfo } from "node:net";
-import type { Flamecast } from "../flamecast/index.js";
+import type { Flamecast } from "../flamecast-class.js";
 
 export function listen(
   flamecast: Flamecast,

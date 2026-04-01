@@ -14,7 +14,7 @@ import type {
   AgentTemplate,
   AgentTemplateRuntime,
   RegisterAgentTemplateBody,
-} from "../shared/session.js";
+} from "./shared/session.js";
 import { createServerApp } from "./app.js";
 
 const randomUUID = (): string => crypto.randomUUID();
@@ -26,7 +26,7 @@ export type {
   AgentTemplate,
   AgentTemplateRuntime,
   RegisterAgentTemplateBody,
-} from "../shared/session.js";
+} from "./shared/session.js";
 
 // ─── Flamecast class ────────────────────────────────────────────────────────
 

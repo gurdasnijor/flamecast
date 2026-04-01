@@ -10,12 +10,12 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import type { Flamecast } from "./index.js";
-import { AgentSession } from "../restate/agent-session.js";
+import type { Flamecast } from "./flamecast-class.js";
+import { AgentSession } from "./restate/agent-session.js";
 import {
   RegisterAgentTemplateBodySchema,
   UpdateAgentTemplateBodySchema,
-} from "../shared/session.js";
+} from "./shared/session.js";
 
 export type FlamecastApi = Pick<
   Flamecast,
