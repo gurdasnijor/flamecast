@@ -192,7 +192,7 @@ export function createApi(flamecast: FlamecastApi) {
         };
         // Resolve the awakeable directly — no generation check needed.
         // Each permission has its own unique awakeable.
-        ingress.resolveAwakeable(body.awakeableId, body.payload);
+        await ingress.resolveAwakeable(body.awakeableId, body.payload);
         return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);

@@ -50,22 +50,8 @@ export function createRestateRuntime(
       return { id, promise };
     },
 
-    resolveDurablePromise(id, generation, payload) {
-      // Note: in practice, resolveDurablePromise is called from the
-      // resumeAgent shared handler which reads pending_pause directly
-      // from ctx. This method exists for interface symmetry and testing.
-      // The Restate impl delegates to the shared handler pattern.
-      void ctx
-        .get<{ id: string; generation: number }>("pending_pause")
-        .then((pending) => {
-          if (!pending || pending.generation !== generation) {
-            throw new restate.TerminalError(
-              "Stale resume — generation mismatch",
-              { errorCode: 409 },
-            );
-          }
-          ctx.resolveAwakeable(id, payload);
-        });
+    resolveDurablePromise(id, _generation, payload) {
+      ctx.resolveAwakeable(id, payload);
     },
 
     state: {

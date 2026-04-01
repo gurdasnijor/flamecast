@@ -195,7 +195,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
     });
 
     proc.stderr!.on("data", (chunk: Buffer) => {
-      console.error(`[zed-agent-stderr] ${chunk.toString().trimEnd()}`);
+      console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
     });
 
     // Wire ACP SDK over stdio
@@ -208,18 +208,24 @@ export class InProcessRuntimeHost implements RuntimeHost {
     const client = new AcpClient();
     const conn = new acp.ClientSideConnection((_agent) => client, stream);
 
-    // ACP initialize
-    const initResult = await conn.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {},
-      clientInfo: { name: "flamecast", title: "Flamecast", version: "1.0.0" },
-    });
+    // ACP initialize — kill process on failure to prevent leaks
+    let initResult: Awaited<ReturnType<typeof conn.initialize>>;
+    let sessionResult: Awaited<ReturnType<typeof conn.newSession>>;
+    try {
+      initResult = await conn.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: { name: "flamecast", title: "Flamecast", version: "1.0.0" },
+      });
 
-    // ACP session/new
-    const sessionResult = await conn.newSession({
-      cwd: spec.cwd ?? process.cwd(),
-      mcpServers: [],
-    });
+      sessionResult = await conn.newSession({
+        cwd: spec.cwd ?? process.cwd(),
+        mcpServers: [],
+      });
+    } catch (err) {
+      proc.kill();
+      throw err;
+    }
 
     const acpSessionId = sessionResult.sessionId;
 

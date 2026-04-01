@@ -307,9 +307,10 @@ export const AgentSession = restate.object({
       }
 
       // Send the new prompt — the conversation loop will pick it up
-      return ctx
+      await ctx
         .objectClient(AgentSession, ctx.key)
-        .sendPrompt({ text: input.newText }) as unknown as Promise<PromptResult>;
+        .sendPrompt({ text: input.newText });
+      return { status: "completed" };
     },
 
     terminateSession: async (ctx: restate.ObjectContext): Promise<void> => {
