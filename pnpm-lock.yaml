@@ -520,6 +520,9 @@ importers:
       '@flamecast/protocol':
         specifier: workspace:*
         version: link:../protocol
+      hono:
+        specifier: ^4.12.8
+        version: 4.12.9
     devDependencies:
       typescript:
         specifier: ^5.8.3
