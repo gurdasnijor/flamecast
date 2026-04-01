@@ -1,12 +1,9 @@
 import * as restate from "@restatedev/restate-sdk";
-import { FlamecastSession, pubsubObject } from "./session-object.js";
-import { WebhookDeliveryService } from "./webhook-service.js";
+import { pubsubObject } from "./pubsub.js";
 import { IbmAgentSession } from "./ibm-agent-session.js";
 import { ZedAgentSession } from "./zed-agent-session.js";
 
 export const services = [
-  FlamecastSession,
-  WebhookDeliveryService,
   pubsubObject,
   IbmAgentSession,
   ZedAgentSession,

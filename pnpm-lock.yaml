@@ -194,21 +194,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.16.1
         version: 0.16.1(zod@4.3.6)
-      '@flamecast/restate':
-        specifier: workspace:*
-        version: link:../../packages/flamecast-restate
-      '@flamecast/runtime-docker':
-        specifier: workspace:*
-        version: link:../../packages/runtime-docker
-      '@flamecast/runtime-e2b':
-        specifier: workspace:*
-        version: link:../../packages/runtime-e2b
       '@flamecast/sdk':
         specifier: workspace:*
         version: link:../../packages/flamecast
-      '@flamecast/storage-psql':
-        specifier: workspace:*
-        version: link:../../packages/flamecast-psql
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
@@ -382,9 +370,6 @@ importers:
       '@flamecast/session-host-go':
         specifier: workspace:*
         version: link:../session-host-go
-      '@flamecast/storage-psql':
-        specifier: workspace:*
-        version: link:../flamecast-psql
       '@hono/node-server':
         specifier: ^1.19.11
         version: 1.19.11(hono@4.12.8)
@@ -394,9 +379,6 @@ importers:
       '@restatedev/pubsub-client':
         specifier: ^0.1.0
         version: 0.1.0(@restatedev/restate-sdk-clients@1.11.1)
-      drizzle-kit:
-        specifier: ^0.31.10
-        version: 0.31.10
       hono:
         specifier: ^4.12.8
         version: 4.12.8

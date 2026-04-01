@@ -10,7 +10,7 @@ import * as clients from "@restatedev/restate-sdk-clients";
 import * as http from "node:http";
 import * as crypto from "node:crypto";
 import { IbmAgentSession } from "../src/ibm-agent-session.js";
-import { pubsubObject } from "../src/session-object.js";
+import { pubsubObject } from "../src/pubsub.js";
 import type { SessionMeta } from "../src/adapter.js";
 
 // ── Mock IBM ACP agent server (acp-sdk compatible) ────────────────────────

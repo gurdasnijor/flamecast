@@ -1,21 +1,8 @@
-// ─── Legacy VOs (kept during migration) ────────────────────────────────────
-export {
-  FlamecastSession,
-  pubsubObject,
-  type FlamecastSessionApi,
-  type SessionMeta as LegacySessionMeta,
-  type StartSessionInput,
-  type WaitForInput,
-  type ScheduleInput,
-  type SessionCallbackEvent,
-  type SessionState,
-} from "./session-object.js";
-export { WebhookDeliveryService } from "./webhook-service.js";
+// ─── Restate Services ─────────────────────────────────────────────────────
+export { pubsubObject } from "./pubsub.js";
 export { serve, services } from "./endpoint.js";
-export type { SessionRuntime } from "./session-runtime.js";
-export { createRestateSessionRuntime } from "./session-runtime-restate.js";
 
-// ─── ACP Agent Orchestration (new) ─────────────────────────────────────────
+// ─── ACP Agent Orchestration ──────────────────────────────────────────────
 export type {
   AgentAdapter,
   AgentEvent,

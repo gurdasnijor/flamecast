@@ -12,7 +12,7 @@
  */
 
 import * as clients from "@restatedev/restate-sdk-clients";
-import { pubsubObject } from "./session-object.js";
+import { pubsubObject } from "./pubsub.js";
 import type { PromptResult, AgentMessage } from "./adapter.js";
 
 // ─── SSE Event Types (IBM ACP agent stream) ────────────────────────────────
