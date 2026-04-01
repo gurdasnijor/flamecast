@@ -1,10 +1,13 @@
 import * as restate from "@restatedev/restate-sdk";
 import { pubsubObject } from "./pubsub.js";
+import { AgentSession } from "./agent-session.js";
 import { IbmAgentSession } from "./ibm-agent-session.js";
 import { ZedAgentSession } from "./zed-agent-session.js";
 
 export const services = [
   pubsubObject,
+  AgentSession,
+  // Legacy VOs kept for existing sessions. New sessions use AgentSession.
   IbmAgentSession,
   ZedAgentSession,
 ];

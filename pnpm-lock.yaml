@@ -405,12 +405,18 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.16.1
         version: 0.16.1(zod@4.3.6)
+      '@flamecast/adapters':
+        specifier: workspace:*
+        version: link:../adapters
       '@flamecast/protocol':
         specifier: workspace:*
         version: link:../protocol
       '@flamecast/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@flamecast/runtime-host':
+        specifier: workspace:*
+        version: link:../runtime-host
       '@flamecast/sdk':
         specifier: workspace:*
         version: link:../flamecast

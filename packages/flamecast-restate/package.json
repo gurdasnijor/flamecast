@@ -17,8 +17,10 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
+    "@flamecast/adapters": "workspace:*",
     "@flamecast/protocol": "workspace:*",
     "@flamecast/runtime": "workspace:*",
+    "@flamecast/runtime-host": "workspace:*",
     "@flamecast/sdk": "workspace:*",
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",

@@ -20,6 +20,7 @@ export type {
 export { IbmAcpAdapter } from "./ibm-acp-adapter.js";
 export { ZedAcpAdapter } from "./zed-acp-adapter.js";
 export { sharedHandlers, handleResult, handleAwaiting, publish } from "./shared-handlers.js";
+export { AgentSession } from "./agent-session.js";
 export { IbmAgentSession } from "./ibm-agent-session.js";
 export { ZedAgentSession } from "./zed-agent-session.js";
 export { watchAgentRun, type WatchAgentRunOptions } from "./watch-agent-run.js";

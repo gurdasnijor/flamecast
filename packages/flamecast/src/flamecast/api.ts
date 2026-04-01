@@ -127,7 +127,7 @@ export function createApi(flamecast: FlamecastApi) {
         const adminUrl = flamecast.restateUrl.replace(/:\d+$/, ":19070");
         const sessions: Record<string, unknown>[] = [];
 
-        for (const service of ["ZedAgentSession", "IbmAgentSession"]) {
+        for (const service of ["AgentSession", "ZedAgentSession", "IbmAgentSession"]) {
           const res = await fetch(`${adminUrl}/query`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -170,7 +170,7 @@ export function createApi(flamecast: FlamecastApi) {
         });
 
         const sessionId = crypto.randomUUID();
-        const voName = "ZedAgentSession"; // TODO: route by protocol when IBM templates exist
+        const voName = "AgentSession";
 
         const res = await fetch(`${flamecast.restateUrl}/${voName}/${sessionId}/startSession`, {
           method: "POST",
@@ -197,8 +197,8 @@ export function createApi(flamecast: FlamecastApi) {
     })
     .get("/sessions/:id", async (c) => {
       const sessionId = c.req.param("id");
-      // Try both VO types — one will have the session
-      for (const voName of ["ZedAgentSession", "IbmAgentSession"]) {
+      // Try all VO types — one will have the session
+      for (const voName of ["AgentSession", "ZedAgentSession", "IbmAgentSession"]) {
         try {
           const res = await fetch(`${flamecast.restateUrl}/${voName}/${sessionId}/getStatus`, {
             method: "POST",
@@ -220,7 +220,7 @@ export function createApi(flamecast: FlamecastApi) {
       try {
         const body = await c.req.json() as { text: string };
         const res = await fetch(
-          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/runAgent`,
+          `${flamecast.restateUrl}/AgentSession/${sessionId}/runAgent`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -245,7 +245,7 @@ export function createApi(flamecast: FlamecastApi) {
           generation: number;
         };
         const res = await fetch(
-          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/resumeAgent`,
+          `${flamecast.restateUrl}/AgentSession/${sessionId}/resumeAgent`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -266,7 +266,7 @@ export function createApi(flamecast: FlamecastApi) {
       const sessionId = c.req.param("id");
       try {
         const res = await fetch(
-          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/cancelAgent`,
+          `${flamecast.restateUrl}/AgentSession/${sessionId}/cancelAgent`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -286,7 +286,7 @@ export function createApi(flamecast: FlamecastApi) {
       const sessionId = c.req.param("id");
       try {
         const statusRes = await fetch(
-          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/getStatus`,
+          `${flamecast.restateUrl}/AgentSession/${sessionId}/getStatus`,
           { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
         );
         if (!statusRes.ok) return c.json({ error: "Session not found" }, 404);
@@ -313,7 +313,7 @@ export function createApi(flamecast: FlamecastApi) {
 
       try {
         const statusRes = await fetch(
-          `${flamecast.restateUrl}/ZedAgentSession/${sessionId}/getStatus`,
+          `${flamecast.restateUrl}/AgentSession/${sessionId}/getStatus`,
           { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
         );
         if (!statusRes.ok) return c.json({ error: "Session not found" }, 404);
