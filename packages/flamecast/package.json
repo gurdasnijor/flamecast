@@ -39,7 +39,7 @@
   },
   "scripts": {
     "build": "pnpm run build:package",
-    "build:package": "tsc -p tsconfig.package.json && cp src/flamecast/agent.ts dist/flamecast/agent.ts",
+    "build:package": "tsc -p tsconfig.package.json",
     "start": "node dist/cli.js",
     "dev": "tsx src/restate/serve-endpoint.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
