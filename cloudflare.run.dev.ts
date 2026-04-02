@@ -54,6 +54,33 @@ const runtimeHost = await docker.Container("runtime-host", {
   restart: "unless-stopped",
 });
 
+// ─── Restate Endpoint (Docker container) ────────────────────────────────
+// Runs serve-endpoint.ts — the VO handlers that Restate calls into.
+
+const endpointImage = await docker.Image("endpoint-image", {
+  name: "flamecast-endpoint",
+  build: {
+    context: ".",
+    dockerfile: "deploy/runtime-host/Dockerfile", // same base, different CMD
+  },
+});
+
+const endpoint = await docker.Container("endpoint", {
+  image: endpointImage,
+  name: `flamecast-endpoint-${app.stage}`,
+  ports: [
+    { external: 9080, internal: 9080 },
+  ],
+  environment: {
+    FLAMECAST_RUNTIME_HOST: "remote",
+    FLAMECAST_RUNTIME_HOST_URL: "http://host.docker.internal:9100",
+    RESTATE_INGRESS_URL: "http://host.docker.internal:18080",
+  },
+  command: ["node", "packages/flamecast/dist/restate/serve-endpoint.js"],
+  start: true,
+  restart: "unless-stopped",
+});
+
 // ─── API Worker ─────────────────────────────────────────────────────────
 
 export const server = await Worker("flamecast-api", {
@@ -113,6 +140,7 @@ async function registerEndpoint(retries = 10): Promise<void> {
 registerEndpoint();
 
 console.log(`Restate:      http://localhost:18080 (container: ${restate.id})`);
+console.log(`Endpoint:     http://localhost:9080 (container: ${endpoint.id})`);
 console.log(`RuntimeHost:  http://localhost:9100 (container: ${runtimeHost.id})`);
 console.log(`API:          ${server.url}`);
 console.log(`Client:       ${client.url}`);
