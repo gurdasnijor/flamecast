@@ -23,6 +23,8 @@ export interface AgentTemplate {
   spawn: AgentSpawn;
   runtime: AgentTemplateRuntime;
   env?: Record<string, string>;
+  description?: string;
+  icon?: string;
 }
 
 // ---------------------------------------------------------------------------

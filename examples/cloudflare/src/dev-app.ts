@@ -6,7 +6,7 @@ import { Flamecast } from "@flamecast/sdk";
 import { createAgentTemplates } from "../../../apps/server/src/agent-templates.js";
 
 const flamecast = new Flamecast({
-  agentTemplates: createAgentTemplates(),
+  agentTemplates: await createAgentTemplates(),
   restateUrl: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
 });
 

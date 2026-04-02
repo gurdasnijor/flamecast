@@ -1,55 +1,61 @@
 import type { AgentTemplate } from "@flamecast/sdk";
 
+const REGISTRY_URL =
+  "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+
+interface RegistryAgent {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  icon?: string;
+  website?: string;
+  authors?: string[];
+  license?: string;
+  distribution: {
+    npx?: { package: string; args?: string[]; env?: Record<string, string> };
+    binary?: Record<string, { archive: string; cmd: string }>;
+    uvx?: { package: string; args?: string[] };
+    docker?: { image: string };
+  };
+}
+
+function registryToTemplate(agent: RegistryAgent): AgentTemplate | null {
+  const dist = agent.distribution;
+
+  if (dist.npx) {
+    return {
+      id: agent.id,
+      name: agent.name,
+      spawn: {
+        command: "npx",
+        args: [dist.npx.package, ...(dist.npx.args ?? [])],
+      },
+      runtime: { provider: "default" },
+      env: dist.npx.env,
+      description: agent.description,
+      icon: agent.icon,
+    };
+  }
+
+  // Skip binary/uvx for now — need platform detection
+  return null;
+}
+
 /**
- * Default agent templates seeded from the ACP registry.
- * https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json
- *
- * Uses npx to run agents — they're downloaded on first use.
- * In-memory config, no database needed.
+ * Fetch agent templates from the ACP registry.
+ * Falls back to empty list on network error.
  */
-export function createAgentTemplates(): AgentTemplate[] {
-  return [
-    {
-      id: "claude",
-      name: "Claude",
-      spawn: { command: "npx", args: ["@agentclientprotocol/claude-agent-acp@0.24.2"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "gemini",
-      name: "Gemini",
-      spawn: { command: "npx", args: ["@google/gemini-cli@0.35.3", "--acp"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "codex",
-      name: "Codex",
-      spawn: { command: "npx", args: ["@zed-industries/codex-acp@0.10.0"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "copilot",
-      name: "GitHub Copilot",
-      spawn: { command: "npx", args: ["@github/copilot@1.0.14", "--acp"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "kilo",
-      name: "Kilo Code",
-      spawn: { command: "npx", args: ["@kilocode/cli@7.1.11", "acp"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "cline",
-      name: "Cline",
-      spawn: { command: "npx", args: ["cline@2.11.0", "--acp"] },
-      runtime: { provider: "default" },
-    },
-    {
-      id: "pirate",
-      name: "Pirate (Docker)",
-      spawn: { command: "", args: [] },
-      runtime: { provider: "docker", image: "agentcatalog/pirate" },
-    },
-  ];
+export async function createAgentTemplates(): Promise<AgentTemplate[]> {
+  try {
+    const res = await fetch(REGISTRY_URL);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { agents: RegistryAgent[] };
+    return data.agents
+      .map(registryToTemplate)
+      .filter((t): t is AgentTemplate => t !== null);
+  } catch {
+    console.warn("Failed to fetch ACP registry, using empty template list");
+    return [];
+  }
 }

@@ -79,7 +79,11 @@ function SessionsPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <TerminalIcon className="h-4 w-4" />
+                      {template.icon ? (
+                        <img src={template.icon} alt={template.name} className="h-5 w-5" />
+                      ) : (
+                        <TerminalIcon className="h-4 w-4" />
+                      )}
                     </div>
                     <CardTitle className="text-sm font-semibold">
                       {template.name}
