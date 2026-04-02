@@ -1,13 +1,3 @@
-/**
- * Local dev deployment — Docker containers + CF Worker via Alchemy.
- *
- * Uses plain Docker containers for Restate + RuntimeHost (no CF Container
- * binding networking issues in dev). Worker connects via localhost URLs.
- *
- * Usage:
- *   ALCHEMY_PASSWORD=... npx alchemy dev cloudflare.run.dev.ts
- */
-
 import path from "node:path";
 import alchemy from "alchemy";
 import * as docker from "alchemy/docker";
@@ -17,71 +7,47 @@ const app = await alchemy("flamecast-dev", {
   password: process.env.ALCHEMY_PASSWORD,
 });
 
-// ─── Restate (Docker container) ─────────────────────────────────────────
+const network = await docker.Network("flamecast-network", {
+  name: `flamecast-network-${app.stage}`,
+});
 
 const restate = await docker.Container("restate", {
   image: "docker.restate.dev/restatedev/restate:latest",
   name: `flamecast-restate-${app.stage}`,
   ports: [
-    { external: 18080, internal: 8080 },  // ingress
-    { external: 19070, internal: 9070 },  // admin
+    { external: 18080, internal: 8080 },
+    { external: 19070, internal: 9070 },
   ],
+  networks: [{ name: network.name }],
   start: true,
   restart: "unless-stopped",
 });
 
-// ─── RuntimeHost (Docker container) ─────────────────────────────────────
-
-const runtimeHostImage = await docker.Image("runtime-host-image", {
-  name: "flamecast-runtime-host",
-  build: {
-    context: ".",
-    dockerfile: "deploy/runtime-host/Dockerfile",
-  },
-});
 
 const runtimeHost = await docker.Container("runtime-host", {
-  image: runtimeHostImage,
+  image: await docker.Image("runtime-host-image", {
+    name: "flamecast-runtime-host",
+    build: {
+      context: ".",
+      dockerfile: "deploy/runtime-host/Dockerfile",
+    },
+  }),
   name: `flamecast-runtime-host-${app.stage}`,
   ports: [
     { external: 9100, internal: 9100 },
+    { external: 9080, internal: 9080 },  // Restate endpoint
   ],
-  environment: {
-    RESTATE_INGRESS_URL: "http://host.docker.internal:18080",
-    RUNTIME_HOST_PORT: "9100",
-  },
-  start: true,
-  restart: "unless-stopped",
-});
-
-// ─── Restate Endpoint (Docker container) ────────────────────────────────
-// Runs serve-endpoint.ts — the VO handlers that Restate calls into.
-
-const endpointImage = await docker.Image("endpoint-image", {
-  name: "flamecast-endpoint",
-  build: {
-    context: ".",
-    dockerfile: "deploy/runtime-host/Dockerfile", // same base, different CMD
-  },
-});
-
-const endpoint = await docker.Container("endpoint", {
-  image: endpointImage,
-  name: `flamecast-endpoint-${app.stage}`,
-  ports: [
-    { external: 9080, internal: 9080 },
-  ],
+  networks: [{ name: network.name }],
   environment: {
     FLAMECAST_RUNTIME_HOST: "remote",
-    FLAMECAST_RUNTIME_HOST_URL: "http://host.docker.internal:9100",
-    RESTATE_INGRESS_URL: "http://host.docker.internal:18080",
+    FLAMECAST_RUNTIME_HOST_URL: `http://flamecast-runtime-host-${app.stage}:9100`,
+    RESTATE_INGRESS_URL: `http://flamecast-restate-${app.stage}:8080`,
   },
   command: ["node", "packages/flamecast/dist/restate/serve-endpoint.js"],
   start: true,
   restart: "unless-stopped",
 });
 
-// ─── API Worker ─────────────────────────────────────────────────────────
 
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
@@ -120,7 +86,7 @@ async function registerEndpoint(retries = 10): Promise<void> {
       const res = await fetch("http://localhost:19070/deployments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uri: "http://host.docker.internal:9080", force: true }),
+        body: JSON.stringify({ uri: `http://flamecast-runtime-host-${app.stage}:9080`, force: true }),
       });
       if (res.ok) {
         const data = await res.json() as { services?: Array<{ name: string }> };
@@ -134,15 +100,9 @@ async function registerEndpoint(retries = 10): Promise<void> {
     await new Promise((r) => setTimeout(r, 2000));
   }
   console.warn("Failed to auto-register Restate endpoint — run manually:");
-  console.warn('  curl -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d \'{"uri":"http://host.docker.internal:9080","force":true}\'');
+  console.warn(`  curl -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d '{"uri":"http://flamecast-runtime-host-${app.stage}:9080","force":true}'`);
 }
 
 registerEndpoint();
-
-console.log(`Restate:      http://localhost:18080 (container: ${restate.id})`);
-console.log(`Endpoint:     http://localhost:9080 (container: ${endpoint.id})`);
-console.log(`RuntimeHost:  http://localhost:9100 (container: ${runtimeHost.id})`);
-console.log(`API:          ${server.url}`);
-console.log(`Client:       ${client.url}`);
 
 await app.finalize();
