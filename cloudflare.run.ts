@@ -2,74 +2,65 @@
  * Cloudflare deployment — full stack via Alchemy.
  *
  * Deploys:
- *   1. Restate server        → CF Container (durable state)
- *   2. RuntimeHost server     → CF Container (agent processes)
+ *   1. Restate server        → CF Container (via Worker binding)
+ *   2. RuntimeHost server     → CF Container (via Worker binding)
  *   3. Flamecast API          → CF Worker (stateless HTTP)
  *
  * Usage:
- *   ALCHEMY_PASSWORD=... npx alchemy run cloudflare.run.ts
+ *   ALCHEMY_PASSWORD=... npx alchemy dev cloudflare.run.ts
  *
  * Required env:
- *   ALCHEMY_PASSWORD    — Alchemy state encryption key
- *   CLOUDFLARE_API_TOKEN — CF API token with Workers + Containers permissions
+ *   ALCHEMY_PASSWORD       — Alchemy state encryption key
+ *   CLOUDFLARE_API_TOKEN   — CF API token with Workers + Containers permissions
+ *   CLOUDFLARE_ACCOUNT_ID  — CF account ID
  */
 
 import alchemy from "alchemy";
-import {
-  ContainerApplication,
-  Worker,
-} from "alchemy/cloudflare";
+import { Container, Worker } from "alchemy/cloudflare";
 import { Image } from "alchemy/docker";
 
 const app = await alchemy("flamecast", {
   password: process.env.ALCHEMY_PASSWORD,
 });
 
-// ─── Restate server (durable state engine) ──────────────────────────────
+// ─── Container images ───────────────────────────────────────────────────
 
+// Restate: pre-built image from official registry
 const restateImage = await Image("restate-image", {
   image: "docker.restate.dev/restatedev/restate:latest",
 });
 
-const restate = await ContainerApplication("restate", {
-  name: `flamecast-restate-${app.stage}`,
-  image: restateImage,
-  instances: 1,
-  maxInstances: 1,
-  instanceType: "basic", // 1/4 vCPU, 1-4 GB RAM
-  observability: { logs: { enabled: true } },
-});
-
-// ─── RuntimeHost server (agent process manager) ─────────────────────────
-
+// RuntimeHost: built from our Dockerfile
 const runtimeHostImage = await Image("runtime-host-image", {
-  name: `flamecast-runtime-host-${app.stage}`,
+  name: "flamecast-runtime-host",
   build: {
     context: ".",
     dockerfile: "deploy/runtime-host/Dockerfile",
+    platform: "linux/amd64",
   },
 });
 
-const runtimeHost = await ContainerApplication("runtime-host", {
-  name: `flamecast-runtime-host-${app.stage}`,
-  image: runtimeHostImage,
-  instances: 1,
-  maxInstances: 3,
-  instanceType: "basic",
-  observability: { logs: { enabled: true } },
-});
-
-// ─── API Worker (stateless HTTP) ────────────────────────────────────────
+// ─── API Worker with Container bindings ─────────────────────────────────
+// Container bindings handle registry push + container creation automatically.
 
 const api = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
-  entrypoint: "./examples/cloudflare/src/worker.ts",
+  entrypoint: "./examples/cloudflare/src/app.ts",
   format: "esm",
   compatibility: "node",
   bindings: {
-    // Container networking: Restate and RuntimeHost URLs are configured
-    // via environment variables. In production, use CF internal networking
-    // or public container endpoints.
+    RESTATE: await Container("restate", {
+      className: "RestateServer",
+      image: restateImage,
+      maxInstances: 1,
+      instanceType: "basic",
+    }),
+    RUNTIME_HOST: await Container("runtime-host", {
+      className: "RuntimeHostServer",
+      image: runtimeHostImage,
+      maxInstances: 3,
+      instanceType: "basic",
+    }),
     RESTATE_INGRESS_URL: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
     FLAMECAST_RUNTIME_HOST: "remote",
     FLAMECAST_RUNTIME_HOST_URL: process.env.FLAMECAST_RUNTIME_HOST_URL ?? "http://localhost:9100",
@@ -77,8 +68,6 @@ const api = await Worker("flamecast-api", {
   url: true,
 });
 
-console.log(`API:          ${api.url}`);
-console.log(`Restate:      ${restate.id}`);
-console.log(`RuntimeHost:  ${runtimeHost.id}`);
+console.log(`API: ${api.url}`);
 
 await app.finalize();
