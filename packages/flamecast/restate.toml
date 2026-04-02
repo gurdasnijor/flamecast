@@ -3,3 +3,6 @@ bind-port = 18080
 
 [admin]
 bind-port = 19070
+
+[node]
+base-dir = ".restate-data"

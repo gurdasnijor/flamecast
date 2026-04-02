@@ -50,3 +50,4 @@ apps/client/.tanstack
 .vercel
 worker-configuration.d.ts
 restate-data/
+.restate-data/
