@@ -8,7 +8,7 @@
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
 import type { SpawnConfig } from "./registry.js";
-import type { AgentTransport, TransportConnection } from "./transport.js";
+import type { TransportConnection } from "./transport.js";
 import { StdioTransport } from "./transports/stdio.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -159,17 +159,32 @@ class GatewayAcpClient implements acp.Client {
 
 const stdioTransport = new StdioTransport();
 
-function resolveTransport(config: SpawnConfig): AgentTransport {
+function connectTransport(
+  config: SpawnConfig,
+  runId: string,
+  cwd: string,
+): Promise<TransportConnection> {
   const explicit = config.transport;
-  if (explicit === "stdio" || !explicit) {
-    // Default: infer from distribution type
-    if (config.distribution.type === "url") {
+  const dist = config.distribution;
+
+  if (explicit === "stdio" || (!explicit && dist.type !== "url")) {
+    if (dist.type === "url") {
       throw new Error(
         `Agent "${config.id}" has url distribution but no http-sse/websocket transport configured`,
       );
     }
-    return stdioTransport;
+    return stdioTransport.connect({
+      cmd: dist.cmd,
+      args: dist.args,
+      cwd,
+      env: {
+        ...(dist.type === "npx" ? dist.env : undefined),
+        ...config.env,
+      },
+      label: `${config.id}:${runId}`,
+    });
   }
+
   // Future: http-sse and websocket transports
   throw new Error(`Transport "${explicit}" not yet implemented`);
 }
@@ -188,10 +203,9 @@ export async function spawnForRun(
   cwd?: string,
 ): Promise<AgentProcess> {
   const resolvedCwd = cwd ?? process.cwd();
-  const transport = resolveTransport(config);
 
   // Connect via transport — gets us a Stream for ClientSideConnection
-  const connection = await transport.connect(config, runId, resolvedCwd);
+  const connection = await connectTransport(config, runId, resolvedCwd);
 
   const agentProcess: AgentProcess = {
     runId,

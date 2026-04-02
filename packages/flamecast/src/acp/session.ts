@@ -7,7 +7,7 @@
  *   startSession → conversationLoop (fire-and-forget)
  *     while(true):
  *       suspend on awakeable (wait for sendPrompt)
- *       drive agent via AgentBackend
+ *       drive agent via AcpClient
  *       permission requests → awakeables (zero-cost suspension)
  *       stream events → pubsub
  *       emit result → loop back
@@ -16,12 +16,20 @@
  */
 
 import * as restate from "@restatedev/restate-sdk";
-import * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "@agentclientprotocol/sdk";
 import { createRestateRuntime } from "../runtime/restate.js";
 import type { AgentRuntime } from "../runtime/types.js";
-import { createBackend, type AgentBackend, type AgentConnection } from "./agent-backend.js";
+import { AcpClient } from "@flamecast/acp-gateway/acp-client";
+import { RegistryTransport } from "@flamecast/acp-gateway/transports/registry";
 
-const backend: AgentBackend = createBackend();
+const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const acpClient = new AcpClient({
+  transport: new RegistryTransport(agentIds),
+});
 
 function makeRuntime(ctx: restate.ObjectContext): AgentRuntime {
   return createRestateRuntime(ctx, { objectName: "AcpSession" });
@@ -80,15 +88,75 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   const agentName = await runtime.state.get<string>("agentName");
   if (!agentName) throw new restate.TerminalError("No agent configured");
 
-  // Agent connection — lives across turns. Re-established on replay.
-  let agentConn: AgentConnection | null = null;
+  // ACP session ID — set on first connection, reused across turns
+  let acpSessionId: string | null = null;
 
-  async function ensureConnection(client: acp.Client): Promise<AgentConnection> {
-    if (!agentConn) {
+  async function ensureConnection(): Promise<string> {
+    if (!acpSessionId) {
       const cwd = (await runtime.state.get<string>("cwd")) ?? process.cwd();
-      agentConn = await backend.connect(agentName!, sessionId, client, cwd);
+      const session = await acpClient.connect(agentName!, {
+        cwd,
+        onPermissionRequest: async (
+          params: acp.RequestPermissionRequest,
+        ): Promise<acp.RequestPermissionResponse> => {
+          const request = {
+            toolCallId: params.toolCall.toolCallId,
+            title: params.toolCall.title ?? "Permission required",
+            options: params.options.map(
+              (o: { optionId: string; name: string; kind: string }) => ({
+                optionId: o.optionId,
+                name: o.name,
+                kind: o.kind,
+              }),
+            ),
+          };
+
+          const { id: awakeableId, promise } =
+            ctx.awakeable<{ optionId: string }>();
+
+          runtime.emit({
+            type: "permission_request",
+            requestId: request.toolCallId,
+            toolCallId: request.toolCallId,
+            title: request.title,
+            options: request.options,
+            awakeableId,
+            generation: 0,
+          } as never);
+
+          const response = await promise;
+          return {
+            outcome: { outcome: "selected", optionId: response.optionId },
+          };
+        },
+
+        onSessionUpdate: (params: acp.SessionNotification): void => {
+          const update = params.update;
+          if (
+            update.sessionUpdate === "agent_message_chunk" &&
+            update.content.type === "text"
+          ) {
+            runtime.emit({
+              type: "text",
+              text: update.content.text ?? "",
+              role: "assistant",
+            } as never);
+          } else if (
+            update.sessionUpdate === "tool_call" ||
+            update.sessionUpdate === "tool_call_update"
+          ) {
+            runtime.emit({
+              type: "tool",
+              toolCallId: update.toolCallId,
+              title: update.title,
+              status: update.status,
+            } as never);
+          }
+        },
+      });
+      acpSessionId = session.sessionId;
     }
-    return agentConn;
+    return acpSessionId;
   }
 
   while (true) {
@@ -110,78 +178,12 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
       runtime.state.set("meta", meta);
     }
 
-    // ── Build ACP client that wires callbacks to pubsub + awakeables ─
-    const client: acp.Client = {
-      async requestPermission(
-        params: acp.RequestPermissionRequest,
-      ): Promise<acp.RequestPermissionResponse> {
-        const request = {
-          toolCallId: params.toolCall.toolCallId,
-          title: params.toolCall.title ?? "Permission required",
-          options: params.options.map(
-            (o: { optionId: string; name: string; kind: string }) => ({
-              optionId: o.optionId,
-              name: o.name,
-              kind: o.kind,
-            }),
-          ),
-        };
-
-        const { id: awakeableId, promise } =
-          ctx.awakeable<{ optionId: string }>();
-
-        runtime.emit({
-          type: "permission_request",
-          requestId: request.toolCallId,
-          toolCallId: request.toolCallId,
-          title: request.title,
-          options: request.options,
-          awakeableId,
-          generation: 0,
-        } as never);
-
-        const response = await promise;
-        return {
-          outcome: { outcome: "selected", optionId: response.optionId },
-        };
-      },
-
-      async sessionUpdate(
-        params: acp.SessionNotification,
-      ): Promise<void> {
-        const update = params.update;
-        if (
-          update.sessionUpdate === "agent_message_chunk" &&
-          update.content.type === "text"
-        ) {
-          runtime.emit({
-            type: "text",
-            text: update.content.text ?? "",
-            role: "assistant",
-          } as never);
-        } else if (
-          update.sessionUpdate === "tool_call" ||
-          update.sessionUpdate === "tool_call_update"
-        ) {
-          runtime.emit({
-            type: "tool",
-            toolCallId: update.toolCallId,
-            title: update.title,
-            status: update.status,
-          } as never);
-        }
-      },
-    };
-
     // ── Connect (or reuse) agent ─────────────────────────────────────
-    const conn = await ensureConnection(client);
+    const sid = await ensureConnection();
 
     // ── Drive agent with prompt ──────────────────────────────────────
     try {
-      const result = await conn.conn.prompt({
-        sessionId: conn.sessionId,
-        prompt: [{ type: "text", text: next.text }],
-      });
+      const result = await acpClient.prompt(sid, next.text);
 
       runtime.emit({
         type: "complete",
@@ -218,9 +220,8 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   }
 
   // Clean up (reachable when null is sent to break the loop)
-  const conn = agentConn as unknown as AgentConnection | null;
-  if (conn) {
-    await conn.transport.close();
+  if (acpSessionId) {
+    await acpClient.close(acpSessionId);
   }
 }
 

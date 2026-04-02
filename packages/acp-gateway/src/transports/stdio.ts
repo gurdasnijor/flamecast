@@ -1,40 +1,42 @@
 /**
  * Stdio transport — spawns agent as a child process, pipes stdin/stdout
- * through ndJsonStream to produce a Stream for ClientSideConnection.
+ * through ndJsonStream to produce a Stream.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentTransport, TransportConnection } from "../transport.js";
-import type { SpawnConfig } from "../registry.js";
+import type { Transport, TransportConnection } from "../transport.js";
 
-export class StdioTransport implements AgentTransport {
+export interface StdioConnectOptions {
+  cmd: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  /** Label for stderr logging (e.g. "claude-acp:run-123"). */
+  label?: string;
+}
+
+export class StdioTransport implements Transport<StdioConnectOptions> {
   async connect(
-    config: SpawnConfig,
-    runId: string,
-    cwd: string,
+    opts: StdioConnectOptions,
   ): Promise<TransportConnection & { proc: ChildProcess }> {
-    const resolvedCwd = cwd && existsSync(cwd) ? cwd : process.cwd();
-    const dist = config.distribution;
-    if (dist.type === "url") {
-      throw new Error("StdioTransport does not support url distribution");
-    }
+    const ac = new AbortController();
 
-    const proc = spawn(dist.cmd, dist.args, {
+    const proc = spawn(opts.cmd, opts.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: resolvedCwd,
-      env: {
-        ...process.env,
-        ...(dist.type === "npx" ? dist.env : undefined),
-        ...config.env,
-      },
+      cwd: opts.cwd ?? process.cwd(),
+      env: { ...process.env, ...opts.env },
     });
 
-    proc.stderr!.on("data", (chunk: Buffer) => {
-      console.error(`[${config.id}:${runId}] ${chunk.toString().trimEnd()}`);
-    });
+    proc.on("exit", () => ac.abort());
+    proc.on("error", () => ac.abort());
+
+    if (opts.label) {
+      proc.stderr!.on("data", (chunk: Buffer) => {
+        console.error(`[${opts.label}] ${chunk.toString().trimEnd()}`);
+      });
+    }
 
     const stdinWeb = Writable.toWeb(proc.stdin!);
     const stdoutWeb = Readable.toWeb(
@@ -45,12 +47,9 @@ export class StdioTransport implements AgentTransport {
     return {
       stream,
       proc,
+      signal: ac.signal,
       async close() {
         proc.kill();
-      },
-      async cancel() {
-        // cancel is handled at the ACP protocol level (conn.cancel),
-        // not at the transport level for stdio
       },
     };
   }

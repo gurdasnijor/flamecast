@@ -70,7 +70,20 @@ export class StdioBackend implements AgentBackend {
     if (!config) throw new Error(`Unknown agent: ${agentName}`);
 
     const resolvedCwd = cwd ?? process.cwd();
-    const transport = await this.transport.connect(config, runId, resolvedCwd);
+    const dist = config.distribution;
+    if (dist.type === "url") {
+      throw new Error(`StdioBackend does not support url distribution for agent "${agentName}"`);
+    }
+    const transport = await this.transport.connect({
+      cmd: dist.cmd,
+      args: dist.args,
+      cwd: resolvedCwd,
+      env: {
+        ...(dist.type === "npx" ? dist.env : undefined),
+        ...config.env,
+      },
+      label: `${config.id}:${runId}`,
+    });
     const conn = new acp.ClientSideConnection((_agent) => client, transport.stream);
 
     await conn.initialize({
