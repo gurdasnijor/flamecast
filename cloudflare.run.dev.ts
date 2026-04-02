@@ -1,6 +1,7 @@
 import path from "node:path";
 import alchemy from "alchemy";
 import * as docker from "alchemy/docker";
+import { Exec } from "alchemy/os";
 import { Worker, Vite } from "alchemy/cloudflare";
 
 const app = await alchemy("flamecast-dev", {
@@ -23,7 +24,6 @@ const restate = await docker.Container("restate", {
   restart: "unless-stopped",
 });
 
-
 const runtimeHost = await docker.Container("runtime-host", {
   image: await docker.Image("runtime-host-image", {
     name: "flamecast-runtime-host",
@@ -35,7 +35,7 @@ const runtimeHost = await docker.Container("runtime-host", {
   name: `flamecast-runtime-host-${app.stage}`,
   ports: [
     { external: 9100, internal: 9100 },
-    { external: 9080, internal: 9080 },  // Restate endpoint
+    { external: 9080, internal: 9080 },
   ],
   networks: [{ name: network.name }],
   environment: {
@@ -48,6 +48,11 @@ const runtimeHost = await docker.Container("runtime-host", {
   restart: "unless-stopped",
 });
 
+// Register endpoint with Restate (retry until both containers are ready)
+const endpointUrl = `http://flamecast-runtime-host-${app.stage}:9080`;
+await Exec("register-endpoint", {
+  command: `for i in $(seq 1 15); do curl -sf -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d '{"uri":"${endpointUrl}","force":true}' && exit 0; sleep 2; done; exit 1`,
+});
 
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
@@ -65,8 +70,6 @@ export const server = await Worker("flamecast-api", {
   },
 });
 
-// ─── Client (Vite SPA) ──────────────────────────────────────────────────
-
 const client = await Vite("flamecast-client", {
   name: `flamecast-client-${app.stage}`,
   cwd: "./apps/client",
@@ -76,33 +79,10 @@ const client = await Vite("flamecast-client", {
   },
 });
 
-// ─── Auto-register Restate endpoint ─────────────────────────────────────
-// The endpoint (serve-endpoint.ts on :9080) must be registered with Restate
-// so it knows about AgentSession + pubsub VOs. Retry until Restate is ready.
-
-async function registerEndpoint(retries = 10): Promise<void> {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const res = await fetch("http://localhost:19070/deployments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uri: `http://flamecast-runtime-host-${app.stage}:9080`, force: true }),
-      });
-      if (res.ok) {
-        const data = await res.json() as { services?: Array<{ name: string }> };
-        const names = data.services?.map((s) => s.name) ?? [];
-        console.log(`Restate endpoint registered: ${names.join(", ")}`);
-        return;
-      }
-    } catch {
-      // Restate not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  console.warn("Failed to auto-register Restate endpoint — run manually:");
-  console.warn(`  curl -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d '{"uri":"http://flamecast-runtime-host-${app.stage}:9080","force":true}'`);
-}
-
-registerEndpoint();
+console.log(`Restate:      http://localhost:18080`);
+console.log(`Endpoint:     http://localhost:9080`);
+console.log(`RuntimeHost:  http://localhost:9100`);
+console.log(`API:          ${server.url}`);
+console.log(`Client:       ${client.url}`);
 
 await app.finalize();
