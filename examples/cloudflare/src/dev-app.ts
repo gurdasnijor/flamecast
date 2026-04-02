@@ -1,10 +1,12 @@
 /**
  * Dev worker entry — uses URL-based Restate (plain Docker containers).
- * No CF Container bindings needed.
+ * Seeds agent templates from the ACP registry.
  */
 import { Flamecast } from "@flamecast/sdk";
+import { createAgentTemplates } from "../../../apps/server/src/agent-templates.js";
 
 const flamecast = new Flamecast({
+  agentTemplates: createAgentTemplates(),
   restateUrl: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
 });
 

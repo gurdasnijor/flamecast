@@ -83,6 +83,35 @@ const client = await Vite("flamecast-client", {
   },
 });
 
+// ─── Auto-register Restate endpoint ─────────────────────────────────────
+// The endpoint (serve-endpoint.ts on :9080) must be registered with Restate
+// so it knows about AgentSession + pubsub VOs. Retry until Restate is ready.
+
+async function registerEndpoint(retries = 10): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch("http://localhost:19070/deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uri: "http://host.docker.internal:9080", force: true }),
+      });
+      if (res.ok) {
+        const data = await res.json() as { services?: Array<{ name: string }> };
+        const names = data.services?.map((s) => s.name) ?? [];
+        console.log(`Restate endpoint registered: ${names.join(", ")}`);
+        return;
+      }
+    } catch {
+      // Restate not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  console.warn("Failed to auto-register Restate endpoint — run manually:");
+  console.warn('  curl -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d \'{"uri":"http://host.docker.internal:9080","force":true}\'');
+}
+
+registerEndpoint();
+
 console.log(`Restate:      http://localhost:18080 (container: ${restate.id})`);
 console.log(`RuntimeHost:  http://localhost:9100 (container: ${runtimeHost.id})`);
 console.log(`API:          ${server.url}`);
