@@ -18,6 +18,7 @@ COPY packages/flamecast packages/flamecast
 COPY tsconfig.base.json ./
 RUN pnpm --filter @flamecast/sdk build:package
 
-EXPOSE 9100
+EXPOSE 9080 9100
 ENV RUNTIME_HOST_PORT=9100
-CMD ["node", "packages/flamecast/dist/runtime-host/serve.js"]
+COPY deploy/runtime-host/entrypoint.sh ./entrypoint.sh
+CMD ["sh", "entrypoint.sh"]

@@ -43,7 +43,6 @@ const runtimeHost = await docker.Container("runtime-host", {
     FLAMECAST_RUNTIME_HOST_URL: `http://flamecast-runtime-host-${app.stage}:9100`,
     RESTATE_INGRESS_URL: `http://flamecast-restate-${app.stage}:8080`,
   },
-  command: ["node", "packages/flamecast/dist/restate/serve-endpoint.js"],
   start: true,
   restart: "unless-stopped",
 });
