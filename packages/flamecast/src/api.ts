@@ -160,6 +160,8 @@ export function createApi(flamecast: FlamecastApi) {
             args: config.spawn.args,
             cwd: body.cwd ?? process.cwd(),
             env: config.runtime.env,
+            strategy: config.runtime.provider === "docker" ? "docker" : "local",
+            containerImage: config.runtime.image,
           });
 
         return c.json({ id: sessionId, ...session }, 201);
@@ -369,6 +371,8 @@ export function createApi(flamecast: FlamecastApi) {
             args: config.spawn.args,
             cwd: body.cwd ?? process.cwd(),
             env: config.runtime.env,
+            strategy: config.runtime.provider === "docker" ? "docker" : "local",
+            containerImage: config.runtime.image,
           });
 
         // Send the first prompt to the child (conversation loop already started)

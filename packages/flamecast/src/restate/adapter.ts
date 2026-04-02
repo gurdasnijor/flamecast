@@ -73,6 +73,8 @@ export interface AgentStartConfig {
   sessionId?: string; // Explicit session ID
   env?: Record<string, string>;
   callbacks?: AgentCallbacks;
+  strategy?: "local" | "docker" | "e2b";
+  containerImage?: string;
 }
 
 // ─── Prompt Result (journaled by ctx.run()) ────────────────────────────────

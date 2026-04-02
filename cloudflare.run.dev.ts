@@ -62,7 +62,15 @@ const runtimeHost = await docker.Container("runtime-host", {
   environment: {
     RESTATE_INGRESS_URL: `http://flamecast-restate-${app.stage}:8080`,
     RUNTIME_HOST_PORT: "9100",
+    ...(process.env.ANTHROPIC_API_KEY && { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }),
+    ...(process.env.OPENAI_API_KEY && { OPENAI_API_KEY: process.env.OPENAI_API_KEY }),
+    ...(process.env.GOOGLE_API_KEY && { GOOGLE_API_KEY: process.env.GOOGLE_API_KEY }),
+    ...(process.env.GITHUB_TOKEN && { GITHUB_TOKEN: process.env.GITHUB_TOKEN }),
   },
+  volumes: [
+    // Docker socket so RuntimeHost can spawn agent containers
+    { host: "/var/run/docker.sock", container: "/var/run/docker.sock" },
+  ],
   start: true,
   restart: "unless-stopped",
 });

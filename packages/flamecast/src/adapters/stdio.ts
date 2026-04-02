@@ -29,11 +29,12 @@ export class StdioAdapter {
   async start(config: AgentStartConfig): Promise<SessionHandle> {
     const sessionId = config.sessionId ?? crypto.randomUUID();
     const handle = await this.runtimeHost.spawn(sessionId, {
-      strategy: "local",
-      binary: config.agent,
+      strategy: config.strategy ?? "local",
+      binary: config.agent || undefined,
       args: config.args,
       cwd: config.cwd,
       env: config.env,
+      containerImage: config.containerImage,
     });
 
     return {

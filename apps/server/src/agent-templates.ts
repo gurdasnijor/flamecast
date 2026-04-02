@@ -45,5 +45,11 @@ export function createAgentTemplates(): AgentTemplate[] {
       spawn: { command: "npx", args: ["cline@2.11.0", "--acp"] },
       runtime: { provider: "default" },
     },
+    {
+      id: "pirate",
+      name: "Pirate (Docker)",
+      spawn: { command: "", args: [] },
+      runtime: { provider: "docker", image: "agentcatalog/pirate" },
+    },
   ];
 }
