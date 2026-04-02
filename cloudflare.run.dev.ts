@@ -12,6 +12,17 @@ const network = await docker.Network("flamecast-network", {
   name: `flamecast-network-${app.stage}`,
 });
 
+// Shared image — same build, different CMD per container
+const flamecastImage = await docker.Image("flamecast-image", {
+  name: "flamecast",
+  build: {
+    context: ".",
+    dockerfile: "deploy/runtime-host/Dockerfile",
+  },
+});
+
+// ─── Restate server ─────────────────────────────────────────────────────
+
 const restate = await docker.Container("restate", {
   image: "docker.restate.dev/restatedev/restate:latest",
   name: `flamecast-restate-${app.stage}`,
@@ -24,34 +35,46 @@ const restate = await docker.Container("restate", {
   restart: "unless-stopped",
 });
 
-const runtimeHost = await docker.Container("runtime-host", {
-  image: await docker.Image("runtime-host-image", {
-    name: "flamecast-runtime-host",
-    build: {
-      context: ".",
-      dockerfile: "deploy/runtime-host/Dockerfile",
-    },
-  }),
-  name: `flamecast-runtime-host-${app.stage}`,
-  ports: [
-    { external: 9100, internal: 9100 },
-    { external: 9080, internal: 9080 },
-  ],
+// ─── Service endpoint (Restate VOs: AgentSession + pubsub) ──────────────
+
+const endpoint = await docker.Container("endpoint", {
+  image: flamecastImage,
+  name: `flamecast-endpoint-${app.stage}`,
+  ports: [{ external: 9080, internal: 9080 }],
   networks: [{ name: network.name }],
   environment: {
     FLAMECAST_RUNTIME_HOST: "remote",
     FLAMECAST_RUNTIME_HOST_URL: `http://flamecast-runtime-host-${app.stage}:9100`,
     RESTATE_INGRESS_URL: `http://flamecast-restate-${app.stage}:8080`,
   },
+  command: ["node", "packages/flamecast/dist/restate/serve-endpoint.js"],
   start: true,
   restart: "unless-stopped",
 });
 
-// Register endpoint with Restate (retry until both containers are ready)
-const endpointUrl = `http://flamecast-runtime-host-${app.stage}:9080`;
+// ─── RuntimeHost (spawns agent processes) ───────────────────────────────
+
+const runtimeHost = await docker.Container("runtime-host", {
+  image: flamecastImage,
+  name: `flamecast-runtime-host-${app.stage}`,
+  ports: [{ external: 9100, internal: 9100 }],
+  networks: [{ name: network.name }],
+  environment: {
+    RESTATE_INGRESS_URL: `http://flamecast-restate-${app.stage}:8080`,
+    RUNTIME_HOST_PORT: "9100",
+  },
+  start: true,
+  restart: "unless-stopped",
+});
+
+// ─── Register endpoint with Restate ─────────────────────────────────────
+
+const endpointUrl = `http://flamecast-endpoint-${app.stage}:9080`;
 await Exec("register-endpoint", {
   command: `for i in $(seq 1 15); do curl -sf -X POST http://localhost:19070/deployments -H "Content-Type: application/json" -d '{"uri":"${endpointUrl}","force":true}' && exit 0; sleep 2; done; exit 1`,
 });
+
+// ─── API Worker ─────────────────────────────────────────────────────────
 
 export const server = await Worker("flamecast-api", {
   name: `flamecast-api-${app.stage}`,
@@ -68,6 +91,8 @@ export const server = await Worker("flamecast-api", {
     port: 3001,
   },
 });
+
+// ─── Client ─────────────────────────────────────────────────────────────
 
 const client = await Vite("flamecast-client", {
   name: `flamecast-client-${app.stage}`,
