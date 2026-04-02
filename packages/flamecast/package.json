@@ -37,7 +37,7 @@
     "build": "pnpm run build:package",
     "build:package": "tsc -p tsconfig.package.json",
     "start": "node dist/cli.js",
-    "dev": "ACP_REGISTRY_PATH=../acp-gateway/registry.json tsx src/restate/serve-endpoint.ts",
+    "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx src/restate/serve-endpoint.ts",
     "dev:runtime-host": "tsx src/runtime-host/serve.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
     "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",

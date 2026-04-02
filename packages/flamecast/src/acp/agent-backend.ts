@@ -1,17 +1,14 @@
 /**
  * Agent backend — provides a ClientSideConnection to an agent.
  *
- * The VO handles everything else (pubsub, awakeables, state).
- * The backend just connects to the agent via the appropriate transport.
- *
- *   ACP_BACKEND=stdio    → spawn agent process, wire stdio (local dev)
- *   ACP_BACKEND=gateway  → connect to remote gateway (edge/cloud)
+ * Fetches agent configs from the ACP CDN registry, caches locally.
+ * No filesystem path dependencies across packages.
  */
 
 import * as acp from "@agentclientprotocol/sdk";
 import { StdioTransport } from "@flamecast/acp-gateway/transports/stdio";
 import {
-  loadRegistry,
+  loadRegistryFromIds,
   type SpawnConfig,
 } from "@flamecast/acp-gateway/registry";
 import type { TransportConnection } from "@flamecast/acp-gateway/transport";
@@ -42,11 +39,11 @@ export class StdioBackend implements AgentBackend {
   private configs: Map<string, SpawnConfig> = new Map();
   private initialized = false;
 
-  constructor(private registryPath: string) {}
+  constructor(private agentIds: string[]) {}
 
   private async ensureInit() {
     if (this.initialized) return;
-    const configs = await loadRegistry(this.registryPath);
+    const configs = await loadRegistryFromIds(this.agentIds);
     for (const c of configs) {
       this.configs.set(c.id, c);
       this.configs.set(c.manifest.name, c);
@@ -94,12 +91,6 @@ export class StdioBackend implements AgentBackend {
 // ─── Factory ────────────────────────────────────────────────────────────────
 
 export function createBackend(): AgentBackend {
-  const registryPath = process.env.ACP_REGISTRY_PATH;
-  if (!registryPath) {
-    throw new Error(
-      "ACP_REGISTRY_PATH env var is required. " +
-      "Set it to the path of your registry.json (e.g. packages/acp-gateway/registry.json)",
-    );
-  }
-  return new StdioBackend(registryPath);
+  const agentIds = (process.env.ACP_AGENTS ?? "claude-acp").split(",").map((s) => s.trim()).filter(Boolean);
+  return new StdioBackend(agentIds);
 }

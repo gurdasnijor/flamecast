@@ -13,7 +13,7 @@ export function useFlamecastSession(sessionId: string) {
     setEvents([]);
     setConnectionState("connecting");
 
-    const es = new EventSource(`/api/sessions/${sessionId}/events`);
+    const es = new EventSource(`/acp/runs/${sessionId}/events`);
     esRef.current = es;
 
     es.onopen = () => setConnectionState("connected");
@@ -21,8 +21,6 @@ export function useFlamecastSession(sessionId: string) {
     es.onmessage = (ev) => {
       try {
         const parsed = JSON.parse(ev.data);
-        // SessionEvent is flat — type at top level, all fields at top level.
-        // Store the whole object as log.data so the page can access any field.
         const log: SessionLog = {
           type: parsed.type ?? "unknown",
           data: parsed,
@@ -35,7 +33,6 @@ export function useFlamecastSession(sessionId: string) {
     };
 
     es.onerror = () => {
-      // EventSource auto-reconnects; mark disconnected while retrying
       setConnectionState("disconnected");
     };
 
@@ -51,17 +48,18 @@ export function useFlamecastSession(sessionId: string) {
         ...prev,
         { type: "prompt_sent", data: { text }, timestamp: new Date().toISOString() },
       ]);
-      fetch(`/api/sessions/${sessionId}/prompt`, {
+      // Create a new run with the prompt
+      fetch(`/acp/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ agentName: "claude-acp", prompt: text, mode: "async" }),
       }).catch(() => {});
     },
     [sessionId],
   );
 
   const cancel = useCallback(() => {
-    fetch(`/api/sessions/${sessionId}/cancel`, {
+    fetch(`/acp/runs/${sessionId}/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -69,17 +67,14 @@ export function useFlamecastSession(sessionId: string) {
   }, [sessionId]);
 
   const requestFilePreview = useCallback(
-    (filePath: string) =>
-      fetch(
-        `/api/sessions/${sessionId}/files?path=${encodeURIComponent(filePath)}`,
-      ).then((r) => r.json()),
-    [sessionId],
+    (_filePath: string) => Promise.resolve({ content: "" }),
+    [],
   );
 
   const requestFsSnapshot = useCallback(
     (_opts?: { showAllFiles?: boolean }) =>
-      fetch(`/api/sessions/${sessionId}/fs`).then((r) => r.json()),
-    [sessionId],
+      Promise.resolve({ root: "", entries: [] }),
+    [],
   );
 
   const addEvent = useCallback((log: SessionLog) => {

@@ -6,7 +6,7 @@
     "db:migrate": "flamecast db migrate",
     "db:status": "flamecast db status",
     "db:studio": "flamecast db studio",
-    "dev": "tsx watch src/index.ts",
+    "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx watch src/index.ts",
     "build": "tsc --project tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "test": "vitest run --config vitest.config.ts",
