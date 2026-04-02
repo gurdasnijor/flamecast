@@ -185,6 +185,7 @@ export function createApi(flamecast: FlamecastApi) {
       }
     })
     .post("/sessions/:id/resume", async (c) => {
+      const sessionId = c.req.param("id");
       try {
         const body = await c.req.json() as {
           awakeableId: string;
@@ -192,7 +193,27 @@ export function createApi(flamecast: FlamecastApi) {
         };
         // Resolve the awakeable directly — no generation check needed.
         // Each permission has its own unique awakeable.
-        await ingress.resolveAwakeable(body.awakeableId, body.payload);
+        // For remote sessions the "awakeableId" is a server-generated requestId,
+        // not a real Restate awakeable — the resolveAwakeable call will fail
+        // but the pubsub event below is the actual communication channel.
+        try {
+          await ingress.resolveAwakeable(body.awakeableId, body.payload);
+        } catch {
+          // Not a real Restate awakeable — remote session permission
+        }
+
+        // Publish permission_responded so remote RuntimeHost servers can
+        // unblock their SDK callbacks via SSE subscription.
+        const pubsub = createPubsubClient({
+          name: "pubsub",
+          ingressUrl: flamecast.restateUrl,
+        });
+        pubsub.publish(`session:${sessionId}`, {
+          type: "permission_responded",
+          awakeableId: body.awakeableId,
+          decision: body.payload,
+        }).catch(() => {});
+
         return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
