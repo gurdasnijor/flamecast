@@ -73,7 +73,7 @@ export interface SessionAgentInfo {
 /** Metadata stored in VO state — returned by getStatus. */
 export interface SessionMeta {
   sessionId: string;
-  protocol: "zed" | "ibm";
+  protocol: "stdio" | "a2a";
   agent: SessionAgentInfo;
   status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
   startedAt: string;
@@ -113,6 +113,8 @@ export type SessionEvent =
       awakeableId: string;
       generation: number;
     }
+  // Permission resolution — emitted by resumeAgent so RuntimeHost can unblock
+  | { type: "permission_responded"; awakeableId: string; decision: unknown }
   // Streaming events — published in real-time as the agent works
   | { type: "text"; text: string; role: "assistant" | "thinking" }
   | {
@@ -124,23 +126,6 @@ export type SessionEvent =
       output?: unknown;
     };
 
-// ---------------------------------------------------------------------------
-// Legacy Session interface (used by storage layer)
-// ---------------------------------------------------------------------------
-
-export interface Session {
-  id: string;
-  agentName: string;
-  spawn: AgentSpawn;
-  startedAt: string;
-  lastUpdatedAt: string;
-  status: "active" | "killed";
-  logs: SessionLog[];
-  pendingPermission: PendingPermission | null;
-  fileSystem: FileSystemSnapshot | null;
-  websocketUrl?: string;
-  runtime?: string;
-}
 
 // ---------------------------------------------------------------------------
 // API request bodies
@@ -151,7 +136,6 @@ export interface CreateSessionBody {
   agentTemplateId?: string;
   spawn?: AgentSpawn;
   name?: string;
-  runtimeInstance?: string;
   webhooks?: Omit<WebhookConfig, "id">[];
 }
 

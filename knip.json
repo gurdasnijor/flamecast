@@ -1,29 +1,54 @@
 {
   "$schema": "https://unpkg.com/knip@6.0.1/schema-jsonc.json",
   "ignoreIssues": {
-    "apps/client/src/components/ui/**/*.tsx": ["exports"],
-    "apps/client/src/components/ai-elements/file-tree.tsx": ["exports", "types"]
+    "apps/client/src/components/ui/**/*.tsx": [
+      "exports"
+    ],
+    "apps/client/src/components/ai-elements/file-tree.tsx": [
+      "exports",
+      "types"
+    ]
   },
   "workspaces": {
     "packages/flamecast": {
       "entry": [
         "src/cli.ts",
         "src/client/api.ts",
-        "src/flamecast/agent.ts",
-        "src/flamecast/index.ts",
+        "test/fixtures/example-agent.ts",
+        "src/index.ts",
         "src/index.ts",
         "test/**/*.test.ts"
       ],
-      "ignoreBinaries": ["knip", "vitest"]
+      "ignoreBinaries": [
+        "knip",
+        "vitest"
+      ]
     },
     "examples/agent.js": {
-      "entry": ["src/**/*.ts", "test/**/*.test.ts"],
-      "ignoreFiles": [".wrangler/**"],
-      "ignoreBinaries": ["tsc", "vitest", "wrangler"]
+      "entry": [
+        "src/**/*.ts",
+        "test/**/*.test.ts"
+      ],
+      "ignoreFiles": [
+        ".wrangler/**"
+      ],
+      "ignoreBinaries": [
+        "tsc",
+        "vitest",
+        "wrangler"
+      ]
     },
     "apps/server": {
-      "entry": ["src/**/*.ts", "agent.ts", "test/**/*.test.ts"],
-      "ignoreBinaries": ["drizzle-kit", "tsx", "vitest"]
+      "entry": [
+        "src/**/*.ts",
+        "agent.ts",
+        "test/**/*.test.ts"
+      ],
+      "ignoreBinaries": [
+        "drizzle-kit",
+        "tsx",
+        "vitest"
+      ]
     },
     "apps/client": {
       "entry": [
@@ -35,7 +60,9 @@
         "src/lib/flamecast-context.ts",
         "src/lib/channel-subscription.ts"
       ],
-      "ignoreUnresolved": ["./routeTree.gen"],
+      "ignoreUnresolved": [
+        "./routeTree.gen"
+      ],
       "ignoreFiles": [
         "src/components/ui/{accordion,alert-dialog,alert,aspect-ratio,avatar,breadcrumb,button-group,calendar,carousel,chart,checkbox,combobox,command,context-menu,direction,drawer,dropdown-menu,empty,field,hover-card,input-group,input-otp,item,kbd,menubar,native-select,navigation-menu,pagination,popover,progress,radio-group,resizable,scroll-area,select,slider,sonner,spinner,table,textarea,toggle-group,toggle}.tsx"
       ],

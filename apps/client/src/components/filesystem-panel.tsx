@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
 import { Switch } from "@/components/ui/switch";
 import { FileCode2Icon, FolderTreeIcon } from "lucide-react";
-import type { FileSystemEntry } from "@flamecast/sdk/session";
+import type { FileSystemEntry } from "@flamecast/protocol/session";
 
 type TreeNode = {
   name: string;
@@ -85,12 +85,18 @@ export function FileSystemPanel({
     setSelectedPath(path);
     setExpandedPaths((current) => {
       const next = new Set(current);
-      for (const parentPath of getParentPaths(path)) {
-        next.add(parentPath);
-      }
       const entry = fileEntryMap.get(path);
       if (entry?.type === "directory") {
-        next.add(path);
+        // Toggle: collapse if expanded, expand if collapsed
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+        }
+      }
+      // Ensure parent paths are expanded so the selection is visible
+      for (const parentPath of getParentPaths(path)) {
+        next.add(parentPath);
       }
       return next;
     });

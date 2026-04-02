@@ -14,8 +14,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Streamdown } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { ArrowLeftIcon, ChevronDownIcon, SendIcon } from "lucide-react";
-import type { FileSystemEntry, SessionLog } from "@flamecast/sdk/session";
-import { PendingPermissionSchema } from "@flamecast/sdk/session";
+import type { FileSystemEntry, SessionLog } from "@flamecast/protocol/session";
+import { PendingPermissionSchema } from "@flamecast/protocol/session/zod";
 import type { PermissionRequestEvent } from "@flamecast/protocol/session-host";
 import { useFlamecastSession } from "@/hooks/use-flamecast-session";
 
@@ -122,7 +122,7 @@ function SessionDetailPage() {
     const event = wsEvents.find(
       (e) => e.type === "permission_request" && e.data?.requestId === requestId,
     );
-    if (!event?.data?.awakeableId || !event?.data?.generation) return;
+    if (!event?.data?.awakeableId) return;
 
     fetch(`/api/sessions/${id}/resume`, {
       method: "POST",
@@ -130,7 +130,6 @@ function SessionDetailPage() {
       body: JSON.stringify({
         awakeableId: event.data.awakeableId,
         payload: "optionId" in body ? body : { optionId: "" },
-        generation: event.data.generation,
       }),
     })
       .then(() => {

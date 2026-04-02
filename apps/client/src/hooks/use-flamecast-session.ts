@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionLog } from "@flamecast/sdk/session";
+import type { SessionLog } from "@flamecast/protocol/session";
 
 type ConnectionState = "disconnected" | "connecting" | "connected";
 

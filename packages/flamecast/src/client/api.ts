@@ -1,13 +1,8 @@
 /**
- * Flamecast Client SDK — typed client for the Flamecast API.
- *
- * After 5a cleanup, session operations go through Restate ingress directly.
- * This client covers template and runtime management only.
- * Session lifecycle uses @restatedev/restate-sdk-clients.
+ * Flamecast Client SDK — typed HTTP client for the Flamecast API.
  */
 
-import type { AgentTemplate, RegisterAgentTemplateBody } from "../shared/session.js";
-import type { RuntimeInfo, RuntimeInstance } from "@flamecast/protocol/runtime";
+import type { AgentTemplate, RegisterAgentTemplateBody } from "@flamecast/protocol/session";
 
 export type FlamecastClientOptions = {
   baseUrl: string | URL;
@@ -18,40 +13,17 @@ function normalizeBaseUrl(baseUrl: string | URL): string {
   return typeof baseUrl === "string" ? baseUrl : baseUrl.toString();
 }
 
-/** Factory function for backward compat. */
 export function createFlamecastClient(opts: FlamecastClientOptions) {
   const client = new FlamecastClient(opts);
   return {
-    // Template management
     fetchAgentTemplates: () => client.listAgentTemplates(),
     registerAgentTemplate: (body: RegisterAgentTemplateBody) => client.registerAgentTemplate(body),
     updateAgentTemplate: (id: string, patch: Partial<AgentTemplate>) =>
       client.updateAgentTemplate(id, patch),
-    // Runtime management
-    fetchRuntimes: () => client.listRuntimes(),
-    startRuntime: (typeName: string, name?: string) => client.startRuntime(typeName, name),
-    stopRuntime: (name: string) => client.stopRuntime(name),
-    pauseRuntime: (name: string) => client.pauseRuntime(name),
-    // Session creation proxied through the API (resolves template → calls VO)
-    createSession: (body: { agentTemplateId: string; cwd?: string; runtimeInstance?: string }) =>
+    createSession: (body: { agentTemplateId: string; cwd?: string }) =>
       client.createSession(body),
     fetchSession: (id: string) => client.fetchSession(id),
     fetchSessions: () => client.listSessions(),
-    terminateSession: async (_id: string) => {
-      throw new Error("Session termination moved to Restate VOs. Use terminateSession handler.");
-    },
-    fetchSessionFilePreview: async (_id: string, _path: string) => {
-      throw new Error("File preview moved to HTTP bridge.");
-    },
-    fetchSessionFileSystem: async (_id: string) => {
-      throw new Error("File system moved to HTTP bridge.");
-    },
-    fetchRuntimeFilePreview: async (_instance: string, _path: string) => {
-      throw new Error("Runtime file preview not supported in VO architecture.");
-    },
-    fetchRuntimeFileSystem: async (_instance: string) => {
-      throw new Error("Runtime file system not supported in VO architecture.");
-    },
   };
 }
 
@@ -71,8 +43,6 @@ export class FlamecastClient {
       ...init,
     });
   }
-
-  // ── Agent Templates ─────────────────────────────────────────────────
 
   async listAgentTemplates(): Promise<AgentTemplate[]> {
     const res = await this.request("/agent-templates");
@@ -98,12 +68,9 @@ export class FlamecastClient {
     return res.json();
   }
 
-  // ── Sessions ─────────────────────────────────────────────────────────
-
   async createSession(body: {
     agentTemplateId: string;
     cwd?: string;
-    runtimeInstance?: string;
   }): Promise<{ id: string }> {
     const res = await this.request("/sessions", {
       method: "POST",
@@ -121,31 +88,6 @@ export class FlamecastClient {
     const res = await this.request(`/sessions/${id}`);
     return res.json();
   }
-
-  // ── Runtimes ────────────────────────────────────────────────────────
-
-  async listRuntimes(): Promise<RuntimeInfo[]> {
-    const res = await this.request("/runtimes");
-    return res.json();
-  }
-
-  async startRuntime(typeName: string, instanceName?: string): Promise<RuntimeInstance> {
-    const res = await this.request(`/runtimes/${typeName}/start`, {
-      method: "POST",
-      body: instanceName ? JSON.stringify({ name: instanceName }) : "{}",
-    });
-    return res.json();
-  }
-
-  async stopRuntime(instanceName: string): Promise<void> {
-    await this.request(`/runtimes/${instanceName}/stop`, { method: "POST" });
-  }
-
-  async pauseRuntime(instanceName: string): Promise<void> {
-    await this.request(`/runtimes/${instanceName}/pause`, { method: "POST" });
-  }
-
-  // ── Health ──────────────────────────────────────────────────────────
 
   async health(): Promise<{ status: string }> {
     const res = await this.request("/health");

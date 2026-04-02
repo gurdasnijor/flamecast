@@ -1,14 +1,4 @@
 export type {
-  Runtime,
-  RuntimeNames,
-  RuntimeConfigFor,
-  RuntimeInstance,
-  RuntimeInfo,
-  SessionContext,
-  SessionEndReason,
-} from "./runtime.js";
-
-export type {
   FileSystemEntry,
   PermissionRequestEvent,
   FilesystemSnapshotEvent,
@@ -27,7 +17,6 @@ export type {
   AgentSpawn,
   AgentTemplate,
   AgentTemplateRuntime,
-  Session,
   SessionAgentInfo,
   SessionEvent,
   SessionLog,
