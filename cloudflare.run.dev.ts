@@ -69,7 +69,7 @@ const runtimeHost = await docker.Container("runtime-host", {
   },
   volumes: [
     // Docker socket so RuntimeHost can spawn agent containers
-    { host: "/var/run/docker.sock", container: "/var/run/docker.sock" },
+    { hostPath: "/var/run/docker.sock", containerPath: "/var/run/docker.sock" },
   ],
   start: true,
   restart: "unless-stopped",
