@@ -57,7 +57,6 @@ export type FlamecastApi = Pick<
   | "updateAgentTemplate"
   | "resolveSessionConfig"
   | "restateUrl"
-  | "customFetch"
 >;
 
 function toErrorMessage(error: unknown, fallback = "Unknown error"): string {
@@ -75,15 +74,6 @@ function isClientError(error: unknown): boolean {
 }
 
 export function createApi(flamecast: FlamecastApi) {
-  // When a custom fetch is provided (e.g. CF Container binding),
-  // patch globalThis.fetch so the Restate SDK uses it.
-  if (flamecast.customFetch) {
-    const original = globalThis.fetch;
-    globalThis.fetch = flamecast.customFetch;
-    // Restore if needed — but in CF Workers, fetch is per-isolate so this is safe.
-    // For Node.js with custom fetch, this persists for the process lifetime.
-    void original; // keep reference in case we need to restore
-  }
 
   // Typed Restate ingress client — used for all VO calls
   const ingress = clients.connect({ url: flamecast.restateUrl });

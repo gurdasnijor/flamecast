@@ -1,6 +1,5 @@
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container } from "@cloudflare/containers";
 import { Flamecast } from "@flamecast/sdk";
-import type { server } from "../../../cloudflare.run.ts";
 
 // ─── Container DO classes ───────────────────────────────────────────────
 
@@ -14,17 +13,10 @@ export class RuntimeHostServer extends Container {
   sleepAfter = "5m";
 }
 
-// ─── Worker ─────────────────────────────────────────────────────────────
+// ─── Hono app ───────────────────────────────────────────────────────────
 
-export default {
-  async fetch(request: Request, env: typeof server.Env): Promise<Response> {
-    const restate = getContainer(env.RESTATE, "restate");
+const flamecast = new Flamecast({
+  restateUrl: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
+});
 
-    const flamecast = new Flamecast({
-      restateUrl: "http://restate",
-      fetch: (input, init) => restate.fetch(new Request(input, init)),
-    });
-
-    return flamecast.app.fetch(request);
-  },
-};
+export default flamecast.app;

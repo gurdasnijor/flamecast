@@ -37,18 +37,11 @@ export type FlamecastOptions = {
   agentTemplates?: AgentTemplate[];
   /** Restate ingress URL for VO calls (default: http://localhost:18080). */
   restateUrl?: string;
-  /**
-   * Custom fetch for environments where Restate isn't URL-addressable
-   * (e.g. CF Container bindings via getContainer().fetch()).
-   * When provided, all Restate SDK calls use this instead of globalThis.fetch.
-   */
-  fetch?: typeof globalThis.fetch;
 };
 
 export class Flamecast {
   private readonly templates: AgentTemplate[];
   readonly restateUrl: string;
-  readonly customFetch?: typeof globalThis.fetch;
 
   /** The Hono app. Mount it on any runtime: Node, CF Workers, Vercel, etc. */
   readonly app: Hono;
@@ -56,7 +49,6 @@ export class Flamecast {
   constructor(opts: FlamecastOptions = {}) {
     this.templates = opts.agentTemplates ? [...opts.agentTemplates] : [];
     this.restateUrl = opts.restateUrl ?? "http://localhost:18080";
-    this.customFetch = opts.fetch;
     this.app = new Hono();
     this.app.route("/api", createApi(this));
   }
