@@ -48,7 +48,9 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
 
   /** Publish an event to the session's pubsub topic. */
   function publishEvent(sessionId: string, event: unknown): void {
-    pubsub.publish(`session:${sessionId}`, event).catch(() => {});
+    pubsub.publish(`session:${sessionId}`, event).catch((err) => {
+      console.warn(`[pubsub] Failed to publish to session:${sessionId}:`, err instanceof Error ? err.message : err);
+    });
   }
 
   /** Resolve a Restate awakeable with a payload. */

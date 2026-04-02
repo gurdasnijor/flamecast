@@ -232,7 +232,7 @@ export const AgentSession = restate.object({
           result = await new Promise<PromptResult>((resolve) => {
             runtimeHost.prompt(promptHandle, next.text, {
               onEvent(event) {
-                pubsub.publish(topic, event).catch(() => {});
+                pubsub.publish(topic, event).catch((err: unknown) => { console.warn("[pubsub]", err instanceof Error ? err.message : err); });
               },
               async onPermission(request) {
                 // Each permission gets its own awakeable — supports
@@ -249,7 +249,7 @@ export const AgentSession = restate.object({
                   options: request.options,
                   awakeableId,
                   generation: 0, // not used for direct awakeable resolution
-                }).catch(() => {});
+                }).catch((err: unknown) => { console.warn("[pubsub]", err instanceof Error ? err.message : err); });
 
                 // Frontend POSTs /resume with { awakeableId, payload }
                 // which calls resolveAwakeable directly
@@ -298,7 +298,7 @@ export const AgentSession = restate.object({
         // Emit the result for this turn
         // Publish result via external pubsub (not ctx — non-deterministic value).
         // Don't store in VO state — the agent response changes on replay.
-        pubsub.publish(topic, { type: "complete", result }).catch(() => {});
+        pubsub.publish(topic, { type: "complete", result }).catch((err: unknown) => { console.warn("[pubsub]", err instanceof Error ? err.message : err); });
         // Loop back to top — suspend on next awakeable
       }
 
