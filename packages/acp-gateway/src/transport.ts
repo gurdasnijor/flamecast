@@ -1,20 +1,28 @@
 /**
- * Pluggable agent transport — abstracts how the gateway connects to agents.
+ * Transport — the pluggable wire layer for ACP connections.
  *
- * ClientSideConnection just needs a Stream ({ readable, writable } of parsed
- * JSON-RPC messages). The transport provides that stream over different
- * wire protocols: stdio, HTTP+SSE, WebSocket.
+ * A Transport produces TransportConnections. Each connection carries
+ * an acp.Stream ({ readable, writable } of JSON-RPC messages) over
+ * some wire protocol (stdio, HTTP+SSE, WebSocket).
+ *
+ * Everything above this (initialize, newSession, prompt, permissions)
+ * is protocol-level, not transport-level.
  */
 
 import type * as acp from "@agentclientprotocol/sdk";
-import type { SpawnConfig } from "./registry.js";
 
 export interface TransportConnection {
   stream: acp.Stream;
   close(): Promise<void>;
-  cancel?(): Promise<void>;
+  /** Fires when the underlying wire dies. */
+  signal: AbortSignal;
 }
 
-export interface AgentTransport {
-  connect(config: SpawnConfig, runId: string, cwd: string): Promise<TransportConnection>;
+/**
+ * A transport knows how to connect given some options and return
+ * a TransportConnection. Each transport type has its own options
+ * shape (stdio needs cmd+args, HTTP needs a URL, WS needs an endpoint).
+ */
+export interface Transport<TOptions> {
+  connect(opts: TOptions): Promise<TransportConnection>;
 }
