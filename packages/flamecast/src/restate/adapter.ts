@@ -67,7 +67,7 @@ export interface AgentCallbacks {
 }
 
 export interface AgentStartConfig {
-  agent: string; // Binary path / command (Zed) or base URL + agent name (IBM)
+  agent: string; // Binary path (stdio) or endpoint URL (a2a)
   args?: string[]; // Command-line arguments (e.g., ["--acp"])
   cwd?: string; // Working directory
   sessionId?: string; // Explicit session ID
