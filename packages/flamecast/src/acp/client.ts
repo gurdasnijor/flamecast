@@ -9,7 +9,6 @@
 import * as clients from "@restatedev/restate-sdk-clients";
 import type * as restate from "@restatedev/restate-sdk";
 import { AcpSession, type SessionState } from "./session.js";
-import { acpAgents } from "./agent-service.js";
 
 export type { SessionState };
 
@@ -48,10 +47,6 @@ export function createAcpClient(opts: { restateUrl: string }) {
         .objectClient(AcpSession, sessionId)
         .terminateSession();
     },
-
-    async agents() {
-      return ingress.serviceClient(acpAgents).listAgents();
-    },
   };
 }
 
@@ -86,10 +81,6 @@ export function createAcpCtxClient(ctx: restate.Context) {
       return ctx
         .objectClient(AcpSession, sessionId)
         .terminateSession();
-    },
-
-    async agents() {
-      return ctx.serviceClient(acpAgents).listAgents();
     },
   };
 }

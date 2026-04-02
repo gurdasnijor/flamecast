@@ -16,7 +16,7 @@
  */
 
 import * as restate from "@restatedev/restate-sdk";
-import type * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk";
 import { createRestateRuntime } from "../runtime/restate.js";
 import type { AgentRuntime } from "../runtime/types.js";
 import { AcpClient } from "@flamecast/acp-gateway/acp-client";
@@ -88,17 +88,39 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   const agentName = await runtime.state.get<string>("agentName");
   if (!agentName) throw new restate.TerminalError("No agent configured");
 
-  // ACP session ID — set on first connection, reused across turns
+  // Connect to agent via AcpClient — wires callbacks to pubsub + awakeables
   let acpSessionId: string | null = null;
 
   async function ensureConnection(): Promise<string> {
     if (!acpSessionId) {
-      const cwd = (await runtime.state.get<string>("cwd")) ?? process.cwd();
-      const session = await acpClient.connect(agentName!, {
-        cwd,
-        onPermissionRequest: async (
+      const handle = await acpClient.connect(agentName!, {
+        cwd: (await runtime.state.get<string>("cwd")) ?? process.cwd(),
+        onSessionUpdate(params: acp.SessionNotification) {
+          const update = params.update;
+          if (
+            update.sessionUpdate === "agent_message_chunk" &&
+            update.content.type === "text"
+          ) {
+            runtime.emit({
+              type: "text",
+              text: update.content.text ?? "",
+              role: "assistant",
+            } as never);
+          } else if (
+            update.sessionUpdate === "tool_call" ||
+            update.sessionUpdate === "tool_call_update"
+          ) {
+            runtime.emit({
+              type: "tool",
+              toolCallId: update.toolCallId,
+              title: update.title,
+              status: update.status,
+            } as never);
+          }
+        },
+        async onPermissionRequest(
           params: acp.RequestPermissionRequest,
-        ): Promise<acp.RequestPermissionResponse> => {
+        ): Promise<acp.RequestPermissionResponse> {
           const request = {
             toolCallId: params.toolCall.toolCallId,
             title: params.toolCall.title ?? "Permission required",
@@ -129,32 +151,8 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
             outcome: { outcome: "selected", optionId: response.optionId },
           };
         },
-
-        onSessionUpdate: (params: acp.SessionNotification): void => {
-          const update = params.update;
-          if (
-            update.sessionUpdate === "agent_message_chunk" &&
-            update.content.type === "text"
-          ) {
-            runtime.emit({
-              type: "text",
-              text: update.content.text ?? "",
-              role: "assistant",
-            } as never);
-          } else if (
-            update.sessionUpdate === "tool_call" ||
-            update.sessionUpdate === "tool_call_update"
-          ) {
-            runtime.emit({
-              type: "tool",
-              toolCallId: update.toolCallId,
-              title: update.title,
-              status: update.status,
-            } as never);
-          }
-        },
       });
-      acpSessionId = session.sessionId;
+      acpSessionId = handle.sessionId;
     }
     return acpSessionId;
   }

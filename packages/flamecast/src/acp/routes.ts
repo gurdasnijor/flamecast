@@ -7,14 +7,12 @@
  *   POST /sessions/:id/resume   → resumeAgent
  *   POST /sessions/:id/cancel   → terminateSession
  *   GET  /sessions/:id/events   → pubsub SSE
- *   GET  /agents                → listAgents
  */
 
 import { Hono } from "hono";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { AcpSession } from "./session.js";
-import { acpAgents } from "./agent-service.js";
 
 interface AcpRoutesConfig {
   restateUrl: string;
@@ -29,11 +27,6 @@ export function createAcpRoutes(config: AcpRoutesConfig) {
 
   return new Hono()
     .get("/ping", (c) => c.json({ status: "ok" }))
-
-    .get("/agents", async (c) => {
-      const agents = await ingress.serviceClient(acpAgents).listAgents();
-      return c.json(agents);
-    })
 
     // ── Sessions ──────────────────────────────────────────────────────
 

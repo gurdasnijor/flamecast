@@ -19,20 +19,29 @@ describe("package contract", () => {
     );
 
     expect(packageJson.name).toBe("@flamecast/sdk");
-    expect(packageJson.main).toBe("./dist/index.js");
-    expect(packageJson.types).toBe("./dist/index.d.ts");
     expect(packageJson.bin.flamecast).toBe("./dist/cli.js");
     expect(packageJson.files).toEqual(["dist"]);
+
+    // Core entrypoint
     expect(packageJson.exports["."]).toEqual({
-      types: "./dist/index.d.ts",
-      import: "./dist/index.js",
+      types: "./src/index.ts",
+      import: "./src/index.ts",
     });
-    expect(packageJson.exports["./api"]).toEqual({
-      types: "./dist/flamecast/api.d.ts",
-      import: "./dist/flamecast/api.js",
+
+    // ACP client
+    expect(packageJson.exports["./acp"]).toEqual({
+      types: "./src/acp/client.ts",
+      import: "./src/acp/client.ts",
     });
-    // Internal sub-paths removed — types live in @flamecast/protocol,
-    // user-facing types re-exported from the main entrypoint
+
+    // Restate services
+    expect(packageJson.exports["./restate"]).toEqual({
+      types: "./src/restate/index.ts",
+      import: "./src/restate/index.ts",
+    });
+
+    // Removed sub-paths should not exist
+    expect(packageJson.exports["./api"]).toBeUndefined();
     expect(packageJson.exports["./shared/session"]).toBeUndefined();
     expect(packageJson.exports["./runtime"]).toBeUndefined();
     expect(packageJson.exports["./session-service"]).toBeUndefined();
