@@ -22,9 +22,9 @@ describe("createTestRuntime", () => {
     await rt.sleep(60_000); // should not actually wait
   });
 
-  it("now() returns an ISO timestamp", () => {
+  it("now() returns an ISO timestamp", async () => {
     const rt = createTestRuntime();
-    const ts = rt.now();
+    const ts = await rt.now();
     expect(new Date(ts).toISOString()).toBe(ts);
   });
 
