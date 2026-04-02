@@ -12,7 +12,13 @@ import { zValidator } from "@hono/zod-validator";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import type { Flamecast } from "./flamecast-class.js";
-import { AgentSession } from "./restate/agent-session.js";
+
+// Lightweight client reference — avoids importing the full VO definition
+// (which pulls in Restate SDK server, child_process, RuntimeHost, etc.)
+// The ingress client only needs { name } to route calls; handler types
+// are inferred as `any` — the actual type safety lives on the VO side.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AgentSession: any = { name: "AgentSession" };
 
 // ─── Zod schemas for API input validation ─────────────────────────────────
 
@@ -164,7 +170,7 @@ export function createApi(flamecast: FlamecastApi) {
             containerImage: config.runtime.image,
           });
 
-        return c.json({ id: sessionId, ...session }, 201);
+        return c.json({ id: sessionId, ...(session as Record<string, unknown>) }, 201);
       } catch (error) {
         const msg = toErrorMessage(error);
         return c.json({ error: msg }, isClientError(error) ? 404 : 500);
