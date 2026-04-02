@@ -89,6 +89,7 @@ export const server = await Worker("flamecast-api", {
   entrypoint: "./examples/cloudflare/src/dev-app.ts",
   format: "esm",
   compatibility: "node",
+  noBundle: true,
   bindings: {
     RESTATE_INGRESS_URL: "http://localhost:18080",
     FLAMECAST_RUNTIME_HOST: "remote",
