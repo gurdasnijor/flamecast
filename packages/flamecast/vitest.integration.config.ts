@@ -14,12 +14,6 @@ export default defineConfig({
       reportsDirectory: "./coverage/api-server",
       include: ["src/**/*.ts", "src/server/**/*.ts"],
       exclude: [
-        "src/flamecast/storage.ts",
-        "src/flamecast/runtime.ts",
-        "src/flamecast/runtimes/node.ts",
-        "src/flamecast/session-service.ts",
-        "src/flamecast/agent.ts",
-        "src/flamecast/client.ts",
       ],
       thresholds: {
         branches: 55,
@@ -32,7 +26,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@flamecast/storage-psql": path.resolve(__dirname, "../flamecast-psql/src/index.ts"),
     },
   },
 });

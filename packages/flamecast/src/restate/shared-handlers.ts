@@ -31,7 +31,7 @@ export function publish(
 
 
 
-// ─── Shared handlers (spread into both VOs) ──────────────────────────────
+// ─── Shared handlers (spread into AgentSession) ──────────────────────────────
 
 export const sharedHandlers = {
   /**

@@ -159,7 +159,7 @@ export function createApi(flamecast: FlamecastApi) {
     })
     .get("/sessions/:id", async (c) => {
       const sessionId = c.req.param("id");
-      // Try AgentSession first, fall back to legacy VOs
+      
       try {
         const meta = await ingress
           .objectClient(AgentSession, sessionId)

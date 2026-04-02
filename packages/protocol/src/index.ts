@@ -17,7 +17,6 @@ export type {
   AgentSpawn,
   AgentTemplate,
   AgentTemplateRuntime,
-  Session,
   SessionAgentInfo,
   SessionEvent,
   SessionLog,
