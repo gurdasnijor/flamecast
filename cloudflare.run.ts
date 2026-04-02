@@ -1,11 +1,6 @@
 /**
  * Cloudflare deployment — full stack via Alchemy.
  *
- * Deploys:
- *   1. Restate server        → CF Container (via Worker binding)
- *   2. RuntimeHost server     → CF Container (via Worker binding)
- *   3. Flamecast API          → CF Worker (stateless HTTP)
- *
  * Usage:
  *   ALCHEMY_PASSWORD=... npx alchemy dev cloudflare.run.ts
  *
@@ -16,58 +11,39 @@
  */
 
 import alchemy from "alchemy";
-import { Container, Worker } from "alchemy/cloudflare";
-import { Image } from "alchemy/docker";
+import { Container, Vite } from "alchemy/cloudflare";
+import type { RestateServer, RuntimeHostServer } from "./examples/cloudflare/src/app.ts";
 
 const app = await alchemy("flamecast", {
   password: process.env.ALCHEMY_PASSWORD,
 });
 
-// ─── Container images ───────────────────────────────────────────────────
-
-// Restate: pre-built image from official registry
-const restateImage = await Image("restate-image", {
+const restateContainer = await Container<RestateServer>("restate", {
+  className: "RestateServer",
   image: "docker.restate.dev/restatedev/restate:latest",
+  maxInstances: 1,
+  instanceType: "basic",
 });
 
-// RuntimeHost: built from our Dockerfile
-const runtimeHostImage = await Image("runtime-host-image", {
-  name: "flamecast-runtime-host",
+const runtimeHostContainer = await Container<RuntimeHostServer>("runtime-host", {
+  className: "RuntimeHostServer",
   build: {
     context: ".",
     dockerfile: "deploy/runtime-host/Dockerfile",
-    platform: "linux/amd64",
   },
+  maxInstances: 3,
+  instanceType: "basic",
 });
 
-// ─── API Worker with Container bindings ─────────────────────────────────
-// Container bindings handle registry push + container creation automatically.
-
-const api = await Worker("flamecast-api", {
-  name: `flamecast-api-${app.stage}`,
+export const website = await Vite("flamecast", {
+  name: `flamecast-${app.stage}`,
   entrypoint: "./examples/cloudflare/src/app.ts",
-  format: "esm",
-  compatibility: "node",
   bindings: {
-    RESTATE: await Container("restate", {
-      className: "RestateServer",
-      image: restateImage,
-      maxInstances: 1,
-      instanceType: "basic",
-    }),
-    RUNTIME_HOST: await Container("runtime-host", {
-      className: "RuntimeHostServer",
-      image: runtimeHostImage,
-      maxInstances: 3,
-      instanceType: "basic",
-    }),
-    RESTATE_INGRESS_URL: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
-    FLAMECAST_RUNTIME_HOST: "remote",
-    FLAMECAST_RUNTIME_HOST_URL: process.env.FLAMECAST_RUNTIME_HOST_URL ?? "http://localhost:9100",
+    RESTATE: restateContainer,
+    RUNTIME_HOST: runtimeHostContainer,
   },
-  url: true,
 });
 
-console.log(`API: ${api.url}`);
+console.log(`URL: ${website.url}`);
 
 await app.finalize();

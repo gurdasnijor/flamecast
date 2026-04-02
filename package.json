@@ -61,5 +61,8 @@
         }
       }
     }
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.2.2"
   }
 }
