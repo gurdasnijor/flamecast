@@ -8,6 +8,7 @@
     "dev:client": "turbo run dev --filter=flamecast-client",
     "dev:server": "turbo run dev --filter=flamecast-server",
     "dev:runtime-host": "pnpm --filter @flamecast/sdk dev:runtime-host",
+    "dev:remote": "FLAMECAST_RUNTIME_HOST=remote FLAMECAST_RUNTIME_HOST_URL=http://localhost:9100 turbo run dev dev:server dev:register dev:runtime-host --filter='!./examples/*'",
     "build": "turbo run build",
     "start": "pnpm dev",
     "knip": "knip --config knip.json --workspace packages/flamecast --workspace examples/agent.js --workspace apps/server --workspace apps/client --no-config-hints",
