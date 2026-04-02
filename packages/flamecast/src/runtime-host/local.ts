@@ -205,6 +205,11 @@ export class InProcessRuntimeHost implements RuntimeHost {
       });
     }
 
+    proc.on("error", (err) => {
+      console.error(`[agent-spawn-error] ${err.message}`);
+      this.processes.delete(sessionId);
+    });
+
     proc.stderr!.on("data", (chunk: Buffer) => {
       console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
     });
