@@ -170,6 +170,9 @@ export default flamecast.app;
 | Variable | Purpose |
 |---|---|
 | `RESTATE_INGRESS_URL` | Restate ingress endpoint (default: `http://localhost:18080`) |
+| `FLAMECAST_RUNTIME_HOST` | `inprocess` (default) or `remote` — where agent processes run |
+| `FLAMECAST_RUNTIME_HOST_URL` | RuntimeHost server URL (required when `remote`, e.g. `http://localhost:9100`) |
+| `RUNTIME_HOST_PORT` | RuntimeHost server listen port (default: `9100`) |
 
 ---
 
