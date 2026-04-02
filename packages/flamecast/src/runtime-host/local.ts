@@ -189,6 +189,8 @@ export class InProcessRuntimeHost implements RuntimeHost {
     // ── Step 1: Get a ChildProcess with stdio pipes ─────────────────
     let proc: ChildProcess;
     let containerId: string | undefined;
+    // Validate cwd exists — spawn returns misleading ENOENT if cwd is invalid
+    const cwd = spec.cwd && existsSync(spec.cwd) ? spec.cwd : process.cwd();
 
     if (spec.strategy === "docker") {
       const result = await dockerSpawn(sessionId, spec);
@@ -199,8 +201,6 @@ export class InProcessRuntimeHost implements RuntimeHost {
       if (!spec.binary) {
         throw new Error("AgentSpec.binary is required for local strategy");
       }
-      // Validate cwd exists — spawn returns misleading ENOENT if cwd is invalid
-      const cwd = spec.cwd && existsSync(spec.cwd) ? spec.cwd : process.cwd();
       proc = spawn(spec.binary, spec.args ?? [], {
         stdio: ["pipe", "pipe", "pipe"],
         cwd,
