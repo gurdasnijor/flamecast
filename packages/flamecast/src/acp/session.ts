@@ -19,8 +19,8 @@ import * as restate from "@restatedev/restate-sdk";
 import * as acp from "@agentclientprotocol/sdk";
 import { createRestateRuntime } from "../runtime/restate.js";
 import type { AgentRuntime } from "../runtime/types.js";
-import { AcpClient } from "@flamecast/acp-gateway/acp-client";
-import { RegistryTransport } from "@flamecast/acp-gateway/transports/registry";
+import { AcpClient } from "@flamecast/acp";
+import { RegistryTransport } from "@flamecast/acp/transports/registry";
 
 const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
   .split(",")
@@ -154,7 +154,7 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
       });
       acpSessionId = handle.sessionId;
     }
-    return acpSessionId;
+    return acpSessionId!;
   }
 
   while (true) {
