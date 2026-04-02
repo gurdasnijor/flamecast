@@ -8,7 +8,8 @@
  */
 
 import Docker from "dockerode";
-import { Readable, Writable } from "node:stream";
+import { PassThrough } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import type { AgentSpec, ProcessHandle } from "../types.js";
 
 const docker = new Docker(); // connects to /var/run/docker.sock
@@ -78,8 +79,8 @@ export async function dockerSpawn(
   await container.start();
 
   // Demux stdout/stderr from the multiplexed stream
-  const stdout = new Readable({ read() {} });
-  const stderr = new Readable({ read() {} });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
   docker.modem.demuxStream(attachStream, stdout, stderr);
 
   stderr.on("data", (chunk: Buffer) => {
@@ -94,7 +95,7 @@ export async function dockerSpawn(
   };
 
   // attachStream is writable (stdin) and demuxed into stdout/stderr
-  return { stdin: attachStream, stdout, handle };
+  return { stdin: attachStream as unknown as Writable, stdout: stdout as Readable, handle };
 }
 
 export async function dockerStop(containerId: string): Promise<void> {

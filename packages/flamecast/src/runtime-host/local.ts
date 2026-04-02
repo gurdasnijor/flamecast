@@ -270,7 +270,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
     return {
       sessionId,
       strategy: spec.strategy,
-      pid: proc.pid,
+      pid: proc?.pid,
       containerId,
       agentName: initResult.agentInfo?.name ?? fallbackName,
       agentDescription: initResult.agentInfo?.title,
