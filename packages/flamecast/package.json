@@ -38,6 +38,7 @@
     "build:package": "tsc -p tsconfig.package.json",
     "start": "node dist/cli.js",
     "dev": "tsx src/restate/serve-endpoint.ts",
+    "dev:runtime-host": "tsx src/runtime-host/serve.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
     "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run --config vitest.integration.config.ts",
