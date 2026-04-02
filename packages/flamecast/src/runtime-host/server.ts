@@ -6,8 +6,9 @@
  * publishes events to pubsub via typed Restate ingress client, and
  * resolves the VO's awakeable on terminal state.
  *
- * Permission flow: publishes permission_request to Restate pubsub,
- * then pulls from the same topic waiting for permission_responded.
+ * Permission flow: publishes permission_request to pubsub, blocks on a
+ * local Promise. The API's /resume route calls back to
+ * POST /sessions/:id/permissions/:requestId/respond to resolve it.
  *
  * Reference: docs/re-arch-unification.md Change 3
  */
@@ -38,6 +39,13 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
   const app = new Hono();
   app.use(logger());
 
+  // Pending permission resolvers — keyed by requestId.
+  // Exactly one waiter, exactly one resolution, no replay needed.
+  const pendingPermissions = new Map<
+    string,
+    (decision: { optionId?: string }) => void
+  >();
+
   /** Publish an event to the session's pubsub topic. */
   function publishEvent(sessionId: string, event: unknown): void {
     pubsub.publish(`session:${sessionId}`, event).catch(() => {});
@@ -46,44 +54,6 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
   /** Resolve a Restate awakeable with a payload. */
   function resolveAwakeable(awakeableId: string, payload: unknown): void {
     ingress.resolveAwakeable(awakeableId, payload);
-  }
-
-  /**
-   * Wait for a permission_responded event matching requestId.
-   * Uses the same Restate pubsub client — subscribes, filters, returns.
-   */
-  async function waitForPermission(
-    sessionId: string,
-    requestId: string,
-  ): Promise<{ optionId?: string }> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), permissionTimeoutMs);
-
-    try {
-      const messages = pubsub.pull({
-        topic: `session:${sessionId}`,
-        signal: controller.signal,
-      });
-
-      for await (const msg of messages) {
-        const event = msg as {
-          type?: string;
-          awakeableId?: string;
-          decision?: unknown;
-        };
-        if (
-          event.type === "permission_responded" &&
-          event.awakeableId === requestId
-        ) {
-          return (event.decision as { optionId?: string }) ?? {};
-        }
-      }
-    } finally {
-      clearTimeout(timeout);
-      controller.abort();
-    }
-
-    return {};
   }
 
   app.post("/sessions/:id/spawn", async (c) => {
@@ -126,22 +96,45 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
         async onPermission(request: PermissionRequest) {
           const requestId = crypto.randomUUID();
 
-          // Publish to pubsub → frontend shows permission dialog
-          publishEvent(sessionId, {
-            type: "permission_request",
-            requestId,
-            toolCallId: request.toolCallId,
-            title: request.title,
-            kind: request.kind,
-            options: request.options,
-            awakeableId: requestId,
-            generation: 0,
-          });
+          // Register resolver BEFORE publishing — avoids race where
+          // response arrives before we've registered the resolver.
+          const decision = await new Promise<{ optionId?: string }>(
+            (resolve, reject) => {
+              pendingPermissions.set(requestId, resolve);
 
-          // Wait for user response via the same pubsub topic
-          const decision = await waitForPermission(sessionId, requestId);
+              // Timeout
+              const timer = setTimeout(() => {
+                if (pendingPermissions.delete(requestId)) {
+                  reject(new Error("Permission request timed out"));
+                }
+              }, permissionTimeoutMs);
+
+              // Clean up timeout on resolution
+              const originalResolve = resolve;
+              pendingPermissions.set(requestId, (d) => {
+                clearTimeout(timer);
+                originalResolve(d);
+              });
+
+              // Publish to pubsub → frontend shows permission dialog
+              publishEvent(sessionId, {
+                type: "permission_request",
+                requestId,
+                toolCallId: request.toolCallId,
+                title: request.title,
+                kind: request.kind,
+                options: request.options,
+                awakeableId: requestId,
+                generation: 0,
+              });
+            },
+          );
+
           return {
-            optionId: decision.optionId ?? request.options[0]?.optionId ?? "approved",
+            optionId:
+              decision.optionId ??
+              request.options[0]?.optionId ??
+              "approved",
           };
         },
 
@@ -166,6 +159,23 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
       .catch(() => {});
 
     return c.json({ accepted: true }, 202);
+  });
+
+  // ─── Permission response endpoint ──────────────────────────────────────
+  // Called by the API's /resume route to deliver the user's permission decision.
+
+  app.post("/sessions/:id/permissions/:requestId/respond", async (c) => {
+    const requestId = c.req.param("requestId");
+    const decision = (await c.req.json()) as { optionId?: string };
+
+    const resolve = pendingPermissions.get(requestId);
+    if (!resolve) {
+      return c.json({ error: "No pending permission request" }, 404);
+    }
+
+    resolve(decision);
+    pendingPermissions.delete(requestId);
+    return c.json({ ok: true });
   });
 
   app.post("/sessions/:id/cancel", async (c) => {

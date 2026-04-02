@@ -200,28 +200,33 @@ export function createApi(flamecast: FlamecastApi) {
           awakeableId: string;
           payload: unknown;
         };
-        // Resolve the awakeable directly — no generation check needed.
-        // Each permission has its own unique awakeable.
-        // For remote sessions the "awakeableId" is a server-generated requestId,
-        // not a real Restate awakeable — the resolveAwakeable call will fail
-        // but the pubsub event below is the actual communication channel.
+
+        // Two paths depending on where the permission originated:
+        //
+        // 1. Inprocess: awakeableId is a real Restate awakeable created by
+        //    the VO's conversationLoop. resolveAwakeable unblocks it directly.
+        //
+        // 2. Remote: awakeableId is a server-generated requestId. The
+        //    RuntimeHost server holds a local Promise keyed by this ID.
+        //    Call its /permissions/:requestId/respond endpoint to resolve it.
+
+        // Try resolving as Restate awakeable (inprocess path)
         try {
           await ingress.resolveAwakeable(body.awakeableId, body.payload);
         } catch {
-          // Not a real Restate awakeable — remote session permission
+          // Not a real Restate awakeable — try RuntimeHost endpoint
+          const runtimeHostUrl = process.env.FLAMECAST_RUNTIME_HOST_URL;
+          if (runtimeHostUrl) {
+            await fetch(
+              `${runtimeHostUrl}/sessions/${sessionId}/permissions/${body.awakeableId}/respond`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body.payload),
+              },
+            ).catch(() => {});
+          }
         }
-
-        // Publish permission_responded so remote RuntimeHost servers can
-        // unblock their SDK callbacks via SSE subscription.
-        const pubsub = createPubsubClient({
-          name: "pubsub",
-          ingressUrl: flamecast.restateUrl,
-        });
-        pubsub.publish(`session:${sessionId}`, {
-          type: "permission_responded",
-          awakeableId: body.awakeableId,
-          decision: body.payload,
-        }).catch(() => {});
 
         return c.json({ ok: true });
       } catch (error) {
