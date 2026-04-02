@@ -38,7 +38,7 @@ function SessionsPage() {
   });
 
   return (
-    <div className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto px-1">
+    <div className="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-4">
       <div className="flex flex-col gap-8">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
