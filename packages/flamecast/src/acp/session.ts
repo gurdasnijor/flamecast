@@ -1,22 +1,21 @@
 /**
  * AcpSession — Restate Virtual Object for multi-turn agent sessions.
  *
- * Keyed by session ID. Maintains a persistent agent connection across
- * multiple prompt turns. Uses the conversation loop pattern:
- *
- *   startSession → conversationLoop (fire-and-forget)
- *     while(true):
- *       suspend on awakeable (wait for sendPrompt)
- *       drive agent via AcpClient
- *       permission requests → awakeables (zero-cost suspension)
- *       stream events → pubsub
- *       emit result → loop back
- *
- * One Restate invocation per session. Zero compute between turns.
+ * Handler contracts use Zod schemas from @agentclientprotocol/sdk
+ * directly, so the auto-generated OpenAPI matches the ACP spec.
  */
 
 import * as restate from "@restatedev/restate-sdk";
 import * as acp from "@agentclientprotocol/sdk";
+import {
+  zNewSessionRequest,
+  zNewSessionResponse,
+  zPromptRequest,
+  zPromptResponse,
+  zRequestPermissionResponse,
+  zSessionId,
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+import { z } from "zod";
 import { createRestateRuntime } from "../runtime/restate.js";
 import type { AgentRuntime } from "../runtime/types.js";
 import { AcpClient } from "@flamecast/acp";
@@ -35,28 +34,52 @@ function makeRuntime(ctx: restate.ObjectContext): AgentRuntime {
   return createRestateRuntime(ctx, { objectName: "AcpSession" });
 }
 
-// ─── State Types ────────────────────────────────────────────────────────────
+// ─── Schemas ────────────────────────────────────────────────────────────────
 
-export interface SessionState {
-  agentName: string;
-  status: "active" | "running" | "paused" | "completed" | "failed" | "killed";
-  startedAt: string;
-  lastUpdatedAt: string;
-}
+// startSession extends ACP NewSessionRequest with agentName
+const StartSessionInput = zNewSessionRequest.extend({
+  agentName: z.string(),
+});
+
+// Session status — extends ACP with our lifecycle tracking
+const SessionStatus = z.object({
+  sessionId: zSessionId,
+  agentName: z.string(),
+  status: z.enum([
+    "created",
+    "in-progress",
+    "awaiting",
+    "completed",
+    "failed",
+    "cancelled",
+    "killed",
+  ]),
+  startedAt: z.string(),
+  lastUpdatedAt: z.string(),
+});
+
+// resumeAgent — permission awakeableId + selected optionId
+const ResumeAgentInput = z.object({
+  awakeableId: z.string(),
+  optionId: z.string(),
+});
+
+export type SessionState = z.infer<typeof SessionStatus>;
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
 async function startSession(
   ctx: restate.ObjectContext,
-  input: { agentName: string; cwd?: string },
-): Promise<{ sessionId: string; agentName: string }> {
+  input: z.infer<typeof StartSessionInput>,
+): Promise<acp.NewSessionResponse> {
   const runtime = makeRuntime(ctx);
   const sessionId = runtime.key;
   const now = await runtime.now();
 
   const meta: SessionState = {
+    sessionId,
     agentName: input.agentName,
-    status: "active",
+    status: "created",
     startedAt: now,
     lastUpdatedAt: now,
   };
@@ -67,19 +90,13 @@ async function startSession(
 
   runtime.emit({ type: "session.created", meta } as never);
 
-  // Fire-and-forget: start the conversation loop
   ctx.objectSendClient(AcpSession, sessionId).conversationLoop();
 
-  return { sessionId, agentName: input.agentName };
+  return { sessionId };
 }
 
 /**
- * Conversation loop — single invocation for the entire session.
- *
- * Kicked off by startSession. Loops:
- *   suspend → receive prompt → connect to agent → drive → emit result → loop
- *
- * One Restate invocation per session. Zero compute between turns.
+ * Conversation loop — internal handler, not typed for OpenAPI.
  */
 async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   const runtime = makeRuntime(ctx);
@@ -88,7 +105,6 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   const agentName = await runtime.state.get<string>("agentName");
   if (!agentName) throw new restate.TerminalError("No agent configured");
 
-  // Connect to agent via AcpClient — wires callbacks to pubsub + awakeables
   let acpSessionId: string | null = null;
 
   async function ensureConnection(): Promise<string> {
@@ -121,6 +137,13 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
         async onPermissionRequest(
           params: acp.RequestPermissionRequest,
         ): Promise<acp.RequestPermissionResponse> {
+          const meta = await runtime.state.get<SessionState>("meta");
+          if (meta) {
+            meta.status = "awaiting";
+            meta.lastUpdatedAt = await runtime.now();
+            runtime.state.set("meta", meta);
+          }
+
           const request = {
             toolCallId: params.toolCall.toolCallId,
             title: params.toolCall.title ?? "Permission required",
@@ -147,6 +170,14 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
           } as never);
 
           const response = await promise;
+
+          const metaAfter = await runtime.state.get<SessionState>("meta");
+          if (metaAfter) {
+            metaAfter.status = "in-progress";
+            metaAfter.lastUpdatedAt = await runtime.now();
+            runtime.state.set("meta", metaAfter);
+          }
+
           return {
             outcome: { outcome: "selected", optionId: response.optionId },
           };
@@ -158,44 +189,59 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
   }
 
   while (true) {
-    // ── Suspend: wait for next prompt via sendPrompt ──────────────────
     const { id: promptId, promise: promptPromise } =
-      ctx.awakeable<{ text: string } | null>();
+      ctx.awakeable<acp.PromptRequest | null>();
     runtime.state.set("pending_prompt", { awakeableId: promptId });
 
     const next = await promptPromise;
     runtime.state.clear("pending_prompt");
 
-    if (!next) break; // null = session terminated
+    if (!next) break;
 
-    // ── Update status ────────────────────────────────────────────────
     const meta = await runtime.state.get<SessionState>("meta");
     if (meta) {
-      meta.status = "running";
+      meta.status = "in-progress";
       meta.lastUpdatedAt = await runtime.now();
       runtime.state.set("meta", meta);
     }
 
-    // ── Connect (or reuse) agent ─────────────────────────────────────
     const sid = await ensureConnection();
 
-    // ── Drive agent with prompt ──────────────────────────────────────
+    // Extract text from ACP content blocks
+    const text = next.prompt
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+
     try {
-      const result = await acpClient.prompt(sid, next.text);
+      const result = await acpClient.prompt(sid, text);
+
+      const status =
+        result.stopReason === "cancelled"
+          ? "cancelled"
+          : result.stopReason === "refusal"
+            ? "failed"
+            : "completed";
+
+      const metaDone = await runtime.state.get<SessionState>("meta");
+      if (metaDone) {
+        metaDone.status = status;
+        metaDone.lastUpdatedAt = await runtime.now();
+        runtime.state.set("meta", metaDone);
+      }
 
       runtime.emit({
         type: "complete",
-        result: {
-          status:
-            result.stopReason === "cancelled"
-              ? "cancelled"
-              : result.stopReason === "refusal"
-                ? "failed"
-                : "completed",
-          runId: sessionId,
-        },
+        result: { status, stopReason: result.stopReason, runId: sessionId },
       } as never);
     } catch (err) {
+      const metaErr = await runtime.state.get<SessionState>("meta");
+      if (metaErr) {
+        metaErr.status = "failed";
+        metaErr.lastUpdatedAt = await runtime.now();
+        runtime.state.set("meta", metaErr);
+      }
+
       runtime.emit({
         type: "complete",
         result: {
@@ -205,60 +251,59 @@ async function conversationLoop(ctx: restate.ObjectContext): Promise<void> {
         },
       } as never);
     }
-
-    // ── Update status back to active ─────────────────────────────────
-    const metaAfter = await runtime.state.get<SessionState>("meta");
-    if (metaAfter) {
-      metaAfter.status = "active";
-      metaAfter.lastUpdatedAt = await runtime.now();
-      runtime.state.set("meta", metaAfter);
-    }
-
-    // Loop back — suspend on next awakeable
   }
 
-  // Clean up (reachable when null is sent to break the loop)
   if (acpSessionId) {
     await acpClient.close(acpSessionId);
   }
+
+  const metaKilled = await runtime.state.get<SessionState>("meta");
+  if (metaKilled) {
+    metaKilled.status = "killed";
+    metaKilled.lastUpdatedAt = await runtime.now();
+    runtime.state.set("meta", metaKilled);
+  }
 }
 
-/** Send a prompt to the conversation loop. Shared handler. */
+/**
+ * Send a prompt — accepts ACP PromptRequest (content blocks).
+ * Returns immediately with PromptResponse. Actual result comes via events.
+ */
 async function sendPrompt(
   ctx: restate.ObjectSharedContext,
-  input: { text: string },
-): Promise<void> {
+  input: acp.PromptRequest,
+): Promise<acp.PromptResponse> {
   const pending = await ctx.get<{ awakeableId: string }>("pending_prompt");
   if (!pending) {
     throw new restate.TerminalError(
       "No pending prompt — session may not be running or is mid-turn",
     );
   }
-  ctx.resolveAwakeable(pending.awakeableId, { text: input.text });
+  ctx.resolveAwakeable(pending.awakeableId, input);
+  return { stopReason: "end_turn" };
 }
 
-/** Get session status. Shared handler. */
 async function getStatus(
   ctx: restate.ObjectSharedContext,
 ): Promise<SessionState | null> {
   return ctx.get<SessionState>("meta");
 }
 
-/** Resume a permission request. Shared handler. */
 async function resumeAgent(
   ctx: restate.ObjectSharedContext,
-  input: { awakeableId: string; optionId: string },
-): Promise<void> {
+  input: z.infer<typeof ResumeAgentInput>,
+): Promise<acp.RequestPermissionResponse> {
   ctx.resolveAwakeable(input.awakeableId, { optionId: input.optionId });
+  return {
+    outcome: { outcome: "selected", optionId: input.optionId },
+  };
 }
 
-/** Terminate the session. */
 async function terminateSession(
   ctx: restate.ObjectContext,
-): Promise<void> {
+): Promise<acp.PromptResponse> {
   const runtime = makeRuntime(ctx);
 
-  // Send null to conversation loop to break it
   const pending = await ctx.get<{ awakeableId: string }>("pending_prompt");
   if (pending) {
     ctx.resolveAwakeable(pending.awakeableId, null);
@@ -272,6 +317,8 @@ async function terminateSession(
   }
 
   runtime.emit({ type: "session.terminated" } as never);
+
+  return { stopReason: "cancelled" };
 }
 
 // ─── Virtual Object Definition ──────────────────────────────────────────────
@@ -279,11 +326,39 @@ async function terminateSession(
 export const AcpSession = restate.object({
   name: "AcpSession",
   handlers: {
-    startSession,
+    startSession: restate.handlers.object.exclusive(
+      {
+        input: restate.serde.schema(StartSessionInput),
+        output: restate.serde.schema(zNewSessionResponse),
+      },
+      startSession,
+    ),
     conversationLoop,
-    sendPrompt: restate.handlers.object.shared(sendPrompt),
-    getStatus: restate.handlers.object.shared(getStatus),
-    resumeAgent: restate.handlers.object.shared(resumeAgent),
-    terminateSession,
+    sendPrompt: restate.handlers.object.shared(
+      {
+        input: restate.serde.schema(zPromptRequest),
+        output: restate.serde.schema(zPromptResponse),
+      },
+      sendPrompt,
+    ),
+    getStatus: restate.handlers.object.shared(
+      {
+        output: restate.serde.schema(SessionStatus.nullable()),
+      },
+      getStatus,
+    ),
+    resumeAgent: restate.handlers.object.shared(
+      {
+        input: restate.serde.schema(ResumeAgentInput),
+        output: restate.serde.schema(zRequestPermissionResponse),
+      },
+      resumeAgent,
+    ),
+    terminateSession: restate.handlers.object.exclusive(
+      {
+        output: restate.serde.schema(zPromptResponse),
+      },
+      terminateSession,
+    ),
   },
 });
