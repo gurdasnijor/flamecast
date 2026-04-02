@@ -53,12 +53,14 @@
     "@restatedev/pubsub-client": "^0.1.0",
     "@restatedev/restate-sdk": "^1.5.0",
     "@restatedev/restate-sdk-clients": "^1.5.0",
+    "dockerode": "^4.0.10",
     "hono": "^4.12.8",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@restatedev/restate-sdk-testcontainers": "^1.11.1",
     "@restatedev/restate-server": "^1.6.2",
+    "@types/dockerode": "^4.0.1",
     "@vitest/coverage-v8": "^4.1.0",
     "knip": "^6.0.1",
     "vitest": "^4.1.0"

@@ -1,14 +1,17 @@
 /**
  * DockerStrategy — spawn agent processes inside Docker containers.
  *
- * Uses `docker run` with stdio pipes, same ACP protocol as local.
- * The container image must have the agent binary installed.
+ * Uses dockerode (Docker Engine API over socket) — no Docker CLI needed.
+ * The container runs the agent with stdio pipes, same ACP protocol as local.
  *
  * Reference: docs/re-arch-unification.md Change 3, Step 9
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import Docker from "dockerode";
+import { Readable, Writable } from "node:stream";
 import type { AgentSpec, ProcessHandle } from "../types.js";
+
+const docker = new Docker(); // connects to /var/run/docker.sock
 
 export interface DockerProcessHandle extends ProcessHandle {
   containerId: string;
@@ -17,63 +20,88 @@ export interface DockerProcessHandle extends ProcessHandle {
 export async function dockerSpawn(
   sessionId: string,
   spec: AgentSpec,
-): Promise<{ proc: ChildProcess; handle: DockerProcessHandle }> {
+): Promise<{ stdin: Writable; stdout: Readable; handle: DockerProcessHandle }> {
   if (!spec.containerImage) {
     throw new Error("AgentSpec.containerImage required for docker strategy");
   }
 
-  const args = [
-    "run",
-    "--rm",
-    "-i", // interactive (stdin open)
-    "--name", `flamecast-${sessionId}`,
-  ];
-
-  // Mount cwd as workspace
-  if (spec.cwd) {
-    args.push("-v", `${spec.cwd}:/workspace`, "-w", "/workspace");
+  // Pull image if not present
+  try {
+    await docker.getImage(spec.containerImage).inspect();
+  } catch {
+    console.log(`[docker] Pulling ${spec.containerImage}...`);
+    await new Promise<void>((resolve, reject) => {
+      docker.pull(spec.containerImage!, (err: Error | null, stream: NodeJS.ReadableStream) => {
+        if (err) return reject(err);
+        docker.modem.followProgress(stream, (err: Error | null) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    });
   }
 
-  // Pass env vars
-  if (spec.env) {
-    for (const [k, v] of Object.entries(spec.env)) {
-      args.push("-e", `${k}=${v}`);
-    }
+  const env = spec.env
+    ? Object.entries(spec.env).map(([k, v]) => `${k}=${v}`)
+    : [];
+
+  // Pass through host env for API keys
+  for (const key of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GITHUB_TOKEN"]) {
+    if (process.env[key]) env.push(`${key}=${process.env[key]}`);
   }
 
-  args.push(spec.containerImage);
-
-  // Append agent binary + args
-  if (spec.binary) args.push(spec.binary);
-  if (spec.args) args.push(...spec.args);
-
-  const proc = spawn("docker", args, {
-    stdio: ["pipe", "pipe", "pipe"],
+  const container = await docker.createContainer({
+    Image: spec.containerImage,
+    name: `flamecast-${sessionId}`,
+    Env: env,
+    OpenStdin: true,
+    StdinOnce: false,
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+    ...(spec.cwd ? { WorkingDir: spec.cwd } : {}),
+    HostConfig: {
+      AutoRemove: true,
+    },
   });
 
-  proc.stderr!.on("data", (chunk: Buffer) => {
+  // Attach to get multiplexed stdin/stdout/stderr stream
+  const attachStream = await container.attach({
+    stream: true,
+    stdin: true,
+    stdout: true,
+    stderr: true,
+    hijack: true,
+  });
+
+  await container.start();
+
+  // Demux stdout/stderr from the multiplexed stream
+  const stdout = new Readable({ read() {} });
+  const stderr = new Readable({ read() {} });
+  docker.modem.demuxStream(attachStream, stdout, stderr);
+
+  stderr.on("data", (chunk: Buffer) => {
     console.error(`[docker-agent-stderr] ${chunk.toString().trimEnd()}`);
   });
-
-  // Get container ID
-  const containerId = `flamecast-${sessionId}`;
 
   const handle: DockerProcessHandle = {
     sessionId,
     strategy: "docker",
-    pid: proc.pid,
-    containerId,
-    agentName: spec.binary ?? spec.containerImage,
+    containerId: container.id,
+    agentName: spec.containerImage,
   };
 
-  return { proc, handle };
+  // attachStream is writable (stdin) and demuxed into stdout/stderr
+  return { stdin: attachStream, stdout, handle };
 }
 
 export async function dockerStop(containerId: string): Promise<void> {
-  const proc = spawn("docker", ["stop", containerId], {
-    stdio: "ignore",
-  });
-  await new Promise<void>((resolve) => {
-    proc.on("close", () => resolve());
-  });
+  try {
+    const container = docker.getContainer(containerId);
+    await container.stop();
+  } catch {
+    // Container may already be stopped/removed
+  }
 }

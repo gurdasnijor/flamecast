@@ -29,7 +29,8 @@ import { dockerSpawn, dockerStop } from "./strategies/docker.js";
 // ─── Process table entry ──────────────────────────────────────────────────
 
 interface ProcessEntry {
-  proc: ChildProcess;
+  proc: ChildProcess | null; // null for Docker strategy
+  containerId?: string;
   conn: acp.ClientSideConnection;
   acpSessionId: string;
   client: AcpClient;
@@ -186,15 +187,18 @@ export class InProcessRuntimeHost implements RuntimeHost {
   private processes = new Map<string, ProcessEntry>();
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {
-    // ── Step 1: Get a ChildProcess with stdio pipes ─────────────────
-    let proc: ChildProcess;
+    // ── Step 1: Get stdio streams ───────────────────────────────────
+    let proc: ChildProcess | null = null;
+    let stdinStream: Writable;
+    let stdoutStream: Readable;
     let containerId: string | undefined;
     // Validate cwd exists — spawn returns misleading ENOENT if cwd is invalid
     const cwd = spec.cwd && existsSync(spec.cwd) ? spec.cwd : process.cwd();
 
     if (spec.strategy === "docker") {
       const result = await dockerSpawn(sessionId, spec);
-      proc = result.proc;
+      stdinStream = result.stdin;
+      stdoutStream = result.stdout;
       containerId = result.handle.containerId;
     } else {
       // "local" strategy — direct child_process.spawn()
@@ -206,21 +210,24 @@ export class InProcessRuntimeHost implements RuntimeHost {
         cwd,
         env: { ...process.env, ...spec.env },
       });
+
+      proc.on("error", (err) => {
+        console.error(`[agent-spawn-error] ${err.message}`);
+        this.processes.delete(sessionId);
+      });
+
+      proc.stderr!.on("data", (chunk: Buffer) => {
+        console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
+      });
+
+      stdinStream = proc.stdin!;
+      stdoutStream = proc.stdout! as Readable;
     }
 
-    proc.on("error", (err) => {
-      console.error(`[agent-spawn-error] ${err.message}`);
-      this.processes.delete(sessionId);
-    });
-
-    proc.stderr!.on("data", (chunk: Buffer) => {
-      console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
-    });
-
     // ── Step 2: Wire ACP SDK over stdio (same for both strategies) ──
-    const stdinWeb = Writable.toWeb(proc.stdin!);
+    const stdinWeb = Writable.toWeb(stdinStream);
     const stdoutWeb = Readable.toWeb(
-      proc.stdout! as import("node:stream").Readable,
+      stdoutStream as import("node:stream").Readable,
     ) as unknown as ReadableStream<Uint8Array>;
     const stream = acp.ndJsonStream(stdinWeb, stdoutWeb);
 
@@ -242,14 +249,14 @@ export class InProcessRuntimeHost implements RuntimeHost {
         mcpServers: [],
       });
     } catch (err) {
-      proc.kill();
+      if (proc) proc.kill();
       if (containerId) dockerStop(containerId).catch(() => {});
       throw err;
     }
 
     const acpSessionId = sessionResult.sessionId;
 
-    const entry: ProcessEntry = { proc, conn, acpSessionId, client };
+    const entry: ProcessEntry = { proc, containerId, conn, acpSessionId, client };
     this.processes.set(sessionId, entry);
 
     // Clean up on process exit
@@ -333,13 +340,14 @@ export class InProcessRuntimeHost implements RuntimeHost {
 
   async close(handle: ProcessHandle): Promise<void> {
     const entry = this.processes.get(handle.sessionId);
-    if (entry) {
-      entry.proc.kill();
-      this.processes.delete(handle.sessionId);
-      // Docker containers need explicit `docker stop` — kill() only ends our pipe
-      if (handle.strategy === "docker" && handle.containerId) {
-        await dockerStop(handle.containerId);
-      }
+    if (!entry) return;
+    // Delete first — conn abort handler also calls delete (idempotent)
+    this.processes.delete(handle.sessionId);
+
+    if (entry.containerId) {
+      await dockerStop(entry.containerId);
+    } else {
+      entry.proc?.kill();
     }
   }
 
