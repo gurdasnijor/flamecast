@@ -11,6 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type {
@@ -198,9 +199,11 @@ export class InProcessRuntimeHost implements RuntimeHost {
       if (!spec.binary) {
         throw new Error("AgentSpec.binary is required for local strategy");
       }
+      // Validate cwd exists — spawn returns misleading ENOENT if cwd is invalid
+      const cwd = spec.cwd && existsSync(spec.cwd) ? spec.cwd : process.cwd();
       proc = spawn(spec.binary, spec.args ?? [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: spec.cwd,
+        cwd,
         env: { ...process.env, ...spec.env },
       });
     }
