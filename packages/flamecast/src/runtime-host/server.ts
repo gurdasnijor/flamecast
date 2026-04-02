@@ -155,10 +155,9 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
       getOrCreateEventBus(sessionId);
       return c.json(handle, 201);
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : String(error) },
-        500,
-      );
+      const msg = error instanceof Error ? error.message : JSON.stringify(error);
+      console.error(`[spawn-error] ${sessionId}:`, msg);
+      return c.json({ error: msg }, 500);
     }
   });
 

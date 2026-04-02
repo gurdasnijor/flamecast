@@ -238,7 +238,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
       });
 
       sessionResult = await conn.newSession({
-        cwd: spec.cwd ?? process.cwd(),
+        cwd,
         mcpServers: [],
       });
     } catch (err) {
