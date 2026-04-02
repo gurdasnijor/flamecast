@@ -127,12 +127,13 @@ function resolveAgent(
   throw new Error(`No distribution found for agent ${id}`);
 }
 
-export async function loadRegistry(
-  registryPath: string,
+/**
+ * Resolve agent entries against the CDN registry.
+ * Accepts either RegistryEntry[] (from file) or string[] (from config/env).
+ */
+async function resolveEntries(
+  entries: RegistryEntry[],
 ): Promise<SpawnConfig[]> {
-  const raw = readFileSync(registryPath, "utf8");
-  const { agents: entries } = JSON.parse(raw) as { agents: RegistryEntry[] };
-
   const res = await fetch(CDN_REGISTRY_URL);
   if (!res.ok) {
     throw new Error(`Failed to fetch CDN registry: ${res.status}`);
@@ -160,6 +161,18 @@ export async function loadRegistry(
   }
 
   return configs;
+}
+
+/** Load from a registry.json file. */
+export async function loadRegistry(registryPath: string): Promise<SpawnConfig[]> {
+  const raw = readFileSync(registryPath, "utf8");
+  const { agents } = JSON.parse(raw) as { agents: RegistryEntry[] };
+  return resolveEntries(agents);
+}
+
+/** Load from a list of agent IDs (no file needed). */
+export async function loadRegistryFromIds(agentIds: string[]): Promise<SpawnConfig[]> {
+  return resolveEntries(agentIds);
 }
 
 export { getPlatformKey };

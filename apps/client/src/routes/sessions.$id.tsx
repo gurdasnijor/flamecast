@@ -124,12 +124,12 @@ function SessionDetailPage() {
     );
     if (!event?.data?.awakeableId) return;
 
-    fetch(`/api/sessions/${id}/resume`, {
+    fetch(`/acp/sessions/${id}/resume`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         awakeableId: event.data.awakeableId,
-        payload: "optionId" in body ? body : { optionId: "" },
+        optionId: "optionId" in body ? body.optionId : "",
       }),
     })
       .then(() => {

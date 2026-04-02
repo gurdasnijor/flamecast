@@ -1,29 +1,47 @@
 /**
- * Flamecast Client SDK — typed HTTP client for the Flamecast API.
+ * Flamecast Client SDK — typed HTTP client for the ACP API.
  */
-
-import type { AgentTemplate, RegisterAgentTemplateBody } from "@flamecast/protocol/session";
 
 export type FlamecastClientOptions = {
   baseUrl: string | URL;
   fetch?: typeof fetch;
 };
 
+export interface AgentInfo {
+  name: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionInfo {
+  id: string;
+  agentName: string;
+  status: string;
+  startedAt?: string;
+  lastUpdatedAt?: string;
+}
+
 function normalizeBaseUrl(baseUrl: string | URL): string {
-  return typeof baseUrl === "string" ? baseUrl : baseUrl.toString();
+  const s = typeof baseUrl === "string" ? baseUrl : baseUrl.toString();
+  return s.replace(/\/$/, "");
 }
 
 export function createFlamecastClient(opts: FlamecastClientOptions) {
   const client = new FlamecastClient(opts);
   return {
-    fetchAgentTemplates: () => client.listAgentTemplates(),
-    registerAgentTemplate: (body: RegisterAgentTemplateBody) => client.registerAgentTemplate(body),
-    updateAgentTemplate: (id: string, patch: Partial<AgentTemplate>) =>
-      client.updateAgentTemplate(id, patch),
-    createSession: (body: { agentTemplateId: string; cwd?: string }) =>
+    fetchAgents: () => client.listAgents(),
+    createSession: (body: { agentName: string; cwd?: string }) =>
       client.createSession(body),
-    fetchSession: (id: string) => client.fetchSession(id),
-    fetchSessions: () => client.listSessions(),
+    sendPrompt: (sessionId: string, text: string) =>
+      client.sendPrompt(sessionId, text),
+    fetchSession: (sessionId: string) => client.getSession(sessionId),
+    cancelSession: (sessionId: string) => client.cancelSession(sessionId),
+    resumeSession: (sessionId: string, awakeableId: string, optionId: string) =>
+      client.resumeSession(sessionId, awakeableId, optionId),
+    eventsUrl: (sessionId: string) => client.eventsUrl(sessionId),
+    // Backwards compat
+    fetchAgentTemplates: () => client.listAgents(),
+    fetchSessions: () => Promise.resolve([]),
   };
 }
 
@@ -37,41 +55,19 @@ export class FlamecastClient {
   }
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
-    const url = `${this.baseUrl}/api${path}`;
+    const url = `${this.baseUrl}/acp${path}`;
     return this.fetchFn(url, {
       headers: { "Content-Type": "application/json" },
       ...init,
     });
   }
 
-  async listAgentTemplates(): Promise<AgentTemplate[]> {
-    const res = await this.request("/agent-templates");
+  async listAgents(): Promise<AgentInfo[]> {
+    const res = await this.request("/agents");
     return res.json();
   }
 
-  async registerAgentTemplate(body: RegisterAgentTemplateBody): Promise<AgentTemplate> {
-    const res = await this.request("/agent-templates", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return res.json();
-  }
-
-  async updateAgentTemplate(
-    id: string,
-    patch: Partial<AgentTemplate>,
-  ): Promise<AgentTemplate> {
-    const res = await this.request(`/agent-templates/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(patch),
-    });
-    return res.json();
-  }
-
-  async createSession(body: {
-    agentTemplateId: string;
-    cwd?: string;
-  }): Promise<{ id: string }> {
+  async createSession(body: { agentName: string; cwd?: string }): Promise<SessionInfo> {
     const res = await this.request("/sessions", {
       method: "POST",
       body: JSON.stringify(body),
@@ -79,18 +75,35 @@ export class FlamecastClient {
     return res.json();
   }
 
-  async listSessions(): Promise<Record<string, unknown>[]> {
-    const res = await this.request("/sessions");
+  async sendPrompt(sessionId: string, text: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+  }
+
+  async getSession(sessionId: string): Promise<SessionInfo> {
+    const res = await this.request(`/sessions/${sessionId}`);
     return res.json();
   }
 
-  async fetchSession(id: string): Promise<Record<string, unknown>> {
-    const res = await this.request(`/sessions/${id}`);
-    return res.json();
+  async cancelSession(sessionId: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/cancel`, { method: "POST" });
+  }
+
+  async resumeSession(sessionId: string, awakeableId: string, optionId: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ awakeableId, optionId }),
+    });
   }
 
   async health(): Promise<{ status: string }> {
-    const res = await this.request("/health");
+    const res = await this.request("/ping");
     return res.json();
+  }
+
+  eventsUrl(sessionId: string): string {
+    return `${this.baseUrl}/acp/sessions/${sessionId}/events`;
   }
 }

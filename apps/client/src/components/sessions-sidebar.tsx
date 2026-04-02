@@ -1,6 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSessions } from "@/lib/api";
+// Note: fetchSessions returns [] for now — run listing not yet implemented
 import { cn } from "@/lib/utils";
 import {
   Sidebar,

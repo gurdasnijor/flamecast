@@ -3,15 +3,15 @@
  *
  * Starts:
  *   1. ACP Gateway (HTTP, port 4000) — spawns agents via stdio
- *   2. Restate endpoint (port 9080) — AcpRun VO + AcpAgents service
+ *   2. Restate endpoint (port 9080) — AcpSession VO + AcpAgents service
  *   3. Restate server (testcontainers) — journals + state
  *
- * Tests the full path: typed client → Restate ingress → AcpRun VO → Gateway → agent
+ * Tests the full path: typed client → Restate ingress → AcpSession VO → Gateway → agent
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
-import { AcpRun } from "../../src/acp/run-vo.js";
+import { AcpSession } from "../../src/acp/session.js";
 import { acpAgents } from "../../src/acp/agent-service.js";
 import { createAcpClient } from "../../src/acp/client.js";
 import { pubsubObject } from "../../src/restate/pubsub.js";
@@ -33,7 +33,7 @@ describe("ACP Restate Integration", () => {
 
     // Start Restate with our services
     restateEnv = await RestateTestEnvironment.start({
-      services: [AcpRun, acpAgents, pubsubObject],
+      services: [AcpSession, acpAgents, pubsubObject],
     });
 
     client = createAcpClient({ restateUrl: restateEnv.baseUrl() });
