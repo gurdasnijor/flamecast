@@ -42,9 +42,7 @@ export const server = await Worker("flamecast-api", {
 export const client = await Vite("flamecast-client", {
   name: `flamecast-client-${app.stage}`,
   cwd: "./apps/client",
-  bindings: {
-    VITE_API_URL: `${server.url?.replace(/\/$/, "")}/api`,
-  },
+  bindings: {},
   dev: {
     command: `PATH=${path.dirname(process.execPath)}:$PATH npx vite dev --port 3000`,
   },
