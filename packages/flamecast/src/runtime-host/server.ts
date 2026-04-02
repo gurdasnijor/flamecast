@@ -15,6 +15,7 @@
  */
 
 import { Hono } from "hono";
+import { logger } from "hono/logger";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { InProcessRuntimeHost } from "./local.js";
@@ -121,6 +122,7 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
   });
   const permissionTimeoutMs = opts.permissionTimeoutMs ?? 5 * 60 * 1000;
   const app = new Hono();
+  app.use(logger());
 
   // Per-session event buses for permission flow
   const eventBuses = new Map<string, SessionEventBus>();
