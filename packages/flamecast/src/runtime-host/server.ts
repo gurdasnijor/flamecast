@@ -6,22 +6,26 @@
  * publishes events to pubsub via typed Restate ingress client, and
  * resolves the VO's awakeable on terminal state.
  *
- * Only needed for deployed/multi-tenant. Local dev uses
- * InProcessRuntimeHost directly (no HTTP overhead).
+ * Permission flow: publishes permission_request to pubsub, blocks on a
+ * local Promise. The API's /resume route calls back to
+ * POST /sessions/:id/permissions/:requestId/respond to resolve it.
  *
  * Reference: docs/re-arch-unification.md Change 3
  */
 
 import { Hono } from "hono";
+import { logger } from "hono/logger";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { InProcessRuntimeHost } from "./local.js";
-import type { AgentSpec, ProcessHandle } from "./types.js";
+import type { AgentSpec, ProcessHandle, PermissionRequest } from "./types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
 
 export interface RuntimeHostServerOptions {
   /** Restate ingress URL for awakeable resolution + pubsub. */
   restateIngressUrl: string;
+  /** Permission response timeout in ms (default: 5 minutes). */
+  permissionTimeoutMs?: number;
 }
 
 export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
@@ -31,16 +35,29 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
     name: "pubsub",
     ingressUrl: opts.restateIngressUrl,
   });
+  const permissionTimeoutMs = opts.permissionTimeoutMs ?? 5 * 60 * 1000;
   const app = new Hono();
+  app.use(logger());
+
+  // Pending permission resolvers — keyed by requestId.
+  // Exactly one waiter, exactly one resolution, no replay needed.
+  const pendingPermissions = new Map<
+    string,
+    (decision: { optionId?: string }) => void
+  >();
 
   /** Publish an event to the session's pubsub topic. */
   function publishEvent(sessionId: string, event: unknown): void {
-    pubsub.publish(`session:${sessionId}`, event).catch(() => {});
+    pubsub.publish(`session:${sessionId}`, event).catch((err) => {
+      console.warn(`[pubsub] Failed to publish to session:${sessionId}:`, err instanceof Error ? err.message : err);
+    });
   }
 
   /** Resolve a Restate awakeable with a payload. */
   function resolveAwakeable(awakeableId: string, payload: unknown): void {
-    ingress.resolveAwakeable(awakeableId, payload);
+    ingress.resolveAwakeable(awakeableId, payload).catch((err) => {
+      console.error(`[resolveAwakeable] Failed for ${awakeableId}:`, err instanceof Error ? err.message : err);
+    });
   }
 
   app.post("/sessions/:id/spawn", async (c) => {
@@ -50,10 +67,9 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
       const handle = await host.spawn(sessionId, spec);
       return c.json(handle, 201);
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : String(error) },
-        500,
-      );
+      const msg = error instanceof Error ? error.message : JSON.stringify(error);
+      console.error(`[spawn-error] ${sessionId}:`, msg);
+      return c.json({ error: msg }, 500);
     }
   });
 
@@ -81,9 +97,49 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
           publishEvent(sessionId, event);
         },
 
-        async onPermission(request) {
-          // TODO: call VO requestPermission handler + SSE subscription
-          return { optionId: request.options[0]?.optionId ?? "approved" };
+        async onPermission(request: PermissionRequest) {
+          const requestId = crypto.randomUUID();
+
+          // Register resolver BEFORE publishing — avoids race where
+          // response arrives before we've registered the resolver.
+          const decision = await new Promise<{ optionId?: string }>(
+            (resolve, reject) => {
+              pendingPermissions.set(requestId, resolve);
+
+              // Timeout
+              const timer = setTimeout(() => {
+                if (pendingPermissions.delete(requestId)) {
+                  reject(new Error("Permission request timed out"));
+                }
+              }, permissionTimeoutMs);
+
+              // Clean up timeout on resolution
+              const originalResolve = resolve;
+              pendingPermissions.set(requestId, (d) => {
+                clearTimeout(timer);
+                originalResolve(d);
+              });
+
+              // Publish to pubsub → frontend shows permission dialog
+              publishEvent(sessionId, {
+                type: "permission_request",
+                requestId,
+                toolCallId: request.toolCallId,
+                title: request.title,
+                kind: request.kind,
+                options: request.options,
+                awakeableId: requestId,
+                generation: 0,
+              });
+            },
+          );
+
+          return {
+            optionId:
+              decision.optionId ??
+              request.options[0]?.optionId ??
+              "approved",
+          };
         },
 
         onComplete(result) {
@@ -107,6 +163,23 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
       .catch(() => {});
 
     return c.json({ accepted: true }, 202);
+  });
+
+  // ─── Permission response endpoint ──────────────────────────────────────
+  // Called by the API's /resume route to deliver the user's permission decision.
+
+  app.post("/sessions/:id/permissions/:requestId/respond", async (c) => {
+    const requestId = c.req.param("requestId");
+    const decision = (await c.req.json()) as { optionId?: string };
+
+    const resolve = pendingPermissions.get(requestId);
+    if (!resolve) {
+      return c.json({ error: "No pending permission request" }, 404);
+    }
+
+    resolve(decision);
+    pendingPermissions.delete(requestId);
+    return c.json({ ok: true });
   });
 
   app.post("/sessions/:id/cancel", async (c) => {

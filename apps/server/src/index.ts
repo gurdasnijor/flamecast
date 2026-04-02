@@ -7,7 +7,7 @@ dotenv.config();
 const restateIngressUrl = process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080";
 
 const flamecast = new Flamecast({
-  agentTemplates: createAgentTemplates(),
+  agentTemplates: await createAgentTemplates(),
   restateUrl: restateIngressUrl,
 });
 

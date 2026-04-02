@@ -38,7 +38,7 @@ function SessionsPage() {
   });
 
   return (
-    <div className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto px-1">
+    <div className="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-4">
       <div className="flex flex-col gap-8">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
@@ -70,30 +70,34 @@ function SessionsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {templates.map((template: AgentTemplate) => (
               <Card
                 key={template.id}
                 className="group transition-colors hover:border-foreground/20"
               >
-                <CardHeader className="pb-3">
+                <CardHeader className="pb-2 pt-3 px-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <TerminalIcon className="h-4 w-4" />
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-primary/10 text-primary">
+                      {template.icon ? (
+                        <img src={template.icon} alt={template.name} className="h-4 w-4" />
+                      ) : (
+                        <TerminalIcon className="h-3 w-3" />
+                      )}
                     </div>
-                    <CardTitle className="text-sm font-semibold">
+                    <CardTitle className="text-xs font-semibold">
                       {template.name}
                     </CardTitle>
                   </div>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  <code className="block truncate rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+                <CardContent className="flex flex-col gap-2 px-3 pb-3">
+                  <code className="block truncate rounded bg-muted px-1.5 py-1 text-[10px] text-muted-foreground">
                     {template.spawn.command}{" "}
                     {(template.spawn.args ?? []).join(" ")}
                   </code>
                   <Button
                     size="sm"
-                    className="w-full"
+                    className="w-full h-7 text-xs"
                     onClick={() => createMutation.mutate(template.id)}
                     disabled={createMutation.isPending}
                   >

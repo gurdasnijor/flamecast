@@ -1,0 +1,48 @@
+# Docker Compose for remote agent deployment.
+#
+# Three services:
+#   1. restate     — Restate runtime (ingress + admin + endpoint)
+#   2. api         — Flamecast API server + Restate VO endpoint
+#   3. runtime-host — RuntimeHost server (spawns agent processes)
+#
+# Usage:
+#   docker compose -f docker-compose.remote.yml up
+#
+# The API server delegates agent spawning/prompting to the RuntimeHost
+# server via HTTP. Agent processes run in the runtime-host container.
+
+services:
+  restate:
+    image: docker.io/restatedev/restate:latest
+    ports:
+      - "18080:8080"   # ingress
+      - "19070:9070"   # admin
+    environment:
+      RESTATE_LOG_FILTER: "info"
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/runtime-host/Dockerfile
+    ports:
+      - "3001:3001"    # Hono API
+      - "9080:9080"    # Restate endpoint
+    environment:
+      RESTATE_INGRESS_URL: http://restate:8080
+      FLAMECAST_RUNTIME_HOST: remote
+      FLAMECAST_RUNTIME_HOST_URL: http://runtime-host:9100
+    depends_on:
+      - restate
+
+  runtime-host:
+    build:
+      context: .
+      dockerfile: deploy/runtime-host/Dockerfile
+    command: ["node", "dist/runtime-host/serve.js"]
+    ports:
+      - "9100:9100"
+    environment:
+      RESTATE_INGRESS_URL: http://restate:8080
+      RUNTIME_HOST_PORT: "9100"
+    depends_on:
+      - restate

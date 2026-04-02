@@ -11,6 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type {
@@ -23,11 +24,13 @@ import type {
   StreamingEvent,
 } from "./types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
+import { dockerSpawn, dockerStop } from "./strategies/docker.js";
 
 // ─── Process table entry ──────────────────────────────────────────────────
 
 interface ProcessEntry {
-  proc: ChildProcess;
+  proc: ChildProcess | null; // null for Docker strategy
+  containerId?: string;
   conn: acp.ClientSideConnection;
   acpSessionId: string;
   client: AcpClient;
@@ -181,27 +184,51 @@ function toPromptInput(text: string): acp.ContentBlock[] {
 // ─── InProcessRuntimeHost ─────────────────────────────────────────────────
 
 export class InProcessRuntimeHost implements RuntimeHost {
+  readonly mode = "inprocess" as const;
   private processes = new Map<string, ProcessEntry>();
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {
-    if (!spec.binary) {
-      throw new Error("AgentSpec.binary is required for local strategy");
+    // ── Step 1: Get stdio streams ───────────────────────────────────
+    let proc: ChildProcess | null = null;
+    let stdinStream: Writable;
+    let stdoutStream: Readable;
+    let containerId: string | undefined;
+    // Validate cwd exists — spawn returns misleading ENOENT if cwd is invalid
+    const cwd = spec.cwd && existsSync(spec.cwd) ? spec.cwd : process.cwd();
+
+    if (spec.strategy === "docker") {
+      const result = await dockerSpawn(sessionId, spec);
+      stdinStream = result.stdin;
+      stdoutStream = result.stdout;
+      containerId = result.handle.containerId;
+    } else {
+      // "local" strategy — direct child_process.spawn()
+      if (!spec.binary) {
+        throw new Error("AgentSpec.binary is required for local strategy");
+      }
+      proc = spawn(spec.binary, spec.args ?? [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd,
+        env: { ...process.env, ...spec.env },
+      });
+
+      proc.on("error", (err) => {
+        console.error(`[agent-spawn-error] ${err.message}`);
+        this.processes.delete(sessionId);
+      });
+
+      proc.stderr!.on("data", (chunk: Buffer) => {
+        console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
+      });
+
+      stdinStream = proc.stdin!;
+      stdoutStream = proc.stdout! as Readable;
     }
 
-    const proc = spawn(spec.binary, spec.args ?? [], {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: spec.cwd,
-      env: { ...process.env, ...spec.env },
-    });
-
-    proc.stderr!.on("data", (chunk: Buffer) => {
-      console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
-    });
-
-    // Wire ACP SDK over stdio
-    const stdinWeb = Writable.toWeb(proc.stdin!);
+    // ── Step 2: Wire ACP SDK over stdio (same for both strategies) ──
+    const stdinWeb = Writable.toWeb(stdinStream);
     const stdoutWeb = Readable.toWeb(
-      proc.stdout! as import("node:stream").Readable,
+      stdoutStream as import("node:stream").Readable,
     ) as unknown as ReadableStream<Uint8Array>;
     const stream = acp.ndJsonStream(stdinWeb, stdoutWeb);
 
@@ -219,17 +246,18 @@ export class InProcessRuntimeHost implements RuntimeHost {
       });
 
       sessionResult = await conn.newSession({
-        cwd: spec.cwd ?? process.cwd(),
+        cwd,
         mcpServers: [],
       });
     } catch (err) {
-      proc.kill();
+      if (proc) proc.kill();
+      if (containerId) dockerStop(containerId).catch(() => {});
       throw err;
     }
 
     const acpSessionId = sessionResult.sessionId;
 
-    const entry: ProcessEntry = { proc, conn, acpSessionId, client };
+    const entry: ProcessEntry = { proc, containerId, conn, acpSessionId, client };
     this.processes.set(sessionId, entry);
 
     // Clean up on process exit
@@ -237,14 +265,15 @@ export class InProcessRuntimeHost implements RuntimeHost {
       this.processes.delete(sessionId);
     });
 
+    const fallbackName =
+      spec.binary?.split("/").pop() ?? spec.containerImage ?? "agent";
+
     return {
       sessionId,
       strategy: spec.strategy,
-      pid: proc.pid,
-      agentName:
-        initResult.agentInfo?.name ??
-        spec.binary.split("/").pop() ??
-        "agent",
+      pid: proc?.pid,
+      containerId,
+      agentName: initResult.agentInfo?.name ?? fallbackName,
       agentDescription: initResult.agentInfo?.title,
       agentCapabilities: initResult.agentCapabilities as
         | Record<string, unknown>
@@ -256,6 +285,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
     handle: ProcessHandle,
     text: string,
     callbacks: RuntimeHostCallbacks,
+    _awakeableId?: string,
   ): Promise<void> {
     const entry = this.processes.get(handle.sessionId);
     if (!entry) {
@@ -311,9 +341,14 @@ export class InProcessRuntimeHost implements RuntimeHost {
 
   async close(handle: ProcessHandle): Promise<void> {
     const entry = this.processes.get(handle.sessionId);
-    if (entry) {
-      entry.proc.kill();
-      this.processes.delete(handle.sessionId);
+    if (!entry) return;
+    // Delete first — conn abort handler also calls delete (idempotent)
+    this.processes.delete(handle.sessionId);
+
+    if (entry.containerId) {
+      await dockerStop(entry.containerId);
+    } else {
+      entry.proc?.kill();
     }
   }
 

@@ -12,7 +12,13 @@ import { zValidator } from "@hono/zod-validator";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import type { Flamecast } from "./flamecast-class.js";
-import { AgentSession } from "./restate/agent-session.js";
+
+// Lightweight client reference — avoids importing the full VO definition
+// (which pulls in Restate SDK server, child_process, RuntimeHost, etc.)
+// The ingress client only needs { name } to route calls; handler types
+// are inferred as `any` — the actual type safety lives on the VO side.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AgentSession: any = { name: "AgentSession" };
 
 // ─── Zod schemas for API input validation ─────────────────────────────────
 
@@ -68,6 +74,7 @@ function isClientError(error: unknown): boolean {
 }
 
 export function createApi(flamecast: FlamecastApi) {
+
   // Typed Restate ingress client — used for all VO calls
   const ingress = clients.connect({ url: flamecast.restateUrl });
 
@@ -149,9 +156,11 @@ export function createApi(flamecast: FlamecastApi) {
             args: config.spawn.args,
             cwd: body.cwd ?? process.cwd(),
             env: config.runtime.env,
+            strategy: config.runtime.provider === "docker" ? "docker" : "local",
+            containerImage: config.runtime.image,
           });
 
-        return c.json({ id: sessionId, ...session }, 201);
+        return c.json({ id: sessionId, ...(session as Record<string, unknown>) }, 201);
       } catch (error) {
         const msg = toErrorMessage(error);
         return c.json({ error: msg }, isClientError(error) ? 404 : 500);
@@ -185,14 +194,42 @@ export function createApi(flamecast: FlamecastApi) {
       }
     })
     .post("/sessions/:id/resume", async (c) => {
+      const sessionId = c.req.param("id");
       try {
         const body = await c.req.json() as {
           awakeableId: string;
           payload: unknown;
         };
-        // Resolve the awakeable directly — no generation check needed.
-        // Each permission has its own unique awakeable.
-        await ingress.resolveAwakeable(body.awakeableId, body.payload);
+
+        // Two paths depending on where the permission originated:
+        //
+        // 1. Inprocess: awakeableId is a real Restate awakeable created by
+        //    the VO's conversationLoop. resolveAwakeable unblocks it directly.
+        //
+        // 2. Remote: awakeableId is a server-generated requestId. The
+        //    RuntimeHost server holds a local Promise keyed by this ID.
+        //    Call its /permissions/:requestId/respond endpoint to resolve it.
+
+        // Try resolving as Restate awakeable (inprocess path)
+        try {
+          await ingress.resolveAwakeable(body.awakeableId, body.payload);
+        } catch (err) {
+          // 404 = not a real Restate awakeable → try RuntimeHost endpoint
+          // Other errors (network, Restate down) should be logged
+          console.warn(`[resume] resolveAwakeable failed for ${body.awakeableId}:`, err instanceof Error ? err.message : err);
+          const runtimeHostUrl = process.env.FLAMECAST_RUNTIME_HOST_URL;
+          if (runtimeHostUrl) {
+            await fetch(
+              `${runtimeHostUrl}/sessions/${sessionId}/permissions/${body.awakeableId}/respond`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body.payload),
+              },
+            ).catch(() => {});
+          }
+        }
+
         return c.json({ ok: true });
       } catch (error) {
         return c.json({ error: toErrorMessage(error) }, 500);
@@ -337,6 +374,8 @@ export function createApi(flamecast: FlamecastApi) {
             args: config.spawn.args,
             cwd: body.cwd ?? process.cwd(),
             env: config.runtime.env,
+            strategy: config.runtime.provider === "docker" ? "docker" : "local",
+            containerImage: config.runtime.image,
           });
 
         // Send the first prompt to the child (conversation loop already started)

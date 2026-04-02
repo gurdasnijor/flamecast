@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 
 export class RemoteRuntimeHost implements RuntimeHost {
+  readonly mode = "remote" as const;
   constructor(private baseUrl: string) {}
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {
@@ -36,6 +37,7 @@ export class RemoteRuntimeHost implements RuntimeHost {
     handle: ProcessHandle,
     text: string,
     callbacks: RuntimeHostCallbacks,
+    awakeableId?: string,
   ): Promise<void> {
     // Non-blocking POST — the server drives the agent and resolves
     // the VO's awakeable on completion. Events stream to pubsub
@@ -45,7 +47,7 @@ export class RemoteRuntimeHost implements RuntimeHost {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, awakeableId }),
       },
     );
     if (!res.ok) {

@@ -3,10 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev dev:server dev:register --filter='!./examples/*'",
+    "dev": "turbo run dev dev:server dev:register --filter='!./examples/*' --filter='!docs'",
     "dev:all": "turbo run dev dev:server dev:register",
     "dev:client": "turbo run dev --filter=flamecast-client",
     "dev:server": "turbo run dev --filter=flamecast-server",
+    "dev:runtime-host": "pnpm --filter @flamecast/sdk dev:runtime-host",
+    "dev:remote": "FLAMECAST_RUNTIME_HOST=remote FLAMECAST_RUNTIME_HOST_URL=http://localhost:9100 turbo run dev dev:server dev:register dev:runtime-host --filter='!./examples/*'",
+    "dev:alchemy:cloudflare": "CLOUDFLARE_ACCOUNT_ID=c4cf21d8a5e8878bc3c92708b1f80193 CLOUDFLARE_API_TOKEN=\"cfut_61huVAxPaherHE3JYr9C9PoI5qjswYS6NMum2olj0f0e7781\" ALCHEMY_PASSWORD=\"uAokk2ttPrwwdzuwd9g72jz011phuTqjTrYtmF9bMVE=\" npx alchemy dev ./cloudflare.run.ts",
+    "dev:alchemy": "FLAMECAST_RUNTIME_HOST=remote FLAMECAST_RUNTIME_HOST_URL=http://localhost:9100 CLOUDFLARE_ACCOUNT_ID=c4cf21d8a5e8878bc3c92708b1f80193 CLOUDFLARE_API_TOKEN=\"cfut_61huVAxPaherHE3JYr9C9PoI5qjswYS6NMum2olj0f0e7781\" ALCHEMY_PASSWORD=\"uAokk2ttPrwwdzuwd9g72jz011phuTqjTrYtmF9bMVE=\" npx alchemy dev cloudflare.run.dev.ts",
+    "dev:endpoint": "FLAMECAST_RUNTIME_HOST=remote FLAMECAST_RUNTIME_HOST_URL=http://localhost:9100 npx tsx packages/flamecast/src/restate/serve-endpoint.ts",
+    "deploy:cloudflare": "infisical run --path=/tooling --env=staging --silent --projectId=7cd1c4ac-3fcd-4f5a-be98-51ac45183c18 -- alchemy run cloudflare.run.ts",
+    "deploy:vercel": "npx alchemy run vercel.run.ts",
     "build": "turbo run build",
     "start": "pnpm dev",
     "knip": "knip --config knip.json --workspace packages/flamecast --workspace examples/agent.js --workspace apps/server --workspace apps/client --no-config-hints",
@@ -34,6 +41,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "^4.1.0",
+    "@cloudflare/containers": "^0.2.2",
+    "alchemy": "^0.90.1",
     "drizzle-kit": "^0.31.8",
     "eslint-plugin-no-type-assertion": "^1.3.0",
     "knip": "^6.0.1",
@@ -55,5 +64,7 @@
         }
       }
     }
-  }
+  },
+  "dependencies": {}
+
 }

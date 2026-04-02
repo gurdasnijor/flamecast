@@ -76,6 +76,9 @@ export interface PermissionDecision {
 // ─── RuntimeHost Interface ────────────────────────────────────────────────
 
 export interface RuntimeHost {
+  /** Whether this host runs agents in-process or delegates via HTTP. */
+  readonly mode: "inprocess" | "remote";
+
   /**
    * Spawn an agent process and initialize the ACP connection.
    * Returns a ProcessHandle with agent info.
@@ -86,11 +89,16 @@ export interface RuntimeHost {
    * Start a prompt on an already-spawned agent.
    * Non-blocking — drives the agent via callbacks.
    * The onComplete callback fires when the agent reaches a terminal state.
+   *
+   * @param awakeableId — optional Restate awakeable ID for completion signaling.
+   *   RemoteRuntimeHost forwards this to the server, which resolves it on terminal state.
+   *   InProcessRuntimeHost ignores it (VO uses callbacks directly).
    */
   prompt(
     handle: ProcessHandle,
     text: string,
     callbacks: RuntimeHostCallbacks,
+    awakeableId?: string,
   ): Promise<void>;
 
   /** Cancel the current prompt on the agent. */
@@ -98,4 +106,7 @@ export interface RuntimeHost {
 
   /** Kill the agent process and clean up. */
   close(handle: ProcessHandle): Promise<void>;
+
+  /** Check if a process is alive (inprocess only). */
+  has?(sessionId: string): boolean;
 }
