@@ -1,9 +1,6 @@
 {
   "name": "@flamecast/sdk",
   "version": "0.0.0",
-  "bin": {
-    "flamecast": "./dist/cli.js"
-  },
   "files": [
     "dist"
   ],
@@ -15,17 +12,9 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
-    "./edge": {
-      "types": "./src/edge.ts",
-      "import": "./src/edge.ts"
-    },
     "./acp": {
       "types": "./src/acp/client.ts",
       "import": "./src/acp/client.ts"
-    },
-    "./client": {
-      "types": "./src/client/api.ts",
-      "import": "./src/client/api.ts"
     },
     "./restate": {
       "types": "./src/restate/index.ts",
@@ -36,9 +25,7 @@
   "scripts": {
     "build": "pnpm run build:package",
     "build:package": "tsc -p tsconfig.package.json",
-    "start": "node dist/cli.js",
     "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx src/restate/serve-endpoint.ts",
-
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
     "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run --config vitest.integration.config.ts",
@@ -48,20 +35,15 @@
     "@agentclientprotocol/sdk": "^0.16.1",
     "@flamecast/acp": "workspace:*",
     "@flamecast/protocol": "workspace:*",
-    "@hono/node-server": "^1.19.11",
-    "@hono/zod-validator": "^0.7.6",
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",
     "@restatedev/restate-sdk": "^1.5.0",
     "@restatedev/restate-sdk-clients": "^1.5.0",
-
-    "hono": "^4.12.8",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@restatedev/restate-sdk-testcontainers": "^1.11.1",
     "@restatedev/restate-server": "^1.6.2",
-
     "@vitest/coverage-v8": "^4.1.0",
     "knip": "^6.0.1",
     "vitest": "^4.1.0"
