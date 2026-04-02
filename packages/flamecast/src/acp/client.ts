@@ -1,48 +1,52 @@
 /**
- * Typed Restate client for the ACP Run VO.
+ * Typed Restate client for AcpSession.
  *
  *   const acp = createAcpClient({ restateUrl: "http://localhost:18080" });
- *   const result = await acp.prompt("claude-acp", "hello");
- *
- *   // Inside a Restate handler:
- *   const acp = createAcpCtxClient(ctx);
- *   const result = await acp.prompt("claude-acp", "hello");
+ *   const { sessionId } = await acp.startSession("claude-acp");
+ *   await acp.sendPrompt(sessionId, "hello");
  */
 
 import * as clients from "@restatedev/restate-sdk-clients";
 import type * as restate from "@restatedev/restate-sdk";
-import { AcpRun, type RunState } from "./run-vo.js";
+import { AcpSession, type SessionState } from "./session.js";
 import { acpAgents } from "./agent-service.js";
 
-export type { RunState };
-
-// ─── External client (from outside Restate) ─────────────────────────────────
+export type { SessionState };
 
 export function createAcpClient(opts: { restateUrl: string }) {
   const ingress = clients.connect({ url: opts.restateUrl });
 
   return {
-    async prompt(agentName: string, text: string) {
-      const runId = crypto.randomUUID();
-      return ingress.objectClient(AcpRun, runId).execute({ agentName, prompt: text });
+    async startSession(agentName: string, cwd?: string) {
+      const sessionId = crypto.randomUUID();
+      const result = await ingress
+        .objectClient(AcpSession, sessionId)
+        .startSession({ agentName, cwd });
+      return result;
     },
 
-    async runAsync(agentName: string, text: string) {
-      const runId = crypto.randomUUID();
-      await ingress.objectSendClient(AcpRun, runId).execute({ agentName, prompt: text });
-      return { runId };
+    async sendPrompt(sessionId: string, text: string) {
+      return ingress
+        .objectClient(AcpSession, sessionId)
+        .sendPrompt({ text });
     },
 
-    async getStatus(runId: string) {
-      return ingress.objectClient(AcpRun, runId).getStatus();
+    async getStatus(sessionId: string) {
+      return ingress
+        .objectClient(AcpSession, sessionId)
+        .getStatus();
     },
 
-    async resume(runId: string, optionId: string) {
-      return ingress.objectClient(AcpRun, runId).resume({ optionId });
+    async resume(sessionId: string, awakeableId: string, optionId: string) {
+      return ingress
+        .objectClient(AcpSession, sessionId)
+        .resumeAgent({ awakeableId, optionId });
     },
 
-    async cancel(runId: string) {
-      return ingress.objectClient(AcpRun, runId).cancel();
+    async terminate(sessionId: string) {
+      return ingress
+        .objectClient(AcpSession, sessionId)
+        .terminateSession();
     },
 
     async agents() {
@@ -51,31 +55,37 @@ export function createAcpClient(opts: { restateUrl: string }) {
   };
 }
 
-// ─── Context-aware client (from inside a Restate handler) ───────────────────
-
 export function createAcpCtxClient(ctx: restate.Context) {
   return {
-    async prompt(agentName: string, text: string) {
-      const runId = crypto.randomUUID();
-      return ctx.objectClient(AcpRun, runId).execute({ agentName, prompt: text });
+    async startSession(agentName: string, cwd?: string) {
+      const sessionId = crypto.randomUUID();
+      return ctx
+        .objectClient(AcpSession, sessionId)
+        .startSession({ agentName, cwd });
     },
 
-    async runAsync(agentName: string, text: string) {
-      const runId = crypto.randomUUID();
-      ctx.objectSendClient(AcpRun, runId).execute({ agentName, prompt: text });
-      return { runId };
+    async sendPrompt(sessionId: string, text: string) {
+      return ctx
+        .objectClient(AcpSession, sessionId)
+        .sendPrompt({ text });
     },
 
-    async getStatus(runId: string) {
-      return ctx.objectClient(AcpRun, runId).getStatus();
+    async getStatus(sessionId: string) {
+      return ctx
+        .objectClient(AcpSession, sessionId)
+        .getStatus();
     },
 
-    async resume(runId: string, optionId: string) {
-      return ctx.objectClient(AcpRun, runId).resume({ optionId });
+    async resume(sessionId: string, awakeableId: string, optionId: string) {
+      return ctx
+        .objectClient(AcpSession, sessionId)
+        .resumeAgent({ awakeableId, optionId });
     },
 
-    async cancel(runId: string) {
-      return ctx.objectClient(AcpRun, runId).cancel();
+    async terminate(sessionId: string) {
+      return ctx
+        .objectClient(AcpSession, sessionId)
+        .terminateSession();
     },
 
     async agents() {

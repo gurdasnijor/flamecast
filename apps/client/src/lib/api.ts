@@ -11,13 +11,11 @@ const client = createFlamecastClient({
 
 export const {
   fetchAgents,
-  createRun,
-  fetchRun,
-  resumeRun,
-  cancelRun,
-  // Backwards compat
-  fetchAgentTemplates,
   createSession,
-  fetchSessions,
+  sendPrompt,
   fetchSession,
+  cancelSession,
+  resumeSession,
+  fetchAgentTemplates,
+  fetchSessions,
 } = client;

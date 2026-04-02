@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchAgents, createRun } from "@/lib/api";
+import { fetchAgents, createSession } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoaderCircleIcon, PlayIcon, TerminalIcon } from "lucide-react";
@@ -22,10 +22,10 @@ function AgentsPage() {
 
   const createMutation = useMutation({
     mutationFn: (agentName: string) =>
-      createRun({ agentName, prompt: "", mode: "async" }),
-    onSuccess: (run) => {
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      navigate({ to: "/sessions/$id", params: { id: run.id } });
+      createSession({ agentName }),
+    onSuccess: (session) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      navigate({ to: "/sessions/$id", params: { id: session.id } });
     },
     onError: (err) => {
       toast.error("Failed to create run", {

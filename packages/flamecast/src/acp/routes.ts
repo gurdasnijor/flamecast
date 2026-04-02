@@ -1,17 +1,19 @@
 /**
- * ACP HTTP routes — thin layer mapping ACP OpenAPI spec to Restate VOs.
+ * ACP HTTP routes — maps to AcpSession VO.
  *
- *   POST /runs                 →  AcpRun(run_id).execute()
- *   GET  /runs/:id             →  AcpRun(run_id).getStatus()
- *   POST /runs/:id             →  AcpRun(run_id).resume()
- *   POST /runs/:id/cancel      →  AcpRun(run_id).cancel()
- *   GET  /runs/:id/events      →  pubsub.pull("run:{id}") SSE
+ *   POST /sessions              → startSession
+ *   GET  /sessions/:id          → getStatus
+ *   POST /sessions/:id/prompt   → sendPrompt
+ *   POST /sessions/:id/resume   → resumeAgent
+ *   POST /sessions/:id/cancel   → terminateSession
+ *   GET  /sessions/:id/events   → pubsub SSE
+ *   GET  /agents                → listAgents
  */
 
 import { Hono } from "hono";
 import * as clients from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import { AcpRun } from "./run-vo.js";
+import { AcpSession } from "./session.js";
 import { acpAgents } from "./agent-service.js";
 
 interface AcpRoutesConfig {
@@ -28,77 +30,66 @@ export function createAcpRoutes(config: AcpRoutesConfig) {
   return new Hono()
     .get("/ping", (c) => c.json({ status: "ok" }))
 
-    // ── Agents ────────────────────────────────────────────────────────
     .get("/agents", async (c) => {
       const agents = await ingress.serviceClient(acpAgents).listAgents();
       return c.json(agents);
     })
 
-    // ── Runs ──────────────────────────────────────────────────────────
+    // ── Sessions ──────────────────────────────────────────────────────
 
-    .post("/runs", async (c) => {
+    .post("/sessions", async (c) => {
       const body = await c.req.json();
-      const runId = crypto.randomUUID();
-      const mode = body.mode ?? "async";
+      const sessionId = crypto.randomUUID();
 
-      if (mode === "sync") {
-        const result = await ingress
-          .objectClient(AcpRun, runId)
-          .execute({ agentName: body.agentName, prompt: body.prompt });
-        return c.json({ id: runId, ...result });
-      }
+      const result = await ingress
+        .objectClient(AcpSession, sessionId)
+        .startSession({ agentName: body.agentName, cwd: body.cwd });
 
-      await ingress
-        .objectSendClient(AcpRun, runId)
-        .execute({ agentName: body.agentName, prompt: body.prompt });
-
-      return c.json({ id: runId, status: "created" }, 202);
+      return c.json({ id: sessionId, ...result }, 201);
     })
 
-    .get("/runs/:id", async (c) => {
-      const runId = c.req.param("id");
+    .get("/sessions/:id", async (c) => {
+      const id = c.req.param("id");
       const status = await ingress
-        .objectClient(AcpRun, runId)
+        .objectClient(AcpSession, id)
         .getStatus();
-      if (!status) return c.json({ error: "Run not found" }, 404);
-      return c.json({ id: runId, ...status });
+      if (!status) return c.json({ error: "Session not found" }, 404);
+      return c.json({ id, ...status });
     })
 
-    .post("/runs/:id", async (c) => {
-      const runId = c.req.param("id");
+    .post("/sessions/:id/prompt", async (c) => {
+      const id = c.req.param("id");
       const body = await c.req.json();
-      try {
-        const result = await ingress
-          .objectClient(AcpRun, runId)
-          .resume({ optionId: body.optionId });
-        return c.json({ id: runId, ...result });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return c.json({ error: msg }, 409);
-      }
+      await ingress
+        .objectClient(AcpSession, id)
+        .sendPrompt({ text: body.text });
+      return c.json({ ok: true });
     })
 
-    .post("/runs/:id/cancel", async (c) => {
-      const runId = c.req.param("id");
-      try {
-        const result = await ingress
-          .objectClient(AcpRun, runId)
-          .cancel();
-        return c.json({ id: runId, ...result });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return c.json({ error: msg }, 500);
-      }
+    .post("/sessions/:id/resume", async (c) => {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      await ingress
+        .objectClient(AcpSession, id)
+        .resumeAgent({ awakeableId: body.awakeableId, optionId: body.optionId });
+      return c.json({ ok: true });
     })
 
-    // SSE events via Restate pubsub — no polling, durable delivery
-    .get("/runs/:id/events", (c) => {
-      const runId = c.req.param("id");
+    .post("/sessions/:id/cancel", async (c) => {
+      const id = c.req.param("id");
+      await ingress
+        .objectClient(AcpSession, id)
+        .terminateSession();
+      return c.json({ ok: true });
+    })
+
+    .get("/sessions/:id/events", (c) => {
+      const id = c.req.param("id");
       const lastEventId = c.req.header("Last-Event-ID");
       const offset = lastEventId ? parseInt(lastEventId, 10) : undefined;
 
       const stream = pubsub.sse({
-        topic: `run:${runId}`,
+        topic: `session:${id}`,
         offset: Number.isFinite(offset) ? offset : undefined,
       });
 

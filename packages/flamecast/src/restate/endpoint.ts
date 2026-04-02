@@ -1,11 +1,11 @@
 import { pubsubObject } from "./pubsub.js";
-import { AcpRun } from "../acp/run-vo.js";
+import { AcpSession } from "../acp/session.js";
 import { acpAgents } from "../acp/agent-service.js";
 import * as restate from "@restatedev/restate-sdk";
 
 export const services = [
   pubsubObject,
-  AcpRun,
+  AcpSession,
   acpAgents,
 ];
 

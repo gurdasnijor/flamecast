@@ -13,7 +13,7 @@ export function useFlamecastSession(sessionId: string) {
     setEvents([]);
     setConnectionState("connecting");
 
-    const es = new EventSource(`/acp/runs/${sessionId}/events`);
+    const es = new EventSource(`/acp/sessions/${sessionId}/events`);
     esRef.current = es;
 
     es.onopen = () => setConnectionState("connected");
@@ -48,21 +48,18 @@ export function useFlamecastSession(sessionId: string) {
         ...prev,
         { type: "prompt_sent", data: { text }, timestamp: new Date().toISOString() },
       ]);
-      // Create a new run with the prompt
-      fetch(`/acp/runs`, {
+      fetch(`/acp/sessions/${sessionId}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentName: "claude-acp", prompt: text, mode: "async" }),
+        body: JSON.stringify({ text }),
       }).catch(() => {});
     },
     [sessionId],
   );
 
   const cancel = useCallback(() => {
-    fetch(`/acp/runs/${sessionId}/cancel`, {
+    fetch(`/acp/sessions/${sessionId}/cancel`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
     }).catch(() => {});
   }, [sessionId]);
 

@@ -13,16 +13,12 @@ export interface AgentInfo {
   metadata?: Record<string, unknown>;
 }
 
-export interface RunResult {
+export interface SessionInfo {
   id: string;
   agentName: string;
   status: string;
-  input?: string;
-  output?: string;
-  error?: string;
-  createdAt?: string;
-  completedAt?: string;
-  awaitRequest?: unknown;
+  startedAt?: string;
+  lastUpdatedAt?: string;
 }
 
 function normalizeBaseUrl(baseUrl: string | URL): string {
@@ -34,18 +30,18 @@ export function createFlamecastClient(opts: FlamecastClientOptions) {
   const client = new FlamecastClient(opts);
   return {
     fetchAgents: () => client.listAgents(),
-    createRun: (body: { agentName: string; prompt: string }) =>
-      client.createRun(body),
-    fetchRun: (id: string) => client.getRun(id),
-    resumeRun: (id: string, optionId: string) =>
-      client.resumeRun(id, optionId),
-    cancelRun: (id: string) => client.cancelRun(id),
-    // Backwards compat aliases
+    createSession: (body: { agentName: string; cwd?: string }) =>
+      client.createSession(body),
+    sendPrompt: (sessionId: string, text: string) =>
+      client.sendPrompt(sessionId, text),
+    fetchSession: (sessionId: string) => client.getSession(sessionId),
+    cancelSession: (sessionId: string) => client.cancelSession(sessionId),
+    resumeSession: (sessionId: string, awakeableId: string, optionId: string) =>
+      client.resumeSession(sessionId, awakeableId, optionId),
+    eventsUrl: (sessionId: string) => client.eventsUrl(sessionId),
+    // Backwards compat
     fetchAgentTemplates: () => client.listAgents(),
-    createSession: (body: { agentTemplateId: string }) =>
-      client.createRun({ agentName: body.agentTemplateId, prompt: "" }),
     fetchSessions: () => Promise.resolve([]),
-    fetchSession: (id: string) => client.getRun(id),
   };
 }
 
@@ -71,36 +67,35 @@ export class FlamecastClient {
     return res.json();
   }
 
-  async createRun(body: {
-    agentName: string;
-    prompt: string;
-    mode?: "sync" | "async";
-  }): Promise<RunResult> {
-    const res = await this.request("/runs", {
+  async createSession(body: { agentName: string; cwd?: string }): Promise<SessionInfo> {
+    const res = await this.request("/sessions", {
       method: "POST",
       body: JSON.stringify(body),
     });
     return res.json();
   }
 
-  async getRun(id: string): Promise<RunResult> {
-    const res = await this.request(`/runs/${id}`);
+  async sendPrompt(sessionId: string, text: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+  }
+
+  async getSession(sessionId: string): Promise<SessionInfo> {
+    const res = await this.request(`/sessions/${sessionId}`);
     return res.json();
   }
 
-  async resumeRun(id: string, optionId: string): Promise<RunResult> {
-    const res = await this.request(`/runs/${id}`, {
-      method: "POST",
-      body: JSON.stringify({ optionId }),
-    });
-    return res.json();
+  async cancelSession(sessionId: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/cancel`, { method: "POST" });
   }
 
-  async cancelRun(id: string): Promise<RunResult> {
-    const res = await this.request(`/runs/${id}/cancel`, {
+  async resumeSession(sessionId: string, awakeableId: string, optionId: string): Promise<void> {
+    await this.request(`/sessions/${sessionId}/resume`, {
       method: "POST",
+      body: JSON.stringify({ awakeableId, optionId }),
     });
-    return res.json();
   }
 
   async health(): Promise<{ status: string }> {
@@ -108,7 +103,7 @@ export class FlamecastClient {
     return res.json();
   }
 
-  eventsUrl(runId: string): string {
-    return `${this.baseUrl}/acp/runs/${runId}/events`;
+  eventsUrl(sessionId: string): string {
+    return `${this.baseUrl}/acp/sessions/${sessionId}/events`;
   }
 }
