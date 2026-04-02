@@ -7,19 +7,17 @@ const PackageJsonSchema = z.object({
   main: z.string(),
   types: z.string(),
   exports: z.record(z.string(), z.union([z.string(), z.record(z.string(), z.string())])),
-  bin: z.record(z.string(), z.string()),
   files: z.array(z.string()),
 });
 
 describe("package contract", () => {
-  it("exports the public flamecast package surface and CLI", async () => {
+  it("exports the public flamecast package surface", async () => {
     const packageJsonPath = new URL("../../package.json", import.meta.url);
     const packageJson = PackageJsonSchema.parse(
       JSON.parse(await readFile(packageJsonPath, "utf8")),
     );
 
     expect(packageJson.name).toBe("@flamecast/sdk");
-    expect(packageJson.bin.flamecast).toBe("./dist/cli.js");
     expect(packageJson.files).toEqual(["dist"]);
 
     // Core entrypoint
@@ -41,13 +39,12 @@ describe("package contract", () => {
     });
 
     // Removed sub-paths should not exist
+    expect(packageJson.exports["./client"]).toBeUndefined();
+    expect(packageJson.exports["./edge"]).toBeUndefined();
     expect(packageJson.exports["./api"]).toBeUndefined();
-    expect(packageJson.exports["./shared/session"]).toBeUndefined();
-    expect(packageJson.exports["./runtime"]).toBeUndefined();
-    expect(packageJson.exports["./session-service"]).toBeUndefined();
-    expect(packageJson.exports["./runtimes/node"]).toBeUndefined();
 
     const entry = await import("../../src/index.js");
-    expect(entry.Flamecast).toBeTypeOf("function");
+    expect(entry.AcpSession).toBeDefined();
+    expect(entry.createAcpClient).toBeTypeOf("function");
   });
 });
