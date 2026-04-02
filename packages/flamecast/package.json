@@ -19,9 +19,9 @@
       "types": "./src/edge.ts",
       "import": "./src/edge.ts"
     },
-    "./api": {
-      "types": "./src/api.ts",
-      "import": "./src/api.ts"
+    "./acp": {
+      "types": "./src/acp/client.ts",
+      "import": "./src/acp/client.ts"
     },
     "./client": {
       "types": "./src/client/api.ts",
@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
+    "@flamecast/acp-gateway": "workspace:*",
     "@flamecast/protocol": "workspace:*",
     "@hono/node-server": "^1.19.11",
     "@hono/zod-validator": "^0.7.6",

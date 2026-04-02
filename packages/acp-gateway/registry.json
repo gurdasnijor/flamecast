@@ -1,0 +1,11 @@
+{
+  "agents": [
+    "claude-acp",
+    "codex-acp",
+    "gemini",
+    "goose",
+    "opencode",
+    "kilo",
+    "qwen-code"
+  ]
+}

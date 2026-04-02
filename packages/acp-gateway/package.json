@@ -1,0 +1,39 @@
+{
+  "name": "@flamecast/acp-gateway",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./transport": {
+      "types": "./src/transport.ts",
+      "import": "./src/transport.ts"
+    },
+    "./transports/stdio": {
+      "types": "./src/transports/stdio.ts",
+      "import": "./src/transports/stdio.ts"
+    },
+    "./registry": {
+      "types": "./src/registry.ts",
+      "import": "./src/registry.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.package.json"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.16.1",
+    "@hono/node-server": "^1.19.11",
+    "acp-sdk": "^1.0.3",
+    "hono": "^4.12.8"
+  }
+}
