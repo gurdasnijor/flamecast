@@ -28,9 +28,7 @@ const app = await alchemy("flamecast", {
 // ─── Restate server (durable state engine) ──────────────────────────────
 
 const restateImage = await Image("restate-image", {
-  name: `flamecast-restate-${app.stage}`,
-  imageUri: "docker.restate.dev/restatedev/restate:latest",
-  skipPush: false,
+  image: "docker.restate.dev/restatedev/restate:latest",
 });
 
 const restate = await ContainerApplication("restate", {
