@@ -23,6 +23,7 @@ import type {
   StreamingEvent,
 } from "./types.js";
 import type { PromptResultPayload } from "@flamecast/protocol/session";
+import { dockerSpawn, dockerStop } from "./strategies/docker.js";
 
 // ─── Process table entry ──────────────────────────────────────────────────
 
@@ -184,21 +185,31 @@ export class InProcessRuntimeHost implements RuntimeHost {
   private processes = new Map<string, ProcessEntry>();
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {
-    if (!spec.binary) {
-      throw new Error("AgentSpec.binary is required for local strategy");
-    }
+    // ── Step 1: Get a ChildProcess with stdio pipes ─────────────────
+    let proc: ChildProcess;
+    let containerId: string | undefined;
 
-    const proc = spawn(spec.binary, spec.args ?? [], {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: spec.cwd,
-      env: { ...process.env, ...spec.env },
-    });
+    if (spec.strategy === "docker") {
+      const result = await dockerSpawn(sessionId, spec);
+      proc = result.proc;
+      containerId = result.handle.containerId;
+    } else {
+      // "local" strategy — direct child_process.spawn()
+      if (!spec.binary) {
+        throw new Error("AgentSpec.binary is required for local strategy");
+      }
+      proc = spawn(spec.binary, spec.args ?? [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: spec.cwd,
+        env: { ...process.env, ...spec.env },
+      });
+    }
 
     proc.stderr!.on("data", (chunk: Buffer) => {
       console.error(`[agent-stderr] ${chunk.toString().trimEnd()}`);
     });
 
-    // Wire ACP SDK over stdio
+    // ── Step 2: Wire ACP SDK over stdio (same for both strategies) ──
     const stdinWeb = Writable.toWeb(proc.stdin!);
     const stdoutWeb = Readable.toWeb(
       proc.stdout! as import("node:stream").Readable,
@@ -224,6 +235,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
       });
     } catch (err) {
       proc.kill();
+      if (containerId) dockerStop(containerId).catch(() => {});
       throw err;
     }
 
@@ -237,14 +249,15 @@ export class InProcessRuntimeHost implements RuntimeHost {
       this.processes.delete(sessionId);
     });
 
+    const fallbackName =
+      spec.binary?.split("/").pop() ?? spec.containerImage ?? "agent";
+
     return {
       sessionId,
       strategy: spec.strategy,
       pid: proc.pid,
-      agentName:
-        initResult.agentInfo?.name ??
-        spec.binary.split("/").pop() ??
-        "agent",
+      containerId,
+      agentName: initResult.agentInfo?.name ?? fallbackName,
       agentDescription: initResult.agentInfo?.title,
       agentCapabilities: initResult.agentCapabilities as
         | Record<string, unknown>
@@ -315,6 +328,10 @@ export class InProcessRuntimeHost implements RuntimeHost {
     if (entry) {
       entry.proc.kill();
       this.processes.delete(handle.sessionId);
+      // Docker containers need explicit `docker stop` — kill() only ends our pipe
+      if (handle.strategy === "docker" && handle.containerId) {
+        await dockerStop(handle.containerId);
+      }
     }
   }
 
