@@ -86,11 +86,16 @@ export interface RuntimeHost {
    * Start a prompt on an already-spawned agent.
    * Non-blocking — drives the agent via callbacks.
    * The onComplete callback fires when the agent reaches a terminal state.
+   *
+   * @param awakeableId — optional Restate awakeable ID for completion signaling.
+   *   RemoteRuntimeHost forwards this to the server, which resolves it on terminal state.
+   *   InProcessRuntimeHost ignores it (VO uses callbacks directly).
    */
   prompt(
     handle: ProcessHandle,
     text: string,
     callbacks: RuntimeHostCallbacks,
+    awakeableId?: string,
   ): Promise<void>;
 
   /** Cancel the current prompt on the agent. */

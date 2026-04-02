@@ -18,6 +18,7 @@ import type { AgentRuntime } from "../runtime/types.js";
 import { createRestateRuntime } from "../runtime/restate.js";
 import { StdioAdapter } from "../adapters/stdio.js";
 import { A2AAdapter } from "../adapters/a2a.js";
+import { createRuntimeHost, type RuntimeHost, type RuntimeHostCallbacks } from "../runtime-host/index.js";
 import { InProcessRuntimeHost } from "../runtime-host/local.js";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { sharedHandlers } from "./shared-handlers.js";
@@ -29,12 +30,10 @@ const pubsub = createPubsubClient({ name: "pubsub", ingressUrl: RESTATE_URL });
 
 const CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Singleton — holds live agent processes across VO handler invocations.
-let runtimeHost: InProcessRuntimeHost | null = null;
-function getRuntimeHost(): InProcessRuntimeHost {
-  if (!runtimeHost) runtimeHost = new InProcessRuntimeHost();
-  return runtimeHost;
-}
+// Module-level singleton — env-driven via FLAMECAST_RUNTIME_HOST.
+// "inprocess" (default) → InProcessRuntimeHost (holds live processes in this Node process)
+// "remote" → RemoteRuntimeHost (delegates to HTTP sidecar)
+const runtimeHost: RuntimeHost = createRuntimeHost();
 
 // ─── State types ─────────────────────────────────────────────────────────
 
@@ -90,16 +89,19 @@ async function loadSession(
 /**
  * Ensure a stdio agent process exists in RuntimeHost.
  * If the process died (crash, replay), re-spawn it.
+ *
+ * For remote mode, the server manages process lifecycle — skip the check.
  */
 async function ensureStdioProcess(
   sessionId: string,
   agent: AgentManifest,
 ): Promise<void> {
-  const host = getRuntimeHost();
-  if (host.has(sessionId)) return;
+  // Remote server manages process lifecycle
+  if (!(runtimeHost instanceof InProcessRuntimeHost)) return;
+  if (runtimeHost.has(sessionId)) return;
 
   // Re-spawn — process died or this is a replay
-  const adapter = new StdioAdapter(host);
+  const adapter = new StdioAdapter(runtimeHost);
   await adapter.start({
     agent: agent.endpoint,
     args: agent.args,
@@ -139,7 +141,7 @@ export const AgentSession = restate.object({
         // On replay, ctx.run returns journaled result (process won't exist
         // but ensureStdioProcess in conversationLoop re-spawns it).
         const raw = await runtime.step("start", async () => {
-          const adapter = new StdioAdapter(getRuntimeHost());
+          const adapter = new StdioAdapter(runtimeHost);
           const result = await adapter.start({ ...input, sessionId: runtime.key });
           return {
             name: result.agent.name,
@@ -216,16 +218,20 @@ export const AgentSession = restate.object({
 
         if (!next) break; // null = conversation terminated
 
-        // Drive the agent with this turn's text
-        const result = await new Promise<PromptResult>((resolve) => {
-          getRuntimeHost().prompt(
-            {
-              sessionId: handle.sessionId,
-              strategy: "local",
-              agentName: handle.agent.name,
-            },
-            next.text,
-            {
+        const promptHandle = {
+          sessionId: handle.sessionId,
+          strategy: "local" as const,
+          agentName: handle.agent.name,
+        };
+
+        let result: PromptResult;
+
+        if (runtimeHost instanceof InProcessRuntimeHost) {
+          // ── Inprocess path ────────────────────────────────────────
+          // VO stays active during prompt — needed so permission callbacks
+          // can create awakeables via ctx.
+          result = await new Promise<PromptResult>((resolve) => {
+            runtimeHost.prompt(promptHandle, next.text, {
               onEvent(event) {
                 pubsub.publish(topic, event).catch(() => {});
               },
@@ -261,9 +267,34 @@ export const AgentSession = restate.object({
                   runId: handle.sessionId,
                 });
               },
+            });
+          });
+        } else {
+          // ── Remote path ───────────────────────────────────────────
+          // VO suspends on awakeable — zero compute while agent runs on
+          // remote server. Server publishes events to pubsub directly
+          // and resolves the awakeable on terminal state.
+          const { id: completionId, promise: completionPromise } =
+            ctx.awakeable<PromptResult>();
+
+          const noopCallbacks: RuntimeHostCallbacks = {
+            onEvent() {},
+            async onPermission(request) {
+              return { optionId: request.options[0]?.optionId ?? "approved" };
             },
+            onComplete() {},
+            onError() {},
+          };
+
+          await runtimeHost.prompt(
+            promptHandle,
+            next.text,
+            noopCallbacks,
+            completionId,
           );
-        });
+
+          result = await completionPromise;
+        }
 
         // Emit the result for this turn
         // Publish result via external pubsub (not ctx — non-deterministic value).
@@ -285,7 +316,7 @@ export const AgentSession = restate.object({
         await runtime.step("cancel", () => new A2AAdapter().cancel(handle));
       } else {
         // Ephemeral — cancel the live process directly, not via ctx.run
-        await new StdioAdapter(getRuntimeHost()).cancel(handle);
+        await new StdioAdapter(runtimeHost).cancel(handle);
       }
 
       runtime.state.clear("pending_pause");
@@ -303,7 +334,7 @@ export const AgentSession = restate.object({
       if (agent.protocol === "a2a") {
         await runtime.step("cancel", () => new A2AAdapter().cancel(handle));
       } else {
-        await new StdioAdapter(getRuntimeHost()).cancel(handle);
+        await new StdioAdapter(runtimeHost).cancel(handle);
       }
 
       // Send the new prompt — the conversation loop will pick it up
@@ -324,7 +355,7 @@ export const AgentSession = restate.object({
           await runtime.step("close", () => new A2AAdapter().close(handle));
         } else {
           // Ephemeral — kill the live process directly
-          await new StdioAdapter(getRuntimeHost()).close(handle);
+          await new StdioAdapter(runtimeHost).close(handle);
         }
       }
 

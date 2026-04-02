@@ -256,6 +256,7 @@ export class InProcessRuntimeHost implements RuntimeHost {
     handle: ProcessHandle,
     text: string,
     callbacks: RuntimeHostCallbacks,
+    _awakeableId?: string,
   ): Promise<void> {
     const entry = this.processes.get(handle.sessionId);
     if (!entry) {
