@@ -8,9 +8,6 @@
  *   ACP_BACKEND=gateway  → connect to remote gateway (edge/cloud)
  */
 
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
 import * as acp from "@agentclientprotocol/sdk";
 import { StdioTransport } from "@flamecast/acp-gateway/transports/stdio";
 import {
@@ -18,22 +15,6 @@ import {
   type SpawnConfig,
 } from "@flamecast/acp-gateway/registry";
 import type { TransportConnection } from "@flamecast/acp-gateway/transport";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-function findRegistry(): string {
-  if (process.env.ACP_REGISTRY_PATH) return process.env.ACP_REGISTRY_PATH;
-
-  // Try relative to this file (packages/flamecast/src/acp/ → packages/acp-gateway/)
-  const fromSrc = resolve(__dirname, "../../../acp-gateway/registry.json");
-  if (existsSync(fromSrc)) return fromSrc;
-
-  // Try relative to CWD (monorepo root)
-  const fromCwd = resolve(process.cwd(), "packages/acp-gateway/registry.json");
-  if (existsSync(fromCwd)) return fromCwd;
-
-  return "./registry.json";
-}
 
 // ─── Interface ──────────────────────────────────────────────────────────────
 
@@ -61,21 +42,14 @@ export class StdioBackend implements AgentBackend {
   private configs: Map<string, SpawnConfig> = new Map();
   private initialized = false;
 
-  constructor(private registryPath?: string) {}
+  constructor(private registryPath: string) {}
 
   private async ensureInit() {
     if (this.initialized) return;
-    const path = this.registryPath ?? findRegistry();
-    try {
-      console.log(`[StdioBackend] Loading registry from ${path}`);
-      const configs = await loadRegistry(path);
-      console.log(`[StdioBackend] Loaded ${configs.length} agents`);
-      for (const c of configs) {
-        this.configs.set(c.id, c);
-        this.configs.set(c.manifest.name, c);
-      }
-    } catch (err) {
-      console.error(`[StdioBackend] Failed to load registry from ${path}:`, err);
+    const configs = await loadRegistry(this.registryPath);
+    for (const c of configs) {
+      this.configs.set(c.id, c);
+      this.configs.set(c.manifest.name, c);
     }
     this.initialized = true;
   }
@@ -120,6 +94,12 @@ export class StdioBackend implements AgentBackend {
 // ─── Factory ────────────────────────────────────────────────────────────────
 
 export function createBackend(): AgentBackend {
-  // Future: ACP_BACKEND=gateway → GatewayBackend
-  return new StdioBackend();
+  const registryPath = process.env.ACP_REGISTRY_PATH;
+  if (!registryPath) {
+    throw new Error(
+      "ACP_REGISTRY_PATH env var is required. " +
+      "Set it to the path of your registry.json (e.g. packages/acp-gateway/registry.json)",
+    );
+  }
+  return new StdioBackend(registryPath);
 }
