@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev dev:server dev:register --filter='!./examples/*'",
+    "dev": "turbo run dev dev:server dev:register --filter='!./examples/*' --filter='!docs'",
     "dev:all": "turbo run dev dev:server dev:register",
     "dev:client": "turbo run dev --filter=flamecast-client",
     "dev:server": "turbo run dev --filter=flamecast-server",
