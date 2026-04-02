@@ -1,7 +1,8 @@
 FROM node:22-slim
+RUN apt-get update && apt-get install -y --no-install-recommends procps libssl3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-# Install pnpm
+# Install pnpm (npx comes with node:22-slim already)
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy workspace files
