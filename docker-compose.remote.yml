@@ -23,7 +23,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: deploy/runtime-host/Dockerfile
     ports:
       - "3001:3001"    # Hono API
       - "9080:9080"    # Restate endpoint
@@ -37,7 +37,7 @@ services:
   runtime-host:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: deploy/runtime-host/Dockerfile
     command: ["node", "dist/runtime-host/serve.js"]
     ports:
       - "9100:9100"

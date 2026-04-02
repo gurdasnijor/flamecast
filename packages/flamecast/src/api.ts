@@ -213,8 +213,10 @@ export function createApi(flamecast: FlamecastApi) {
         // Try resolving as Restate awakeable (inprocess path)
         try {
           await ingress.resolveAwakeable(body.awakeableId, body.payload);
-        } catch {
-          // Not a real Restate awakeable — try RuntimeHost endpoint
+        } catch (err) {
+          // 404 = not a real Restate awakeable → try RuntimeHost endpoint
+          // Other errors (network, Restate down) should be logged
+          console.warn(`[resume] resolveAwakeable failed for ${body.awakeableId}:`, err instanceof Error ? err.message : err);
           const runtimeHostUrl = process.env.FLAMECAST_RUNTIME_HOST_URL;
           if (runtimeHostUrl) {
             await fetch(

@@ -76,6 +76,9 @@ export interface PermissionDecision {
 // ─── RuntimeHost Interface ────────────────────────────────────────────────
 
 export interface RuntimeHost {
+  /** Whether this host runs agents in-process or delegates via HTTP. */
+  readonly mode: "inprocess" | "remote";
+
   /**
    * Spawn an agent process and initialize the ACP connection.
    * Returns a ProcessHandle with agent info.
@@ -103,4 +106,7 @@ export interface RuntimeHost {
 
   /** Kill the agent process and clean up. */
   close(handle: ProcessHandle): Promise<void>;
+
+  /** Check if a process is alive (inprocess only). */
+  has?(sessionId: string): boolean;
 }

@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 
 export class RemoteRuntimeHost implements RuntimeHost {
+  readonly mode = "remote" as const;
   constructor(private baseUrl: string) {}
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {

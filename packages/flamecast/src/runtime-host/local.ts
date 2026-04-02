@@ -184,6 +184,7 @@ function toPromptInput(text: string): acp.ContentBlock[] {
 // ─── InProcessRuntimeHost ─────────────────────────────────────────────────
 
 export class InProcessRuntimeHost implements RuntimeHost {
+  readonly mode = "inprocess" as const;
   private processes = new Map<string, ProcessEntry>();
 
   async spawn(sessionId: string, spec: AgentSpec): Promise<ProcessHandle> {

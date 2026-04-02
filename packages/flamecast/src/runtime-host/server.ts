@@ -53,7 +53,9 @@ export function createRuntimeHostServer(opts: RuntimeHostServerOptions) {
 
   /** Resolve a Restate awakeable with a payload. */
   function resolveAwakeable(awakeableId: string, payload: unknown): void {
-    ingress.resolveAwakeable(awakeableId, payload);
+    ingress.resolveAwakeable(awakeableId, payload).catch((err) => {
+      console.error(`[resolveAwakeable] Failed for ${awakeableId}:`, err instanceof Error ? err.message : err);
+    });
   }
 
   app.post("/sessions/:id/spawn", async (c) => {

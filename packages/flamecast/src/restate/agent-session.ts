@@ -19,7 +19,6 @@ import { createRestateRuntime } from "../runtime/restate.js";
 import { StdioAdapter } from "../adapters/stdio.js";
 import { A2AAdapter } from "../adapters/a2a.js";
 import { createRuntimeHost, type RuntimeHost, type RuntimeHostCallbacks } from "../runtime-host/index.js";
-import { InProcessRuntimeHost } from "../runtime-host/local.js";
 import { createPubsubClient } from "@restatedev/pubsub-client";
 import { sharedHandlers } from "./shared-handlers.js";
 
@@ -97,8 +96,8 @@ async function ensureStdioProcess(
   agent: AgentManifest,
 ): Promise<void> {
   // Remote server manages process lifecycle
-  if (!(runtimeHost instanceof InProcessRuntimeHost)) return;
-  if (runtimeHost.has(sessionId)) return;
+  if (runtimeHost.mode === "remote") return;
+  if (runtimeHost.has?.(sessionId)) return;
 
   // Re-spawn — process died or this is a replay
   const adapter = new StdioAdapter(runtimeHost);
@@ -226,7 +225,7 @@ export const AgentSession = restate.object({
 
         let result: PromptResult;
 
-        if (runtimeHost instanceof InProcessRuntimeHost) {
+        if (runtimeHost.mode === "inprocess") {
           // ── Inprocess path ────────────────────────────────────────
           // VO stays active during prompt — needed so permission callbacks
           // can create awakeables via ctx.
@@ -279,8 +278,8 @@ export const AgentSession = restate.object({
 
           const noopCallbacks: RuntimeHostCallbacks = {
             onEvent() {},
-            async onPermission(request) {
-              return { optionId: request.options[0]?.optionId ?? "approved" };
+            async onPermission() {
+              throw new Error("Remote path should not receive permission callbacks — server handles them");
             },
             onComplete() {},
             onError() {},
