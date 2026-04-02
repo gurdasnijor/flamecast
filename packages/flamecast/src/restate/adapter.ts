@@ -1,11 +1,9 @@
 /**
  * Types for ACP agent orchestration.
  *
- * Defines the unified interface that abstracts Zed ACP (stdio JSON-RPC)
- * and IBM ACP (REST HTTP) protocols. The VO calls the adapter without
- * knowing which protocol is underneath.
+ * Defines the unified interface that abstracts stdio
+ * and a2a (HTTP) protocols.
  *
- * Reference: docs/sdd-durable-acp-bridge.md §2.1-2.2
  */
 
 // ─── Agent Events (streaming + control-plane) ─────────────────────────────
@@ -83,7 +81,7 @@ export interface PromptResult {
   status: "completed" | "awaiting" | "failed" | "cancelled";
   output?: AgentMessage[];
   awaitRequest?: unknown; // present when status === "awaiting"
-  runId?: string; // for resumeSync / client SSE subscription
+  runId?: string; 
   error?: string; // present when status === "failed"
 }
 

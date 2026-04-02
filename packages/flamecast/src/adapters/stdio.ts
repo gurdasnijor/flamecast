@@ -18,41 +18,8 @@ import type {
   RuntimeHostCallbacks,
 } from "../runtime-host/types.js";
 
-// ─── Types matching the VO's expectations ─────────────────────────────────
-
-export interface AgentInfo {
-  name: string;
-  description?: string;
-  capabilities?: Record<string, unknown>;
-}
-
-export interface SessionHandle {
-  sessionId: string;
-  protocol: "stdio" | "a2a";
-  agent: AgentInfo;
-  connection: {
-    url?: string;
-    pid?: number;
-    containerId?: string;
-    sandboxId?: string;
-  };
-}
-
-export interface AgentStartConfig {
-  agent: string;
-  args?: string[];
-  cwd?: string;
-  sessionId?: string;
-  env?: Record<string, string>;
-}
-
-export interface ConfigOption {
-  id: string;
-  label: string;
-  type: "string" | "enum";
-  value: string;
-  options?: string[];
-}
+import type { SessionHandle, AgentStartConfig, ConfigOption } from "../restate/adapter.js";
+export type { SessionHandle, AgentStartConfig, ConfigOption } from "../restate/adapter.js";
 
 // ─── StdioAdapter ─────────────────────────────────────────────────────────
 

@@ -126,23 +126,6 @@ export type SessionEvent =
       output?: unknown;
     };
 
-// ---------------------------------------------------------------------------
-// Legacy Session interface (used by storage layer)
-// ---------------------------------------------------------------------------
-
-export interface Session {
-  id: string;
-  agentName: string;
-  spawn: AgentSpawn;
-  startedAt: string;
-  lastUpdatedAt: string;
-  status: "active" | "killed";
-  logs: SessionLog[];
-  pendingPermission: PendingPermission | null;
-  fileSystem: FileSystemSnapshot | null;
-  websocketUrl?: string;
-  runtime?: string;
-}
 
 // ---------------------------------------------------------------------------
 // API request bodies
@@ -153,7 +136,6 @@ export interface CreateSessionBody {
   agentTemplateId?: string;
   spawn?: AgentSpawn;
   name?: string;
-  runtimeInstance?: string;
   webhooks?: Omit<WebhookConfig, "id">[];
 }
 

@@ -1,7 +1,7 @@
 /**
  * Shared VO handlers for AgentSession.
  *
- * Spread into the VO via `...sharedHandlers`.
+ * Spread into AgentSession via `...sharedHandlers`.
  */
 
 import * as restate from "@restatedev/restate-sdk";
