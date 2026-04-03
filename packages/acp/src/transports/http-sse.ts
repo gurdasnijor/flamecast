@@ -1,92 +1,86 @@
 /**
- * HTTP+SSE transport — connects to an agent over HTTP.
+ * HTTP+SSE — connects to an agent over HTTP.
+ * Client→Agent: POST bytes to /jsonrpc
+ * Agent→Client: SSE stream of bytes from /events
  *
- * - Client→Agent: POST JSON-RPC messages to /jsonrpc
- * - Agent→Client: SSE stream of JSON-RPC messages from /events
+ * Note: HTTP+SSE is inherently message-oriented (one POST per message,
+ * one SSE data: line per message). The byte streams here carry one
+ * JSON message per chunk — use jsonCodec() not ndJsonCodec().
  */
 
-import type * as acp from "@agentclientprotocol/sdk";
-import type { Transport, TransportConnection } from "../transport.js";
+import type { ByteConnection } from "../transport.js";
 
 export interface HttpSseConnectOptions {
-  /** Base URL of the agent's HTTP+SSE endpoint. */
   url: string;
-  /** Extra headers to send with every request (e.g. auth). */
   headers?: Record<string, string>;
 }
 
-export class HttpSseTransport implements Transport<HttpSseConnectOptions> {
-  async connect(opts: HttpSseConnectOptions): Promise<TransportConnection> {
-    const ac = new AbortController();
-    const baseHeaders = opts.headers ?? {};
+const enc = new TextEncoder();
 
-    // Client→Agent: writable that POSTs each message
-    const writable = new WritableStream<acp.AnyMessage>({
-      async write(msg) {
-        const res = await fetch(`${opts.url}/jsonrpc`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...baseHeaders },
-          body: JSON.stringify(msg),
-          signal: ac.signal,
-        });
-        if (!res.ok) {
-          throw new Error(`POST /jsonrpc failed: ${res.status}`);
-        }
-      },
-    });
+export async function connectHttpSse(
+  opts: HttpSseConnectOptions,
+): Promise<ByteConnection> {
+  const ac = new AbortController();
+  const baseHeaders = opts.headers ?? {};
 
-    // Agent→Client: readable that consumes SSE
-    const readable = new ReadableStream<acp.AnyMessage>({
-      start(controller) {
-        fetch(`${opts.url}/events`, {
-          headers: baseHeaders,
-          signal: ac.signal,
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              controller.error(
-                new Error(`GET /events failed: ${res.status}`),
-              );
-              return;
-            }
+  // Client→Agent: each write POSTs one message as bytes
+  const writable = new WritableStream<Uint8Array>({
+    async write(chunk) {
+      const res = await fetch(`${opts.url}/jsonrpc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...baseHeaders },
+        body: Buffer.from(chunk),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`POST /jsonrpc failed: ${res.status}`);
+      }
+    },
+  });
 
-            const reader = res.body!.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
+  // Agent→Client: SSE stream, each data: line is one message as bytes
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      fetch(`${opts.url}/events`, {
+        headers: baseHeaders,
+        signal: ac.signal,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            controller.error(new Error(`GET /events failed: ${res.status}`));
+            return;
+          }
 
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
+          const reader = res.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop()!;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  const msg = JSON.parse(line.slice(6)) as acp.AnyMessage;
-                  controller.enqueue(msg);
-                }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop()!;
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                controller.enqueue(enc.encode(line.slice(6)));
               }
             }
-            controller.close();
-          })
-          .catch((err) => {
-            if (err.name !== "AbortError") {
-              controller.error(err);
-            }
-          });
-      },
-    });
+          }
+          controller.close();
+        })
+        .catch((err) => {
+          if (err.name !== "AbortError") controller.error(err);
+        });
+    },
+  });
 
-    const stream: acp.Stream = { readable, writable };
-
-    return {
-      stream,
-      signal: ac.signal,
-      async close() {
-        ac.abort();
-      },
-    };
-  }
+  return {
+    readable,
+    writable,
+    signal: ac.signal,
+    async close() { ac.abort(); },
+  };
 }
