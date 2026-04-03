@@ -23,7 +23,10 @@ describe("ACP Restate Integration", () => {
       services: [AcpSession, pubsubObject],
     });
 
-    client = createAcpClient({ restateUrl: restateEnv.baseUrl() });
+    client = createAcpClient({
+      ingressUrl: restateEnv.baseUrl(),
+      adminUrl: restateEnv.baseUrl().replace(":18080", ":19070"),
+    });
   }, 60_000);
 
   afterAll(async () => {
@@ -31,14 +34,13 @@ describe("ACP Restate Integration", () => {
   });
 
   it("starts a session and gets status", async () => {
-    const { sessionId, agentName } = await client.startSession("claude-acp");
+    const { sessionId } = await client.startSession("claude-acp");
     expect(sessionId).toBeDefined();
-    expect(agentName).toBe("claude-acp");
 
     const status = await client.getStatus(sessionId);
     expect(status).toBeDefined();
     expect(status!.agentName).toBe("claude-acp");
-    expect(["active", "running"]).toContain(status!.status);
+    expect(["created", "in-progress"]).toContain(status!.status);
   }, 30_000);
 
   it("sends a prompt and receives a response", async () => {
@@ -50,11 +52,11 @@ describe("ACP Restate Integration", () => {
     let status;
     for (let i = 0; i < 30; i++) {
       status = await client.getStatus(sessionId);
-      if (status?.status === "active") break;
+      if (status?.status === "completed") break;
       await new Promise((r) => setTimeout(r, 1000));
     }
 
-    expect(status?.status).toBe("active");
+    expect(status?.status).toBe("completed");
 
     await client.terminate(sessionId);
   }, 60_000);
