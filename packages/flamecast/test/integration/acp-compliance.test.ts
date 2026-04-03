@@ -1,10 +1,10 @@
 /**
- * ACP Compliance E2E — FlamecastConnection implements the Agent interface
+ * ACP Compliance E2E — FlamecastClient implements the Agent interface
  * with Restate as the transport.
  *
  * Stands up both sides:
  *   - Downstream: EchoAgent (stdio fixture) behind Restate VO
- *   - Upstream: FlamecastConnection (ACP-compliant client)
+ *   - Upstream: FlamecastClient (ACP-compliant client)
  *
  * Validates all ACP protocol semantics:
  *   - Initialization (protocol version, capabilities)
@@ -23,17 +23,17 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import * as acp from "@agentclientprotocol/sdk";
 import { StdioTransport } from "@flamecast/acp/transports/stdio";
-import { PooledConnectionFactory } from "@flamecast/acp/pool";
+import { PooledConnectionFactory } from "../../src/pool.js";
 import type {
   AgentConnectionFactory,
   AgentConnectionResult,
-} from "@flamecast/acp";
+} from "../../src/factory.js";
 import { AcpSession, configureAcp } from "../../src/session.js";
 import { AcpAgents } from "../../src/agents.js";
 import { pubsubObject } from "../../src/pubsub.js";
 
-// FlamecastConnection is the class under test — ACP Agent interface over Restate
-import { FlamecastConnection } from "../../src/client/connection.js";
+// FlamecastClient is the class under test — ACP Agent interface over Restate
+import { FlamecastClient } from "../../src/client/index.js";
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -63,9 +63,9 @@ const innerFactory: AgentConnectionFactory = {
 
 let pooledFactory: PooledConnectionFactory;
 let restateEnv: RestateTestEnvironment;
-let connection: FlamecastConnection;
+let connection: FlamecastClient;
 
-describe("ACP Compliance — FlamecastConnection as Agent", () => {
+describe("ACP Compliance — FlamecastClient as Agent", () => {
   beforeAll(async () => {
     pooledFactory = new PooledConnectionFactory(innerFactory);
 
@@ -88,7 +88,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
 
   describe("Initialization", () => {
     it("negotiates protocol version and returns capabilities", async () => {
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
       });
 
@@ -113,7 +113,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
 
   describe("Session Setup", () => {
     it("creates a new session and returns sessionId", async () => {
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
       });
 
@@ -137,7 +137,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
 
   describe("Prompt Turn", () => {
     it("sends prompt with text content blocks and gets stopReason", async () => {
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
       });
 
@@ -162,7 +162,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
     it("receives session update notifications during prompt", async () => {
       const updates: acp.SessionNotification[] = [];
 
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
         onSessionUpdate: (params) => updates.push(params),
       });
@@ -193,7 +193,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
     });
 
     it("supports multi-turn on the same session", async () => {
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
       });
 
@@ -225,7 +225,7 @@ describe("ACP Compliance — FlamecastConnection as Agent", () => {
 
   describe("Cancellation", () => {
     it("cancels a session and gets stopReason cancelled", async () => {
-      connection = new FlamecastConnection({
+      connection = new FlamecastClient({
         ingressUrl: restateEnv.baseUrl(),
       });
 

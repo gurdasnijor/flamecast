@@ -19,7 +19,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentConnectionFactory,
   AgentConnectionResult,
-} from "./acp-client.js";
+} from "./factory.js";
 
 interface PoolEntry {
   conn: acp.ClientSideConnection;

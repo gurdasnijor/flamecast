@@ -9,11 +9,11 @@
  */
 
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentConnectionFactory, AgentConnectionResult } from "./acp-client.js";
-import { loadRegistryFromIds, type SpawnConfig } from "./registry.js";
-import { StdioTransport } from "./transports/stdio.js";
-import { WsTransport } from "./transports/websocket.js";
-import { HttpSseTransport } from "./transports/http-sse.js";
+import type { AgentConnectionFactory, AgentConnectionResult } from "./factory.js";
+import { loadRegistryFromIds, type SpawnConfig } from "@flamecast/acp/registry";
+import { StdioTransport } from "@flamecast/acp/transports/stdio";
+import { WsTransport } from "@flamecast/acp/transports/websocket";
+import { HttpSseTransport } from "@flamecast/acp/transports/http-sse";
 
 export type { AgentConnectionFactory };
 

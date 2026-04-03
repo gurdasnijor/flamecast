@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import * as acp from "@agentclientprotocol/sdk";
 import type { TransportConnection } from "../src/transport.js";
-import type { AgentConnectionFactory, AgentConnectionResult } from "../src/acp-client.js";
+import { AcpClient } from "../src/acp-client.js";
 
 // ─── In-memory factory ──────────────────────────────────────────────────────
 

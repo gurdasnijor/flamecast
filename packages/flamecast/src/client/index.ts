@@ -1,57 +1,55 @@
 /**
- * @flamecast/client — typed client for Restate ingress.
+ * FlamecastClient — ACP Agent interface over Restate.
  *
- * Browser-safe. Uses `import type` for VO definitions (erased at
- * compile time, no server SDK in bundle).
+ * Implements the same Agent interface as ClientSideConnection,
+ * but uses Restate ingress as the transport instead of a raw stream.
+ * Session updates arrive via pubsub SSE and route to the caller's
+ * acp.Client callbacks.
  *
- *   import { FlamecastClient } from "@flamecast/sdk/client";
+ * From the consumer's perspective, this is a drop-in replacement
+ * for ClientSideConnection:
  *
- *   const client = new FlamecastClient({ ingressUrl: "/restate" });
- *   const { sessionId } = await client.startSession("claude-acp");
- *   await client.sendPrompt(sessionId, "hello");
+ *   // Direct agent (raw stream)
+ *   const conn = new ClientSideConnection((agent) => myClient, stream);
+ *
+ *   // Through Restate (durable)
+ *   const conn = new FlamecastClient({ ingressUrl, onSessionUpdate });
+ *
+ * Both implement Agent: initialize, newSession, prompt, cancel.
+ *
+ * Reference: https://agentclientprotocol.com/protocol/schema
  */
 
 import * as restate from "@restatedev/restate-sdk-clients";
 import { createPubsubClient } from "@restatedev/pubsub-client";
+import * as acp from "@agentclientprotocol/sdk";
 
-// Type-only imports — erased at compile time, no server SDK in bundle
-import type {
-  SessionState,
-  AgentInfo,
-} from "../index.js";
+// Type-only — no server SDK in bundle
 import type { AcpSession as AcpSessionDef } from "../session.js";
-import type { AcpAgents as AcpAgentsDef } from "../agents.js";
-const AcpSession: typeof AcpSessionDef = { name: "AcpSession" };
-const AcpAgents: typeof AcpAgentsDef = { name: "AcpAgents" };
-
-// Re-export shared types for consumers
-export type { SessionState, AgentInfo };
+const AcpSession: typeof AcpSessionDef = { name: "AcpSession" } as never;
 
 export interface FlamecastClientConfig {
-  /** Restate ingress URL (or proxy path like "/restate"). */
+  /** Restate ingress URL. */
   ingressUrl: string;
-  /** Restate admin URL. Enables listSessions/getSessionEvents. */
-  adminUrl?: string;
   /** Optional bearer token. */
   apiKey?: string;
+  /** Called when the agent sends session update notifications. */
+  onSessionUpdate?: (params: acp.SessionNotification) => void;
+  /** Called when the agent requests permission. Auto-approves if not provided. */
+  onPermissionRequest?: (
+    params: acp.RequestPermissionRequest,
+  ) => Promise<acp.RequestPermissionResponse>;
 }
 
-// ─── Client ─────────────────────────────────────────────────────────────────
-
-export class FlamecastClient {
+export class FlamecastClient implements acp.Agent {
   private ingress: ReturnType<typeof restate.connect>;
   private pubsub: ReturnType<typeof createPubsubClient>;
-  private adminUrl?: string;
-  private adminHeaders: Record<string, string>;
+  private config: FlamecastClientConfig;
+  private sessionId: string | null = null;
+  private sseAbort: AbortController | null = null;
 
   constructor(config: FlamecastClientConfig) {
-    this.adminUrl = config.adminUrl?.replace(/\/$/, "");
-    this.adminHeaders = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
-    };
-
+    this.config = config;
     const authHeaders = config.apiKey
       ? { Authorization: `Bearer ${config.apiKey}` }
       : undefined;
@@ -65,26 +63,79 @@ export class FlamecastClient {
       name: "pubsub",
       ingressUrl: config.ingressUrl,
       headers: authHeaders,
-      pullInterval: { milliseconds: 500 },
+      pullInterval: { milliseconds: 300 },
     });
   }
 
-  // ── Session lifecycle ───────────────────────────────────────────────────
+  // ── Agent interface ───────────────────────────────────────────────────
 
-  async newSession(agentName: string, cwd = "/") {
+  async initialize(
+    params: acp.InitializeRequest,
+  ): Promise<acp.InitializeResponse> {
+    // Pool is pre-warmed — agent capabilities come from the VO's stored
+    // init response. For now, return a compatible response.
+    return {
+      protocolVersion: params.protocolVersion,
+      agentCapabilities: {
+        loadSession: false,
+      },
+    };
+  }
+
+  async newSession(
+    params: acp.NewSessionRequest,
+  ): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
-    // Blocking — waits for agent connection (initialize + session/new)
+    const agentName =
+      (params._meta?.agentName as string) ?? "claude-acp";
+
     await this.ingress
       .objectClient(AcpSession, sessionId)
-      .newSession({ cwd, mcpServers: [], _meta: { agentName } });
+      .newSession({
+        cwd: params.cwd,
+        mcpServers: params.mcpServers,
+        _meta: { agentName },
+      });
+
+    this.sessionId = sessionId;
+
+    // Start listening for session events via pubsub SSE
+    this.startEventListener(sessionId);
+
     return { sessionId };
   }
 
-  async prompt(sessionId: string, text: string) {
-    // Blocking — waits for the full prompt turn to complete
-    return this.ingress
-      .objectClient(AcpSession, sessionId)
-      .prompt({ sessionId, prompt: [{ type: "text", text }] });
+  async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
+    const result = await this.ingress
+      .objectClient(AcpSession, params.sessionId)
+      .prompt(params);
+
+    return result as acp.PromptResponse;
+  }
+
+  async cancel(params: acp.CancelNotification): Promise<void> {
+    await this.ingress
+      .objectClient(AcpSession, params.sessionId)
+      .cancel();
+  }
+
+  async authenticate(
+    _params: acp.AuthenticateRequest,
+  ): Promise<void> {
+    // Not implemented — no auth required for local Restate
+  }
+
+  // ── Session management (not part of core Agent, but useful) ───────────
+
+  async closeSession(params: {
+    sessionId: string;
+  }): Promise<acp.PromptResponse> {
+    const result = await this.ingress
+      .objectClient(AcpSession, params.sessionId)
+      .close();
+
+    this.stopEventListener();
+    return result as acp.PromptResponse;
   }
 
   async getStatus(sessionId: string) {
@@ -96,7 +147,7 @@ export class FlamecastClient {
   async resumePermission(
     sessionId: string,
     awakeableId: string,
-    optionId?: string,
+    optionId: string,
     outcome: "selected" | "cancelled" = "selected",
   ) {
     return this.ingress
@@ -104,100 +155,115 @@ export class FlamecastClient {
       .resumePermission({ awakeableId, optionId, outcome });
   }
 
-  async cancel(sessionId: string) {
-    return this.ingress
-      .objectClient(AcpSession, sessionId)
-      .cancel();
-  }
+  // ── Event listener (pubsub SSE → acp.Client callbacks) ───────────────
 
-  async close(sessionId: string) {
-    return this.ingress
-      .objectClient(AcpSession, sessionId)
-      .close();
-  }
+  private startEventListener(sessionId: string) {
+    this.stopEventListener();
 
-  // ── Agent discovery ─────────────────────────────────────────────────────
+    const ac = new AbortController();
+    this.sseAbort = ac;
 
-  async listAgents() {
-    return this.ingress
-      .serviceClient(AcpAgents)
-      .listAgents();
-  }
-
-  // ── Streaming (pubsub) ──────────────────────────────────────────────────
-
-  subscribe(
-    sessionId: string,
-    opts?: { offset?: number; signal?: AbortSignal },
-  ) {
-    return this.pubsub.pull({
+    const stream = this.pubsub.sse({
       topic: `session:${sessionId}`,
-      offset: opts?.offset ?? 0,
-      signal: opts?.signal,
+      offset: 0,
+      signal: ac.signal,
     });
-  }
 
-  subscribeSSE(
-    sessionId: string,
-    opts?: { offset?: number; signal?: AbortSignal },
-  ) {
-    return this.pubsub.sse({
-      topic: `session:${sessionId}`,
-      offset: opts?.offset ?? 0,
-      signal: opts?.signal,
-    });
-  }
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-  // ── Admin SQL (requires adminUrl) ───────────────────────────────────────
-
-  async listSessions(): Promise<SessionState[]> {
-    if (!this.adminUrl) {
-      throw new Error("listSessions requires adminUrl in client config");
-    }
-    const rows = await this.queryAdmin(
-      `SELECT service_key, value_utf8 FROM state WHERE service_name = 'AcpSession' AND key = 'meta'`,
-    );
-    const sessions: SessionState[] = [];
-    for (const row of rows) {
+    (async () => {
       try {
-        const meta = JSON.parse(row.value_utf8) as SessionState;
-        sessions.push(meta);
-      } catch {
-        // skip malformed
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value as Uint8Array, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop()!;
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const event = JSON.parse(line.slice(6)) as Record<
+                  string,
+                  unknown
+                >;
+                this.handleEvent(event);
+              } catch {
+                // skip malformed
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          console.error("[FlamecastClient] SSE error:", err);
+        }
+      }
+    })();
+  }
+
+  private stopEventListener() {
+    this.sseAbort?.abort();
+    this.sseAbort = null;
+  }
+
+  private handleEvent(event: Record<string, unknown>) {
+    const type = event.type as string;
+
+    if (type === "session_update" && this.config.onSessionUpdate) {
+      this.config.onSessionUpdate({
+        sessionId: this.sessionId ?? "",
+        update: event.update as acp.SessionNotification["update"],
+      });
+    }
+
+    if (type === "permission_request" && this.sessionId) {
+      const awakeableId = event.awakeableId as string;
+      const permRequest = {
+        sessionId: this.sessionId,
+        toolCall: event.toolCall as acp.RequestPermissionRequest["toolCall"],
+        options: event.options as acp.RequestPermissionRequest["options"],
+      };
+
+      if (this.config.onPermissionRequest) {
+        this.config.onPermissionRequest(permRequest).then((response) => {
+          const optionId =
+            response.outcome.outcome === "selected"
+              ? response.outcome.optionId
+              : undefined;
+          this.resumePermission(
+            this.sessionId!,
+            awakeableId,
+            optionId ?? "",
+            response.outcome.outcome === "cancelled"
+              ? "cancelled"
+              : "selected",
+          ).catch((err) =>
+            console.error("[FlamecastClient] resume error:", err),
+          );
+        });
+      } else {
+        // Auto-approve first option
+        const options = event.options as Array<{ optionId: string }>;
+        if (options?.[0]) {
+          this.resumePermission(
+            this.sessionId,
+            awakeableId,
+            options[0].optionId,
+          ).catch((err) =>
+            console.error("[FlamecastClient] auto-approve error:", err),
+          );
+        }
       }
     }
-    return sessions.sort((a, b) =>
-      (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
-    );
   }
 
-  async getSessionEvents(sessionId: string): Promise<unknown[]> {
-    if (!this.adminUrl) {
-      throw new Error("getSessionEvents requires adminUrl in client config");
-    }
-    const rows = await this.queryAdmin(
-      `SELECT key, value_utf8 FROM state WHERE service_name = 'pubsub' AND service_key = 'session:${sessionId}' ORDER BY key`,
-    );
-    return rows
-      .filter((row) => row.key.startsWith("m_"))
-      .sort((a, b) => parseInt(a.key.slice(2), 10) - parseInt(b.key.slice(2), 10))
-      .map((row) => { try { return JSON.parse(row.value_utf8); } catch { return null; } })
-      .filter((e): e is unknown => e !== null);
-  }
+  // ── Cleanup ───────────────────────────────────────────────────────────
 
-  private async queryAdmin(
-    sql: string,
-  ): Promise<Array<Record<string, string>>> {
-    const res = await fetch(`${this.adminUrl}/query`, {
-      method: "POST",
-      headers: this.adminHeaders,
-      body: JSON.stringify({ query: sql }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Admin query failed (${res.status}): ${text}`);
-    }
-    const data = (await res.json()) as { rows?: Array<Record<string, string>> };
-    return data.rows ?? [];
+  dispose() {
+    this.stopEventListener();
   }
 }

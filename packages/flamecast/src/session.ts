@@ -24,8 +24,8 @@ import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import type { AgentConnectionFactory } from "@flamecast/acp";
-import { RegistryConnectionFactory } from "@flamecast/acp/resolver";
+import type { AgentConnectionFactory } from "./factory.js";
+import { RegistryConnectionFactory } from "./resolver.js";
 
 // ─── Agent connection factory (injectable for tests) ────────────────────────
 
@@ -62,51 +62,36 @@ function emit(ctx: restate.ObjectContext, event: Record<string, unknown>) {
   pubsub.publish(`session:${ctx.key}`, event, ctx.rand.uuidv4());
 }
 
-// ─── ACP Client implementation ──────────────────────────────────────────────
-
-/**
- * Flamecast's acp.Client — handles agent→client callbacks.
- */
-class FlamecastClient implements acp.Client {
-  constructor(private ctx: restate.ObjectContext) {}
-
-  async sessionUpdate(params: acp.SessionNotification): Promise<void> {
-    emit(this.ctx, {
-      type: "session_update",
-      sessionUpdate: params.update.sessionUpdate,
-      update: params.update,
-    });
-  }
-
-  async requestPermission(
-    params: acp.RequestPermissionRequest,
-  ): Promise<acp.RequestPermissionResponse> {
-    const { id: awakeableId, promise } =
-      this.ctx.awakeable<acp.RequestPermissionOutcome>();
-
-    emit(this.ctx, {
-      type: "permission_request",
-      toolCall: params.toolCall,
-      options: params.options,
-      awakeableId,
-    });
-
-    return { outcome: await promise };
-  }
-
-  async readTextFile(
-    params: acp.ReadTextFileRequest,
-  ): Promise<acp.ReadTextFileResponse> {
-    return { content: await readFile(params.path, "utf-8") };
-  }
-
-  async writeTextFile(
-    params: acp.WriteTextFileRequest,
-  ): Promise<acp.WriteTextFileResponse> {
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content, "utf-8");
-    return {};
-  }
+/** Create an acp.Client bound to the current Restate handler context. */
+function createClient(ctx: restate.ObjectContext): acp.Client {
+  return {
+    async sessionUpdate(params: acp.SessionNotification) {
+      emit(ctx, {
+        type: "session_update",
+        sessionUpdate: params.update.sessionUpdate,
+        update: params.update,
+      });
+    },
+    async requestPermission(params: acp.RequestPermissionRequest) {
+      const { id: awakeableId, promise } =
+        ctx.awakeable<acp.RequestPermissionOutcome>();
+      emit(ctx, {
+        type: "permission_request",
+        toolCall: params.toolCall,
+        options: params.options,
+        awakeableId,
+      });
+      return { outcome: await promise };
+    },
+    async readTextFile(params: acp.ReadTextFileRequest) {
+      return { content: await readFile(params.path, "utf-8") };
+    },
+    async writeTextFile(params: acp.WriteTextFileRequest) {
+      await mkdir(dirname(params.path), { recursive: true });
+      await writeFile(params.path, params.content, "utf-8");
+      return {};
+    },
+  };
 }
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
@@ -135,7 +120,7 @@ export const AcpSession = restate.object({
       ): Promise<acp.NewSessionResponse> => {
         const sessionId = ctx.key;
         const agentName = (input._meta?.agentName as string) ?? "claude-acp";
-        const client = new FlamecastClient(ctx);
+        const client = createClient(ctx);
 
         // Pool is warm — get the pre-created connection + session ID
         const { acpSessionId } = await factory.connect(agentName, client);
@@ -167,7 +152,7 @@ export const AcpSession = restate.object({
           );
         }
 
-        const client = new FlamecastClient(ctx);
+        const client = createClient(ctx);
 
         // Pool swaps the active client to this handler's context
         const { conn } = await factory.connect(agentName, client);

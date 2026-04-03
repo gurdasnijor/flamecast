@@ -549,23 +549,23 @@ for (const setup of transportSetups) {
       });
       const session = await conn.newSession({ cwd: "/tmp", mcpServers: [] });
 
-      expect(acpClient.sessions()).toHaveLength(0);
+      expect(acpClient.sessions_list()).toHaveLength(0);
 
       await conn.prompt({
         sessionId: session.sessionId,
         prompt: [{ type: "text", text: "claude\nhello" }],
       });
-      expect(acpClient.sessions()).toHaveLength(1);
-      expect(acpClient.sessions()[0].agentName).toBe("claude");
+      expect(acpClient.sessions_list()).toHaveLength(1);
+      expect(acpClient.sessions_list()[0].agentName).toBe("claude");
 
       await conn.prompt({
         sessionId: session.sessionId,
         prompt: [{ type: "text", text: "codex\nhello" }],
       });
-      expect(acpClient.sessions()).toHaveLength(2);
+      expect(acpClient.sessions_list()).toHaveLength(2);
       expect(
         acpClient
-          .sessions()
+          .sessions_list()
           .map((s) => s.agentName)
           .sort(),
       ).toEqual(["claude", "codex"]);

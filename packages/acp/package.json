@@ -2,12 +2,12 @@
   "name": "@flamecast/acp",
   "version": "0.0.0",
   "type": "module",
-  "main": "./src/acp-client.ts",
-  "types": "./src/acp-client.ts",
+  "main": "./src/transport.ts",
+  "types": "./src/transport.ts",
   "exports": {
     ".": {
-      "types": "./src/acp-client.ts",
-      "import": "./src/acp-client.ts"
+      "types": "./src/transport.ts",
+      "import": "./src/transport.ts"
     },
     "./transport": {
       "types": "./src/transport.ts",
@@ -24,14 +24,6 @@
     "./transports/websocket": {
       "types": "./src/transports/websocket.ts",
       "import": "./src/transports/websocket.ts"
-    },
-    "./pool": {
-      "types": "./src/pool.ts",
-      "import": "./src/pool.ts"
-    },
-    "./resolver": {
-      "types": "./src/resolver.ts",
-      "import": "./src/resolver.ts"
     },
     "./registry": {
       "types": "./src/registry.ts",

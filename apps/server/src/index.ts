@@ -1,6 +1,9 @@
-import { PooledConnectionFactory } from "@flamecast/acp/pool";
-import { RegistryConnectionFactory } from "@flamecast/acp/resolver";
-import { configureAcp, serve } from "@flamecast/sdk";
+import {
+  PooledConnectionFactory,
+  RegistryConnectionFactory,
+  configureAcp,
+  serve,
+} from "@flamecast/sdk";
 import dotenv from "dotenv";
 
 dotenv.config();

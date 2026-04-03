@@ -7,8 +7,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import * as acp from "@agentclientprotocol/sdk";
 import { StdioTransport } from "@flamecast/acp/transports/stdio";
-import { PooledConnectionFactory } from "@flamecast/acp/pool";
-import type { AgentConnectionFactory, AgentConnectionResult } from "@flamecast/acp";
+import { PooledConnectionFactory } from "../../src/pool.js";
+import type { AgentConnectionFactory, AgentConnectionResult } from "../../src/factory.js";
 import { AcpSession, configureAcp } from "../../src/session.js";
 import { AcpAgents } from "../../src/agents.js";
 import { pubsubObject } from "../../src/pubsub.js";
@@ -28,12 +28,10 @@ const innerFactory: AgentConnectionFactory = {
       args: ["tsx", ECHO_AGENT_PATH],
       label: "echo-agent",
     });
-
     const conn = new acp.ClientSideConnection(
       () => client,
       connection.stream,
     );
-
     return { conn, close: () => connection.close() };
   },
 };
@@ -50,8 +48,8 @@ describe("AcpSession E2E with Echo Agent", () => {
       services: [AcpSession, AcpAgents, pubsubObject],
     });
 
-    // Configure after restateEnv starts so we have the actual ingress URL
     configureAcp(pooledFactory, { ingressUrl: restateEnv.baseUrl() });
+    await pooledFactory.warmup(["echo-agent"]);
 
     client = new FlamecastClient({
       ingressUrl: restateEnv.baseUrl(),
@@ -59,38 +57,65 @@ describe("AcpSession E2E with Echo Agent", () => {
   }, 60_000);
 
   afterAll(async () => {
+    client.dispose();
     await pooledFactory?.shutdown();
     await restateEnv?.stop();
   });
 
   it("creates a session (blocking)", async () => {
-    const { sessionId } = await client.newSession("echo-agent");
-    expect(sessionId).toBeDefined();
+    const session = await client.newSession({
+      cwd: "/tmp",
+      mcpServers: [],
+      _meta: { agentName: "echo-agent" },
+    });
+    expect(session.sessionId).toBeDefined();
 
-    const status = await client.getStatus(sessionId);
+    const status = await client.getStatus(session.sessionId);
     expect(status).toBeDefined();
-    expect(status!.sessionId).toBe(sessionId);
   }, 30_000);
 
   it("sends a prompt and gets stopReason back (blocking)", async () => {
-    const { sessionId } = await client.newSession("echo-agent");
-    const result = await client.prompt(sessionId, "hello world");
+    const session = await client.newSession({
+      cwd: "/tmp",
+      mcpServers: [],
+      _meta: { agentName: "echo-agent" },
+    });
+    const result = await client.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "hello world" }],
+    });
     expect(result.stopReason).toBe("end_turn");
   }, 30_000);
 
   it("multi-turn on the same session", async () => {
-    const { sessionId } = await client.newSession("echo-agent");
+    const session = await client.newSession({
+      cwd: "/tmp",
+      mcpServers: [],
+      _meta: { agentName: "echo-agent" },
+    });
 
-    const r1 = await client.prompt(sessionId, "turn 1");
+    const r1 = await client.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "turn 1" }],
+    });
     expect(r1.stopReason).toBe("end_turn");
 
-    const r2 = await client.prompt(sessionId, "turn 2");
+    const r2 = await client.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "turn 2" }],
+    });
     expect(r2.stopReason).toBe("end_turn");
   }, 30_000);
 
   it("closes a session", async () => {
-    const { sessionId } = await client.newSession("echo-agent");
-    const result = await client.close(sessionId);
+    const session = await client.newSession({
+      cwd: "/tmp",
+      mcpServers: [],
+      _meta: { agentName: "echo-agent" },
+    });
+    const result = await client.closeSession({
+      sessionId: session.sessionId,
+    });
     expect(result.stopReason).toBe("cancelled");
   }, 30_000);
 });
