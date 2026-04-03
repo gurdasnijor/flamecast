@@ -73,7 +73,7 @@ export function useFlamecastSession(sessionId: string) {
           timestamp: new Date().toISOString(),
         },
       ]);
-      client.prompt(sessionId, text).catch(() => {});
+      client.prompt({ sessionId, prompt: [{ type: "text", text }] }).catch(() => {});
     },
     [sessionId],
   );
