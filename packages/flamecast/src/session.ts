@@ -202,11 +202,17 @@ export const AcpSession = restate.object({
 
           return result;
         } catch (err) {
+          const errorMsg =
+            err instanceof Error
+              ? err.message
+              : typeof err === "object" && err !== null
+                ? JSON.stringify(err)
+                : String(err);
           emit(ctx, {
             type: "prompt_failed",
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMsg,
           });
-          throw err;
+          throw new restate.TerminalError(errorMsg);
         }
       },
     ),
