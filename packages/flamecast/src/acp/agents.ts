@@ -9,12 +9,14 @@ import * as restate from "@restatedev/restate-sdk";
 import { z } from "zod";
 import { loadRegistryFromIds, type SpawnConfig } from "@flamecast/acp/registry";
 
-const AgentManifest = z.object({
+export const AgentManifest = z.object({
   name: z.string(),
   description: z.string().optional(),
   version: z.string().optional(),
   icon: z.string().optional(),
 });
+
+export type AgentInfo = z.infer<typeof AgentManifest>;
 
 const GetAgentInput = z.object({
   name: z.string(),

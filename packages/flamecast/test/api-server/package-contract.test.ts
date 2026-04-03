@@ -26,11 +26,14 @@ describe("package contract", () => {
       import: "./src/index.ts",
     });
 
-    // ACP client
-    expect(packageJson.exports["./acp"]).toEqual({
-      types: "./src/acp/client.ts",
-      import: "./src/acp/client.ts",
+    // Client sub-export
+    expect(packageJson.exports["./client"]).toEqual({
+      types: "./src/client/index.ts",
+      import: "./src/client/index.ts",
     });
+
+    // Removed sub-paths
+    expect(packageJson.exports["./acp"]).toBeUndefined();
 
     // Restate services
     expect(packageJson.exports["./restate"]).toEqual({
@@ -45,6 +48,6 @@ describe("package contract", () => {
 
     const entry = await import("../../src/index.js");
     expect(entry.AcpSession).toBeDefined();
-    expect(entry.createAcpClient).toBeTypeOf("function");
+    expect(entry.AcpAgents).toBeDefined();
   });
 });
