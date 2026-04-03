@@ -36,16 +36,27 @@ const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
 
 let factory: AgentConnectionFactory = new RegistryConnectionFactory(agentIds);
 
-export function configureAcp(f: AgentConnectionFactory) {
-  factory = f;
-}
-
-// ─── Pubsub ─────────────────────────────────────────────────────────────────
-
-const pubsub = createPubsubClient({
+let pubsub = createPubsubClient({
   name: "pubsub",
   ingressUrl: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
 });
+
+/**
+ * Configure the ACP connection factory and optionally the ingress URL.
+ * Call before endpoint registration. Tests use this to inject fixtures.
+ */
+export function configureAcp(
+  f: AgentConnectionFactory,
+  opts?: { ingressUrl?: string },
+) {
+  factory = f;
+  if (opts?.ingressUrl) {
+    pubsub = createPubsubClient({
+      name: "pubsub",
+      ingressUrl: opts.ingressUrl,
+    });
+  }
+}
 
 function emit(ctx: restate.ObjectContext, event: Record<string, unknown>) {
   pubsub.publish(`session:${ctx.key}`, event, ctx.rand.uuidv4());

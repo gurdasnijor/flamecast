@@ -45,11 +45,13 @@ let client: FlamecastClient;
 describe("AcpSession E2E with Echo Agent", () => {
   beforeAll(async () => {
     pooledFactory = new PooledConnectionFactory(innerFactory);
-    configureAcp(pooledFactory);
 
     restateEnv = await RestateTestEnvironment.start({
       services: [AcpSession, AcpAgents, pubsubObject],
     });
+
+    // Configure after restateEnv starts so we have the actual ingress URL
+    configureAcp(pooledFactory, { ingressUrl: restateEnv.baseUrl() });
 
     client = new FlamecastClient({
       ingressUrl: restateEnv.baseUrl(),
