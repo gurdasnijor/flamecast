@@ -73,13 +73,13 @@ export function useFlamecastSession(sessionId: string) {
           timestamp: new Date().toISOString(),
         },
       ]);
-      client.sendPrompt(sessionId, text).catch(() => {});
+      client.prompt(sessionId, text).catch(() => {});
     },
     [sessionId],
   );
 
   const cancel = useCallback(() => {
-    client.terminate(sessionId).catch(() => {});
+    client.close(sessionId).catch(() => {});
   }, [sessionId]);
 
   const requestFilePreview = useCallback(

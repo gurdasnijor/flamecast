@@ -1,4 +1,4 @@
-export { AcpSession } from "./session.js";
+export { AcpSession, configureAcp } from "./session.js";
 export type { SessionState } from "./session.js";
 export { AcpAgents } from "./agents.js";
 export type { AgentInfo } from "./agents.js";
