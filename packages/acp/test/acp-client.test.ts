@@ -1,12 +1,10 @@
 /**
- * AgentConnectionFactory tests — validates ACP handshake + prompt flow
+ * ACP client tests — validates ACP handshake + prompt flow
  * using in-memory transports with mock agents.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
 import * as acp from "@agentclientprotocol/sdk";
-import type { TransportConnection } from "../src/transport.js";
-import { AcpClient } from "../src/acp-client.js";
 
 // ─── In-memory factory ──────────────────────────────────────────────────────
 
@@ -55,14 +53,19 @@ function createEchoAgent(name: string): () => InMemoryAgent {
   };
 }
 
-class InMemoryFactory implements AgentConnectionFactory {
+interface ConnectionResult {
+  conn: acp.ClientSideConnection;
+  close: () => Promise<void>;
+}
+
+class InMemoryFactory {
   private agents = new Map<string, () => InMemoryAgent>();
 
   register(name: string, create: () => InMemoryAgent) {
     this.agents.set(name, create);
   }
 
-  async connect(agentName: string, client: acp.Client): Promise<AgentConnectionResult> {
+  async connect(agentName: string, client: acp.Client): Promise<ConnectionResult> {
     const createAgent = this.agents.get(agentName);
     if (!createAgent) throw new Error(`No agent: ${agentName}`);
 
@@ -106,7 +109,7 @@ function makeClient(overrides?: Partial<acp.Client>): acp.Client {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe("AgentConnectionFactory", () => {
+describe("ACP Client — in-memory transport", () => {
   let factory: InMemoryFactory;
 
   beforeEach(() => {

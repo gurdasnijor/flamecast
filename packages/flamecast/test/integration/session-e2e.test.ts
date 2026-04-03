@@ -7,11 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import * as acp from "@agentclientprotocol/sdk";
 import { connectStdio } from "@flamecast/acp/transports/stdio";
-import { applyCodec, ndJsonCodec } from "@flamecast/acp/transport";
-import { PooledConnectionFactory } from "../../src/pool.js";
-import type { AgentConnectionFactory, AgentConnectionResult } from "../../src/factory.js";
 import { AcpSession, configureAcp } from "../../src/session.js";
-import { AcpAgents } from "../../src/agents.js";
 import { pubsubObject } from "../../src/pubsub.js";
 import { FlamecastClient } from "../../src/client/index.js";
 
@@ -20,37 +16,26 @@ const ECHO_AGENT_PATH = resolve(
   "../fixtures/echo-agent.ts",
 );
 
+function resolveAgent(
+  _name: string,
+  clientFactory: (agent: acp.Agent) => acp.Client,
+) {
+  return connectStdio(
+    { cmd: "npx", args: ["tsx", ECHO_AGENT_PATH], label: "echo-agent" },
+    clientFactory,
+  );
+}
 
-
-const innerFactory: AgentConnectionFactory = {
-  async connect(_agentName, client): Promise<AgentConnectionResult> {
-    const connection = await connectStdio({
-      cmd: "npx",
-      args: ["tsx", ECHO_AGENT_PATH],
-      label: "echo-agent",
-    });
-    const conn = new acp.ClientSideConnection(
-      () => client,
-      applyCodec(connection, ndJsonCodec()),
-    );
-    return { conn, close: () => connection.close() };
-  },
-};
-
-let pooledFactory: PooledConnectionFactory;
 let restateEnv: RestateTestEnvironment;
 let client: FlamecastClient;
 
 describe("AcpSession E2E with Echo Agent", () => {
   beforeAll(async () => {
-    pooledFactory = new PooledConnectionFactory(innerFactory);
-
     restateEnv = await RestateTestEnvironment.start({
-      services: [AcpSession, AcpAgents, pubsubObject],
+      services: [AcpSession, pubsubObject],
     });
 
-    configureAcp(pooledFactory, { ingressUrl: restateEnv.baseUrl() });
-    await pooledFactory.warmup(["echo-agent"]);
+    configureAcp({ resolveAgent }, { ingressUrl: restateEnv.baseUrl() });
 
     client = new FlamecastClient({
       ingressUrl: restateEnv.baseUrl(),
@@ -59,7 +44,6 @@ describe("AcpSession E2E with Echo Agent", () => {
 
   afterAll(async () => {
     client.dispose();
-    await pooledFactory?.shutdown();
     await restateEnv?.stop();
   });
 

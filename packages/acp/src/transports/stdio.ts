@@ -1,52 +1,62 @@
 /**
- * Stdio — spawns an agent as a child process, returns byte streams
- * over stdin/stdout.
+ * Stdio transport — spawns an agent as a child process.
+ *
+ * connectStdio(opts, factory) → ClientSideConnection (you're the client)
+ * serveStdio(factory)         → AgentSideConnection  (you're the agent)
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import * as acp from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
-import type { ByteConnection } from "../transport.js";
 
 export interface StdioConnectOptions {
   cmd: string;
-  args: string[];
-  cwd?: string;
+  args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   label?: string;
 }
 
-export async function connectStdio(
+/** Connect to a stdio agent subprocess → you get a ClientSideConnection (Agent). */
+export function connectStdio(
   opts: StdioConnectOptions,
-): Promise<ByteConnection & { proc: ChildProcess }> {
-  const ac = new AbortController();
-
-  const proc = spawn(opts.cmd, opts.args, {
-    stdio: ["pipe", "pipe", "pipe"],
-    cwd: opts.cwd ?? process.cwd(),
+  clientFactory: (agent: acp.Agent) => acp.Client,
+): acp.ClientSideConnection {
+  const proc = spawn(opts.cmd, opts.args ?? [], {
+    stdio: ["pipe", "pipe", opts.label ? "pipe" : "inherit"],
     env: { ...process.env, ...opts.env },
+    cwd: opts.cwd,
   });
 
-  proc.on("exit", () => ac.abort());
-  proc.on("error", () => ac.abort());
-
-  if (opts.label) {
-    proc.stderr!.on("data", (chunk: Buffer) => {
+  if (opts.label && proc.stderr) {
+    proc.stderr.on("data", (chunk: Buffer) => {
       console.error(`[${opts.label}] ${chunk.toString().trimEnd()}`);
     });
   }
 
-  const writable = Writable.toWeb(proc.stdin!);
-  const readable = Readable.toWeb(
-    proc.stdout! as import("node:stream").Readable,
-  ) as unknown as ReadableStream<Uint8Array>;
+  const stream = acp.ndJsonStream(
+    Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>,
+    Readable.toWeb(proc.stdout! as import("node:stream").Readable) as ReadableStream<Uint8Array>,
+  );
 
-  return {
-    readable,
-    writable,
-    proc,
-    signal: ac.signal,
-    async close() {
-      proc.kill();
-    },
-  };
+  return new acp.ClientSideConnection(clientFactory, stream);
+}
+
+/** Serve as a stdio agent (reads stdin, writes stdout). */
+export function serveStdio(
+  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
+): acp.AgentSideConnection {
+  const stream = acp.ndJsonStream(
+    Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        process.stdin.on("data", (chunk: Buffer) => {
+          controller.enqueue(new Uint8Array(chunk));
+        });
+        process.stdin.on("end", () => controller.close());
+      },
+    }),
+  );
+
+  return new acp.AgentSideConnection(agentFactory, stream);
 }

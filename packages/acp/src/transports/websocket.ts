@@ -1,10 +1,38 @@
 /**
- * WebSocket — connects to an agent over WS, returns byte streams.
- * Each WS message is one chunk (text or binary).
+ * WebSocket transport — both ends.
+ *
+ * connectWs(opts, factory)       → ClientSideConnection (you're the client)
+ * serveWs(opts, factory)         → WsServer (you're the agent, per connection)
  */
 
-import { WebSocket } from "ws";
-import type { ByteConnection } from "../transport.js";
+import { WebSocket, WebSocketServer } from "ws";
+import * as acp from "@agentclientprotocol/sdk";
+
+function wsToStream(ws: WebSocket): acp.Stream {
+  let readCtrl: ReadableStreamDefaultController<acp.AnyMessage>;
+  const readable = new ReadableStream<acp.AnyMessage>({
+    start(c) { readCtrl = c; },
+  });
+
+  ws.on("message", (data) => {
+    try {
+      readCtrl.enqueue(JSON.parse(String(data)));
+    } catch {}
+  });
+  ws.on("close", () => { try { readCtrl.close(); } catch {} });
+  ws.on("error", (e) => { try { readCtrl.error(e); } catch {} });
+
+  const writable = new WritableStream<acp.AnyMessage>({
+    write(msg) {
+      if (ws.readyState !== WebSocket.OPEN) throw new Error("ws not open");
+      ws.send(JSON.stringify(msg));
+    },
+  });
+
+  return { readable, writable };
+}
+
+// ─── Client end ────────────────────────────────────────────────────────────
 
 export interface WsConnectOptions {
   url: string;
@@ -12,12 +40,11 @@ export interface WsConnectOptions {
   protocols?: string[];
 }
 
+/** Connect to a remote WS agent → ClientSideConnection. */
 export async function connectWs(
   opts: WsConnectOptions,
-): Promise<ByteConnection> {
-  const ac = new AbortController();
-  const enc = new TextEncoder();
-
+  clientFactory: (agent: acp.Agent) => acp.Client,
+): Promise<acp.ClientSideConnection> {
   const ws = new WebSocket(opts.url, opts.protocols, {
     headers: opts.headers,
   });
@@ -27,45 +54,40 @@ export async function connectWs(
     ws.once("error", reject);
   });
 
-  ws.on("close", () => ac.abort());
-  ws.on("error", () => ac.abort());
+  return new acp.ClientSideConnection(clientFactory, wsToStream(ws));
+}
 
-  let readCtrl: ReadableStreamDefaultController<Uint8Array>;
-  const readable = new ReadableStream<Uint8Array>({
-    start(controller) {
-      readCtrl = controller;
-    },
+// ─── Agent end ─────────────────────────────────────────────────────────────
+
+export interface WsServerOptions {
+  port: number;
+  host?: string;
+}
+
+export interface WsServer {
+  port: number;
+  close(): Promise<void>;
+}
+
+/** Serve an ACP agent over WebSocket. Each connection gets an AgentSideConnection. */
+export async function serveWs(
+  opts: WsServerOptions,
+  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
+): Promise<WsServer> {
+  const wss = new WebSocketServer({ port: opts.port, host: opts.host });
+
+  wss.on("connection", (ws) => {
+    new acp.AgentSideConnection(agentFactory, wsToStream(ws));
   });
 
-  ws.on("message", (data) => {
-    if (data instanceof Uint8Array) {
-      readCtrl.enqueue(data);
-    } else if (typeof data === "string") {
-      readCtrl.enqueue(enc.encode(data));
-    } else if (Buffer.isBuffer(data)) {
-      readCtrl.enqueue(new Uint8Array(data));
-    } else {
-      readCtrl.enqueue(new Uint8Array(Buffer.concat(data as Buffer[])));
-    }
-  });
-
-  ws.once("close", () => {
-    try { readCtrl.close(); } catch {}
-  });
-
-  const writable = new WritableStream<Uint8Array>({
-    write(chunk) {
-      if (ws.readyState !== WebSocket.OPEN) {
-        throw new Error("WebSocket is not open");
-      }
-      ws.send(chunk);
-    },
-  });
+  await new Promise<void>((resolve) => wss.on("listening", resolve));
+  const addr = wss.address() as { port: number };
 
   return {
-    readable,
-    writable,
-    signal: ac.signal,
-    async close() { ws.close(); },
+    port: addr.port,
+    async close() {
+      for (const client of wss.clients) client.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    },
   };
 }

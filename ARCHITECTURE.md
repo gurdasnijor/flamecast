@@ -71,14 +71,12 @@ Restate VOs + the consumer-facing client.
 ```
 src/
   session.ts         — AcpSession VO (newSession, prompt, cancel, getStatus, resumePermission, close)
+                       configureAcp({ resolveAgent }), connections Map, reconnect()
   agents.ts          — AcpAgents stateless service (listAgents, getAgent)
   pubsub.ts          — pubsub VO for event streaming
   endpoint.ts        — Restate service registration + serve()
   client/
     index.ts         — FlamecastClient implements acp.Agent (consumer-facing)
-  pool.ts            — PooledConnectionFactory (BEING REPLACED — see mono-b1s2)
-  factory.ts         — AgentConnectionFactory interface (BEING REPLACED)
-  resolver.ts        — RegistryConnectionFactory (BEING REPLACED)
   index.ts           — barrel exports
 ```
 
@@ -90,50 +88,40 @@ Boots the Restate endpoint with agent configuration.
 
 TanStack Router + React Query. Talks to Restate ingress via `FlamecastClient`.
 
-## Current State vs Target State
-
-### Current (as of 2026-04-03)
-
-The session VO uses `PooledConnectionFactory` which:
-- Spawns agent processes at boot (`warmup()`)
-- Holds a `ClientSideConnection` per agent with a mutable delegate (`setActive`)
-- Swaps the `acp.Client` callbacks per handler invocation
-- Only works with stdio (local processes)
-- Can't handle remote agents over WS/HTTP
-
-### Target (mono-b1s2)
+## Architecture (implemented)
 
 Direct `ClientSideConnection` from the ACP SDK. No pool, no factory, no resolver classes.
 
 **Key insight: Restate's journal IS the session store.** Every agent gets `loadSession` capability for free because Restate durably stores the conversation history.
 
 ```
-// Boot
+// Boot (apps/server)
 const registry = await loadRegistryFromIds(agents);
 function resolveAgent(name) → Promise<ByteConnection>  // just a function
 
 configureAcp({ resolveAgent }, { ingressUrl });
 serve(9080);
 
-// Per session (inside VO handler)
+// Per session (inside VO handler — newSession)
 const bytes = await resolveAgent(agentName);
 const stream = applyCodec(bytes, ndJsonCodec());
 const conn = new ClientSideConnection((_agent) => createCallbacks(ctx), stream);
-await conn.initialize({ ... });
-await conn.newSession({ ... });
-// Store conn in module-level Map
+await ctx.run("initialize", () => conn.initialize({ ... }));
+await ctx.run("newSession", () => conn.newSession({ ... }));
+// Store conn in module-level connections Map
 
 // On prompt
-const conn = connections.get(sessionId) ?? await reconnect(ctx);
+const { conn } = await getOrReconnect(ctx);  // cache hit or reconnect
 await conn.prompt({ ... });
+// Journal turn in history[] for future replay
 
 // On restart (connection lost)
 reconnect():
-  new connection → initialize → loadSession (replay from journal)
+  new connection → initialize → loadSession (or replay from journal history)
 ```
 
-**What gets deleted:** pool.ts, factory.ts, resolver.ts, registry-transport.ts
-**What replaces them:** `resolveAgent()` function + `connections` Map + `reconnect()`
+**Deleted:** pool.ts, factory.ts, resolver.ts
+**Replaced by:** `resolveAgent()` function + `connections` Map + `getOrReconnect()` + `reconnect()`
 
 ## FlamecastClient — The Upstream Interface
 
@@ -178,11 +166,10 @@ Session updates arrive via pubsub SSE. Permission requests are resolved via Rest
 6. **FlamecastClient implements Agent** — Same interface as direct agent connection. Consumer doesn't know the difference.
 7. **Delete immediately** — No backwards compat, no migration layers. Old code gets deleted.
 
-## Open Questions (mono-b1s2)
+## Open Questions
 
-1. **Awakeable replay safety** — If VO replays past a prompt with permissions, the awakeable ID emitted to the client is stale. Need to decide: wrap in durable step, or document as not replay-safe.
-2. **Cancel semantics** — Should `cancel` abort the in-flight `conn.prompt()` or just set a flag? Interacts with Restate cancellation.
-3. **Process pooling for stdio** — After deleting the pool, each session spawns a new process. May want to add back a lightweight cache for same-agent connections, but as an optimization, not a core abstraction.
+1. **Awakeable replay safety** — `prompt` is NOT wrapped in `ctx.run()` because its callbacks (sessionUpdate, requestPermission) fire during execution. If VO replays past a prompt with permissions, the awakeable ID emitted to the client is stale. Accepted: permission-requiring prompts aren't fully replay-safe. `reconnect()` re-establishes from journal history anyway.
+2. **Process pooling for stdio** — Each session spawns a new process. May add a lightweight cache for same-agent connections as a future optimization, but not a core abstraction.
 
 ## References
 

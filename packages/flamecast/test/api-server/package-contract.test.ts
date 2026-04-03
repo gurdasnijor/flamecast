@@ -39,7 +39,6 @@ describe("package contract", () => {
 
     const entry = await import("../../src/index.js");
     expect(entry.AcpSession).toBeDefined();
-    expect(entry.AcpAgents).toBeDefined();
     expect(entry.serve).toBeTypeOf("function");
   });
 });

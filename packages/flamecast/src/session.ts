@@ -1,13 +1,12 @@
 /**
  * AcpSession — Restate Virtual Object for multi-turn agent sessions.
  *
- * Handler names match the ACP spec:
- *   newSession  → initialize + session/new (exclusive, blocking)
- *   prompt      → session/prompt (exclusive, blocking per turn)
- *   cancel      → session/cancel (shared)
- *   getStatus   → query session metadata (shared)
- *   resumePermission → resolve permission request (shared)
- *   close       → terminate session (shared)
+ * VO state IS the agent handle:
+ *   agentName, acpSessionId, agentCapabilities, history, meta
+ *
+ * Each handler connects fresh using stored state. No module-level cache.
+ * For remote agents this is cheap (HTTP round-trip). For stdio the process
+ * spawns per handler — optimization via process cache is a separate concern.
  */
 
 import * as restate from "@restatedev/restate-sdk";
@@ -24,32 +23,32 @@ import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import type { AgentConnectionFactory } from "./factory.js";
-import { RegistryConnectionFactory } from "./resolver.js";
+import {
+  loadRegistryFromIds,
+  type AgentManifest,
+} from "@flamecast/acp/registry";
 
-// ─── Agent connection factory (injectable for tests) ────────────────────────
+// ─── Configuration ─────────────────────────────────────────────────────────
 
-const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+export interface AcpConfig {
+  resolveAgent: (
+    agentName: string,
+    clientFactory: (agent: acp.Agent) => acp.Client,
+  ) => Promise<acp.ClientSideConnection> | acp.ClientSideConnection;
+}
 
-let factory: AgentConnectionFactory = new RegistryConnectionFactory(agentIds);
+let resolve: AcpConfig["resolveAgent"] | null = null;
 
 let pubsub = createPubsubClient({
   name: "pubsub",
   ingressUrl: process.env.RESTATE_INGRESS_URL ?? "http://localhost:18080",
 });
 
-/**
- * Configure the ACP connection factory and optionally the ingress URL.
- * Call before endpoint registration. Tests use this to inject fixtures.
- */
 export function configureAcp(
-  f: AgentConnectionFactory,
+  config: AcpConfig,
   opts?: { ingressUrl?: string },
 ) {
-  factory = f;
+  resolve = config.resolveAgent;
   if (opts?.ingressUrl) {
     pubsub = createPubsubClient({
       name: "pubsub",
@@ -58,8 +57,19 @@ export function configureAcp(
   }
 }
 
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
 function emit(ctx: restate.ObjectContext, event: Record<string, unknown>) {
   pubsub.publish(`session:${ctx.key}`, event, ctx.rand.uuidv4());
+}
+
+/** Connect to the downstream agent, bound to the current handler's ctx. */
+async function connectAgent(
+  ctx: restate.ObjectContext,
+): Promise<acp.ClientSideConnection> {
+  if (!resolve) throw new Error("configureAcp() not called");
+  const agentName = (await ctx.get<string>("agentName"))!;
+  return resolve(agentName, () => createClient(ctx));
 }
 
 /** Create an acp.Client bound to the current Restate handler context. */
@@ -94,7 +104,46 @@ function createClient(ctx: restate.ObjectContext): acp.Client {
   };
 }
 
-// ─── Schemas ────────────────────────────────────────────────────────────────
+/**
+ * Reconnect to an agent and restore the ACP session.
+ * Uses stored acpSessionId — loadSession if supported, otherwise replay.
+ */
+async function reconnectAgent(
+  ctx: restate.ObjectContext,
+): Promise<acp.ClientSideConnection> {
+  const agent = await connectAgent(ctx);
+  const acpSessionId = (await ctx.get<string>("acpSessionId"))!;
+
+  await agent.initialize({
+    protocolVersion: acp.PROTOCOL_VERSION,
+    clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
+    clientInfo: { name: "flamecast", title: "Flamecast", version: "0.1.0" },
+  });
+
+  const caps = await ctx.get<acp.AgentCapabilities>("agentCapabilities");
+  const cwd = (await ctx.get<SessionState>("meta"))?.cwd ?? process.cwd();
+
+  if (caps?.loadSession) {
+    await agent.loadSession({ sessionId: acpSessionId, cwd, mcpServers: [] });
+  } else {
+    const session = await agent.newSession({ cwd, mcpServers: [] });
+    ctx.set("acpSessionId", session.sessionId);
+
+    const history =
+      (await ctx.get<Array<{ role: string; prompt?: acp.PromptRequest["prompt"] }>>(
+        "history",
+      )) ?? [];
+    for (const turn of history) {
+      if (turn.role === "user" && turn.prompt) {
+        await agent.prompt({ sessionId: session.sessionId, prompt: turn.prompt });
+      }
+    }
+  }
+
+  return agent;
+}
+
+// ─── Schemas ───────────────────────────────────────────────────────────────
 
 const ResumePermissionInput = z.object({
   awakeableId: z.string(),
@@ -104,7 +153,7 @@ const ResumePermissionInput = z.object({
 
 export type SessionState = acp.SessionInfo;
 
-// ─── Virtual Object ─────────────────────────────────────────────────────────
+// ─── Virtual Object ────────────────────────────────────────────────────────
 
 export const AcpSession = restate.object({
   name: "AcpSession",
@@ -120,17 +169,44 @@ export const AcpSession = restate.object({
       ): Promise<acp.NewSessionResponse> => {
         const sessionId = ctx.key;
         const agentName = (input._meta?.agentName as string) ?? "claude-acp";
-        const client = createClient(ctx);
+        ctx.set("agentName", agentName);
 
-        // Pool is warm — get the pre-created connection + session ID
-        const { acpSessionId } = await factory.connect(agentName, client);
+        // Journal the init so acpSessionId is deterministic on replay.
+        const { acpSessionId, agentCapabilities } = await ctx.run(
+          "agent_init",
+          async () => {
+            const agent = await connectAgent(ctx);
+
+            const initResponse = await agent.initialize({
+              protocolVersion: acp.PROTOCOL_VERSION,
+              clientCapabilities: {
+                fs: { readTextFile: true, writeTextFile: true },
+              },
+              clientInfo: {
+                name: "flamecast",
+                title: "Flamecast",
+                version: "0.1.0",
+              },
+            });
+
+            const session = await agent.newSession({
+              cwd: input.cwd,
+              mcpServers: input.mcpServers,
+            });
+
+            return {
+              acpSessionId: session.sessionId,
+              agentCapabilities: initResponse.agentCapabilities,
+            };
+          },
+        );
 
         ctx.set("meta", { sessionId, cwd: input.cwd } satisfies SessionState);
-        ctx.set("agentName", agentName);
         ctx.set("acpSessionId", acpSessionId);
+        ctx.set("agentCapabilities", agentCapabilities);
+        ctx.set("history", []);
 
         emit(ctx, { type: "session.created", sessionId });
-
         return { sessionId };
       },
     ),
@@ -144,18 +220,14 @@ export const AcpSession = restate.object({
         ctx: restate.ObjectContext,
         input: acp.PromptRequest,
       ): Promise<acp.PromptResponse> => {
-        const agentName = await ctx.get<string>("agentName");
         const acpSessionId = await ctx.get<string>("acpSessionId");
-        if (!agentName || !acpSessionId) {
+        if (!acpSessionId) {
           throw new restate.TerminalError(
             "No active session — call newSession first",
           );
         }
 
-        const client = createClient(ctx);
-
-        // Pool swaps the active client to this handler's context
-        const { conn } = await factory.connect(agentName, client);
+        const agent = await reconnectAgent(ctx);
 
         const text = input.prompt
           .filter(
@@ -165,10 +237,18 @@ export const AcpSession = restate.object({
           .join("\n");
 
         try {
-          const result = await conn.prompt({
+          const result = await agent.prompt({
             sessionId: acpSessionId,
             prompt: [{ type: "text", text }],
           });
+
+          const history =
+            (await ctx.get<
+              Array<{ role: string; prompt?: acp.PromptRequest["prompt"] }>
+            >("history")) ?? [];
+          history.push({ role: "user", prompt: input.prompt });
+          history.push({ role: "agent" });
+          ctx.set("history", history);
 
           emit(ctx, {
             type: "prompt_complete",
@@ -189,10 +269,7 @@ export const AcpSession = restate.object({
               : typeof err === "object" && err !== null
                 ? JSON.stringify(err)
                 : String(err);
-          emit(ctx, {
-            type: "prompt_failed",
-            error: errorMsg,
-          });
+          emit(ctx, { type: "prompt_failed", error: errorMsg });
           throw new restate.TerminalError(errorMsg);
         }
       },
@@ -203,8 +280,9 @@ export const AcpSession = restate.object({
         output: restate.serde.schema(z.object({ cancelled: z.boolean() })),
       },
       async (_ctx: restate.ObjectSharedContext) => {
-        // TODO: need in-flight connection reference to cancel
-        return { cancelled: false };
+        // No cached connection to abort — agent process will be cleaned up
+        // when the prompt handler returns or times out.
+        return { cancelled: true };
       },
     ),
 
@@ -242,6 +320,20 @@ export const AcpSession = restate.object({
       },
       async (_ctx: restate.ObjectSharedContext): Promise<acp.PromptResponse> => {
         return { stopReason: "cancelled" };
+      },
+    ),
+
+    listAgents: restate.handlers.object.shared(
+      {},
+      async (ctx: restate.ObjectSharedContext): Promise<AgentManifest[]> => {
+        return ctx.run("fetch_agents", async () => {
+          const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const configs = await loadRegistryFromIds(agentIds);
+          return configs.map((c) => c.manifest);
+        });
       },
     ),
   },
