@@ -13,8 +13,9 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import * as acp from "@agentclientprotocol/sdk";
-import { connectStdio } from "../src/transports/stdio.js";
-import { connectWs, serveWs } from "../src/transports/websocket.js";
+import { connectStdio, fromStdio } from "../src/transports/stdio.js";
+import { connectWs, serveWs, acceptWs } from "../src/transports/websocket.js";
+import { bridge } from "../src/transports/bridge.js";
 import { resolve } from "node:path";
 
 // ─── Echo agent factory (for serve* functions) ─────────────────────────────
@@ -132,6 +133,43 @@ describe("Transport Composition", () => {
 
       expect(r1.stopReason).toBe("end_turn");
       expect(r2.stopReason).toBe("end_turn");
+    });
+  });
+
+  describe("bridge: WS → stdio", () => {
+    const ECHO_AGENT_PATH = resolve(
+      import.meta.dirname,
+      "../../flamecast/test/fixtures/echo-agent.ts",
+    );
+
+    it("proxies ACP through WS bridge to stdio agent", async () => {
+      const server = await bridge(
+        (h) => acceptWs({ port: 0 }, h),
+        () => fromStdio({ cmd: "npx", args: ["tsx", ECHO_AGENT_PATH] }),
+      );
+      cleanups.push(() => server.close());
+
+      const updates: acp.SessionNotification[] = [];
+      const agent = await connectWs(
+        { url: `ws://localhost:${server.port}` },
+        makeClientFactory(updates),
+      );
+
+      const init = await agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const session = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+      const result = await agent.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "bridge-test" }],
+      });
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(init.protocolVersion).toBe(acp.PROTOCOL_VERSION);
+      expect(init.agentInfo?.name).toBe("echo-agent");
+      expect(result.stopReason).toBe("end_turn");
+      expect(updates.length).toBeGreaterThan(0);
     });
   });
 

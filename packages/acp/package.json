@@ -28,6 +28,14 @@
     "./registry": {
       "types": "./src/registry.ts",
       "import": "./src/registry.ts"
+    },
+    "./session-host": {
+      "types": "./src/session-host.ts",
+      "import": "./src/session-host.ts"
+    },
+    "./transports/bridge": {
+      "types": "./src/transports/bridge.ts",
+      "import": "./src/transports/bridge.ts"
     }
   },
   "scripts": {

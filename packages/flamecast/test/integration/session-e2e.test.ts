@@ -18,11 +18,12 @@ const ECHO_AGENT_PATH = resolve(
 
 function resolveAgent(
   _name: string,
-  clientFactory: (agent: acp.Agent) => acp.Client,
+  _sessionId: string,
+  toClient: (agent: acp.Agent) => acp.Client,
 ) {
   return connectStdio(
     { cmd: "npx", args: ["tsx", ECHO_AGENT_PATH], label: "echo-agent" },
-    clientFactory,
+    toClient,
   );
 }
 

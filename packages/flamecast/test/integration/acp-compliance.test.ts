@@ -25,7 +25,7 @@ const SKIP = !process.env.ANTHROPIC_API_KEY;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
-function resolveAgent(_name: string, clientFactory: (agent: acp.Agent) => acp.Client) {
+function resolveAgent(_name: string, _sessionId: string, toClient: (agent: acp.Agent) => acp.Client) {
   return connectStdio(
     {
       cmd: "npx",
@@ -37,7 +37,7 @@ function resolveAgent(_name: string, clientFactory: (agent: acp.Agent) => acp.Cl
       },
       label: "claude-acp",
     },
-    clientFactory,
+    toClient,
   );
 }
 

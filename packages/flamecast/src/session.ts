@@ -33,7 +33,8 @@ import {
 export interface AcpConfig {
   resolveAgent: (
     agentName: string,
-    clientFactory: (agent: acp.Agent) => acp.Client,
+    sessionId: string,
+    toClient: (agent: acp.Agent) => acp.Client,
   ) => Promise<acp.ClientSideConnection> | acp.ClientSideConnection;
 }
 
@@ -69,7 +70,7 @@ async function connectAgent(
 ): Promise<acp.ClientSideConnection> {
   if (!resolve) throw new Error("configureAcp() not called");
   const agentName = (await ctx.get<string>("agentName"))!;
-  return resolve(agentName, () => createClient(ctx));
+  return resolve(agentName, ctx.key, () => createClient(ctx));
 }
 
 /** Create an acp.Client bound to the current Restate handler context. */
@@ -123,9 +124,19 @@ async function reconnectAgent(
   const caps = await ctx.get<acp.AgentCapabilities>("agentCapabilities");
   const cwd = (await ctx.get<SessionState>("meta"))?.cwd ?? process.cwd();
 
+  // Try loadSession if supported — falls back to replay if the agent
+  // process is fresh and doesn't recognize the session.
+  let loaded = false;
   if (caps?.loadSession) {
-    await agent.loadSession({ sessionId: acpSessionId, cwd, mcpServers: [] });
-  } else {
+    try {
+      await agent.loadSession({ sessionId: acpSessionId, cwd, mcpServers: [] });
+      loaded = true;
+    } catch {
+      // Agent doesn't know this session (fresh process) — fall through to replay
+    }
+  }
+
+  if (!loaded) {
     const session = await agent.newSession({ cwd, mcpServers: [] });
     ctx.set("acpSessionId", session.sessionId);
 
@@ -220,8 +231,7 @@ export const AcpSession = restate.object({
         ctx: restate.ObjectContext,
         input: acp.PromptRequest,
       ): Promise<acp.PromptResponse> => {
-        const acpSessionId = await ctx.get<string>("acpSessionId");
-        if (!acpSessionId) {
+        if (!(await ctx.get<string>("acpSessionId"))) {
           throw new restate.TerminalError(
             "No active session — call newSession first",
           );
@@ -238,7 +248,7 @@ export const AcpSession = restate.object({
 
         try {
           const result = await agent.prompt({
-            sessionId: acpSessionId,
+            sessionId: (await ctx.get<string>("acpSessionId"))!,
             prompt: [{ type: "text", text }],
           });
 

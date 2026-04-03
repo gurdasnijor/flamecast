@@ -1,29 +1,24 @@
 /**
- * HTTP+SSE transport — both ends.
+ * HTTP+SSE transport.
  *
- * connectHttpSse(opts, factory) → ClientSideConnection (you're the client)
- * serveHttpSse(factory)         → { handleEvents, handleJsonRpc } (you're the agent)
- *
- * Wire: POST /jsonrpc per message, GET /events for SSE stream.
- * Message-oriented — one JSON object per chunk.
+ * fromHttpSse(opts)                  → Promise<acp.Stream>  (primitive)
+ * acceptHttpSse(handler)             → HttpSseHandler        (primitive)
+ * connectHttpSse(opts, factory)      → ClientSideConnection  (composed)
+ * serveHttpSse(factory)              → HttpSseHandler         (composed)
  */
 
 import * as acp from "@agentclientprotocol/sdk";
 
 const enc = new TextEncoder();
 
-// ─── Client end ────────────────────────────────────────────────────────────
+// ─── Primitives ────────────────────────────────────────────────────────────
 
 export interface HttpSseConnectOptions {
   url: string;
   headers?: Record<string, string>;
 }
 
-/** Connect to a remote HTTP+SSE agent → ClientSideConnection. */
-export async function connectHttpSse(
-  opts: HttpSseConnectOptions,
-  clientFactory: (agent: acp.Agent) => acp.Client,
-): Promise<acp.ClientSideConnection> {
+export async function fromHttpSse(opts: HttpSseConnectOptions): Promise<acp.Stream> {
   const ac = new AbortController();
   const baseHeaders = opts.headers ?? {};
 
@@ -41,10 +36,7 @@ export async function connectHttpSse(
 
   const readable = new ReadableStream<acp.AnyMessage>({
     start(controller) {
-      fetch(`${opts.url}/events`, {
-        headers: baseHeaders,
-        signal: ac.signal,
-      })
+      fetch(`${opts.url}/events`, { headers: baseHeaders, signal: ac.signal })
         .then(async (res) => {
           if (!res.ok) {
             controller.error(new Error(`GET /events failed: ${res.status}`));
@@ -53,7 +45,6 @@ export async function connectHttpSse(
           const reader = res.body!.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
-
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -62,9 +53,7 @@ export async function connectHttpSse(
             buffer = lines.pop()!;
             for (const line of lines) {
               if (line.startsWith("data: ")) {
-                try {
-                  controller.enqueue(JSON.parse(line.slice(6)));
-                } catch {}
+                try { controller.enqueue(JSON.parse(line.slice(6))); } catch {}
               }
             }
           }
@@ -76,19 +65,16 @@ export async function connectHttpSse(
     },
   });
 
-  return new acp.ClientSideConnection(clientFactory, { readable, writable });
+  return { readable, writable };
 }
-
-// ─── Agent end ─────────────────────────────────────────────────────────────
 
 export interface HttpSseHandler {
   handleEvents(req: Request): Response;
   handleJsonRpc(req: Request): Promise<Response>;
 }
 
-/** Serve an ACP agent over HTTP+SSE. Each GET /events creates an AgentSideConnection. */
-export function serveHttpSse(
-  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
+export function acceptHttpSse(
+  handler: (stream: acp.Stream, sessionId: string) => void,
 ): HttpSseHandler {
   const sessions = new Map<string, WritableStreamDefaultWriter<acp.AnyMessage>>();
 
@@ -100,10 +86,10 @@ export function serveHttpSse(
     sessions.set(sessionId, clientToAgent.writable.getWriter());
     req.signal.addEventListener("abort", () => sessions.delete(sessionId));
 
-    new acp.AgentSideConnection(agentFactory, {
-      readable: clientToAgent.readable,
-      writable: agentToClient.writable,
-    });
+    handler(
+      { readable: clientToAgent.readable, writable: agentToClient.writable },
+      sessionId,
+    );
 
     const sseBody = new ReadableStream({
       async start(controller) {
@@ -133,14 +119,27 @@ export function serveHttpSse(
   async function handleJsonRpc(req: Request): Promise<Response> {
     const sessionId = req.headers.get("X-Session-Id");
     if (!sessionId) return new Response("missing X-Session-Id", { status: 400 });
-
     const writer = sessions.get(sessionId);
     if (!writer) return new Response("session not found", { status: 410 });
-
     const msg = (await req.json()) as acp.AnyMessage;
     await writer.write(msg);
     return new Response(null, { status: 202 });
   }
 
   return { handleEvents, handleJsonRpc };
+}
+
+// ─── Composed ──────────────────────────────────────────────────────────────
+
+export async function connectHttpSse(
+  opts: HttpSseConnectOptions,
+  toClient: (agent: acp.Agent) => acp.Client,
+): Promise<acp.ClientSideConnection> {
+  return new acp.ClientSideConnection(toClient, await fromHttpSse(opts));
+}
+
+export function serveHttpSse(
+  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
+): HttpSseHandler {
+  return acceptHttpSse((s) => new acp.AgentSideConnection(agentFactory, s));
 }

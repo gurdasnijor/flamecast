@@ -1,23 +1,23 @@
 /**
- * WebSocket transport — both ends.
+ * WebSocket transport.
  *
- * connectWs(opts, factory)       → ClientSideConnection (you're the client)
- * serveWs(opts, factory)         → WsServer (you're the agent, per connection)
+ * fromWebSocket(ws)                → acp.Stream  (primitive)
+ * acceptWs(opts, handler)          → Server      (primitive)
+ * connectWs(opts, factory)         → ClientSideConnection  (composed)
+ * serveWs(opts, factory)           → Server                (composed)
  */
 
 import { WebSocket, WebSocketServer } from "ws";
 import * as acp from "@agentclientprotocol/sdk";
 
-function wsToStream(ws: WebSocket): acp.Stream {
+export function fromWebSocket(ws: WebSocket): acp.Stream {
   let readCtrl: ReadableStreamDefaultController<acp.AnyMessage>;
   const readable = new ReadableStream<acp.AnyMessage>({
     start(c) { readCtrl = c; },
   });
 
   ws.on("message", (data) => {
-    try {
-      readCtrl.enqueue(JSON.parse(String(data)));
-    } catch {}
+    try { readCtrl.enqueue(JSON.parse(String(data))); } catch {}
   });
   ws.on("close", () => { try { readCtrl.close(); } catch {} });
   ws.on("error", (e) => { try { readCtrl.error(e); } catch {} });
@@ -32,7 +32,7 @@ function wsToStream(ws: WebSocket): acp.Stream {
   return { readable, writable };
 }
 
-// ─── Client end ────────────────────────────────────────────────────────────
+// ─── Primitives ────────────────────────────────────────────────────────────
 
 export interface WsConnectOptions {
   url: string;
@@ -40,46 +40,17 @@ export interface WsConnectOptions {
   protocols?: string[];
 }
 
-/** Connect to a remote WS agent → ClientSideConnection. */
-export async function connectWs(
-  opts: WsConnectOptions,
-  clientFactory: (agent: acp.Agent) => acp.Client,
-): Promise<acp.ClientSideConnection> {
-  const ws = new WebSocket(opts.url, opts.protocols, {
-    headers: opts.headers,
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    ws.once("open", resolve);
-    ws.once("error", reject);
-  });
-
-  return new acp.ClientSideConnection(clientFactory, wsToStream(ws));
-}
-
-// ─── Agent end ─────────────────────────────────────────────────────────────
-
-export interface WsServerOptions {
-  port: number;
-  host?: string;
-}
-
-export interface WsServer {
+export interface Server {
   port: number;
   close(): Promise<void>;
 }
 
-/** Serve an ACP agent over WebSocket. Each connection gets an AgentSideConnection. */
-export async function serveWs(
-  opts: WsServerOptions,
-  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
-): Promise<WsServer> {
+export async function acceptWs(
+  opts: { port: number; host?: string },
+  handler: (stream: acp.Stream) => void,
+): Promise<Server> {
   const wss = new WebSocketServer({ port: opts.port, host: opts.host });
-
-  wss.on("connection", (ws) => {
-    new acp.AgentSideConnection(agentFactory, wsToStream(ws));
-  });
-
+  wss.on("connection", (ws) => handler(fromWebSocket(ws)));
   await new Promise<void>((resolve) => wss.on("listening", resolve));
   const addr = wss.address() as { port: number };
 
@@ -90,4 +61,25 @@ export async function serveWs(
       await new Promise<void>((resolve) => wss.close(() => resolve()));
     },
   };
+}
+
+// ─── Composed ──────────────────────────────────────────────────────────────
+
+export async function connectWs(
+  opts: WsConnectOptions,
+  toClient: (agent: acp.Agent) => acp.Client,
+): Promise<acp.ClientSideConnection> {
+  const ws = new WebSocket(opts.url, opts.protocols, { headers: opts.headers });
+  await new Promise<void>((resolve, reject) => {
+    ws.once("open", resolve);
+    ws.once("error", reject);
+  });
+  return new acp.ClientSideConnection(toClient, fromWebSocket(ws));
+}
+
+export async function serveWs(
+  opts: { port: number; host?: string },
+  agentFactory: (conn: acp.AgentSideConnection) => acp.Agent,
+): Promise<Server> {
+  return acceptWs(opts, (s) => new acp.AgentSideConnection(agentFactory, s));
 }
