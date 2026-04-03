@@ -65,6 +65,7 @@ const ResumeAgentInput = z.object({
 });
 
 export type SessionState = z.infer<typeof SessionStatus>;
+export type RunStatus = SessionState["status"];
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 

@@ -12,9 +12,9 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
-    "./acp": {
-      "types": "./src/acp/client.ts",
-      "import": "./src/acp/client.ts"
+    "./client": {
+      "types": "./src/client/index.ts",
+      "import": "./src/client/index.ts"
     },
     "./restate": {
       "types": "./src/restate/index.ts",
