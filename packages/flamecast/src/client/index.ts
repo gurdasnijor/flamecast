@@ -17,7 +17,6 @@ import { createPubsubClient } from "@restatedev/pubsub-client";
 // Type-only imports — erased at compile time, no server SDK in bundle
 import type {
   SessionState,
-  RunStatus,
   AgentInfo,
 } from "../index.js";
 import type { AcpSession as AcpSessionDef } from "../session.js";
@@ -26,10 +25,7 @@ const AcpSession: typeof AcpSessionDef = { name: "AcpSession" };
 const AcpAgents: typeof AcpAgentsDef = { name: "AcpAgents" };
 
 // Re-export shared types for consumers
-export type { SessionState, RunStatus, AgentInfo };
-
-// SessionSummary is a subset of SessionState for list results
-export type SessionSummary = SessionState;
+export type { SessionState, AgentInfo };
 
 export interface FlamecastClientConfig {
   /** Restate ingress URL (or proxy path like "/restate"). */
@@ -79,7 +75,7 @@ export class FlamecastClient {
     const sessionId = crypto.randomUUID();
     const result = await this.ingress
       .objectClient(AcpSession, sessionId)
-      .startSession({ agentName, cwd, mcpServers: [] });
+      .startSession({ cwd, mcpServers: [], _meta: { agentName } });
     return { ...result, sessionId };
   }
 
@@ -104,6 +100,12 @@ export class FlamecastClient {
     return this.ingress
       .objectClient(AcpSession, sessionId)
       .resumeAgent({ awakeableId, optionId, outcome });
+  }
+
+  async cancel(sessionId: string) {
+    return this.ingress
+      .objectClient(AcpSession, sessionId)
+      .cancel();
   }
 
   async terminate(sessionId: string) {
@@ -146,14 +148,14 @@ export class FlamecastClient {
 
   // ── Admin SQL (requires adminUrl) ───────────────────────────────────────
 
-  async listSessions(): Promise<SessionSummary[]> {
+  async listSessions(): Promise<SessionState[]> {
     if (!this.adminUrl) {
       throw new Error("listSessions requires adminUrl in client config");
     }
     const rows = await this.queryAdmin(
       `SELECT service_key, value_utf8 FROM state WHERE service_name = 'AcpSession' AND key = 'meta'`,
     );
-    const sessions: SessionSummary[] = [];
+    const sessions: SessionState[] = [];
     for (const row of rows) {
       try {
         const meta = JSON.parse(row.value_utf8) as SessionState;
@@ -162,7 +164,9 @@ export class FlamecastClient {
         // skip malformed
       }
     }
-    return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return sessions.sort((a, b) =>
+      (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+    );
   }
 
   async getSessionEvents(sessionId: string): Promise<unknown[]> {

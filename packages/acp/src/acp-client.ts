@@ -30,17 +30,20 @@ export interface ConnectOptions {
   onPermissionRequest?: (
     params: acp.RequestPermissionRequest,
   ) => Promise<acp.RequestPermissionResponse>;
+  onReadTextFile?: (
+    params: acp.ReadTextFileRequest,
+  ) => Promise<acp.ReadTextFileResponse>;
+  onWriteTextFile?: (
+    params: acp.WriteTextFileRequest,
+  ) => Promise<acp.WriteTextFileResponse>;
   cwd?: string;
 }
 
-export interface SessionHandle {
-  sessionId: string;
-  agentName: string;
-}
+export type SessionHandle = acp.InitializeResponse & acp.NewSessionResponse;
 
 interface ManagedSession {
   agentName: string;
-  sessionId: string;
+  handle: SessionHandle;
   transport: TransportConnection;
   conn: acp.ClientSideConnection;
   options: ConnectOptions;
@@ -82,14 +85,43 @@ export class AcpClient {
       ): Promise<void> {
         opts.onSessionUpdate?.(params);
       },
+
+      async readTextFile(
+        params: acp.ReadTextFileRequest,
+      ): Promise<acp.ReadTextFileResponse> {
+        if (opts.onReadTextFile) {
+          return opts.onReadTextFile(params);
+        }
+        const { readFile } = await import("node:fs/promises");
+        const content = await readFile(params.path, "utf-8");
+        return { content };
+      },
+
+      async writeTextFile(
+        params: acp.WriteTextFileRequest,
+      ): Promise<acp.WriteTextFileResponse> {
+        if (opts.onWriteTextFile) {
+          return opts.onWriteTextFile(params);
+        }
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        const { dirname } = await import("node:path");
+        await mkdir(dirname(params.path), { recursive: true });
+        await writeFile(params.path, params.content, "utf-8");
+        return {};
+      },
     };
 
     const conn = new acp.ClientSideConnection(() => client, transport.stream);
 
     try {
-      await conn.initialize({
+      const initResponse = await conn.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: {},
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+        },
         clientInfo: {
           name: "acp-client",
           title: "ACP Client",
@@ -102,9 +134,14 @@ export class AcpClient {
         mcpServers: [],
       });
 
+      const handle: SessionHandle = {
+        ...initResponse,
+        ...session,
+      };
+
       const managed: ManagedSession = {
         agentName,
-        sessionId: session.sessionId,
+        handle,
         transport,
         conn,
         options: opts,
@@ -112,10 +149,7 @@ export class AcpClient {
 
       this.sessionsBySessionId.set(session.sessionId, managed);
 
-      return {
-        sessionId: session.sessionId,
-        agentName,
-      };
+      return handle;
     } catch (err) {
       await transport.close();
       throw err;
@@ -161,9 +195,6 @@ export class AcpClient {
   }
 
   sessions(): SessionHandle[] {
-    return [...this.sessionsBySessionId.values()].map((s) => ({
-      sessionId: s.sessionId,
-      agentName: s.agentName,
-    }));
+    return [...this.sessionsBySessionId.values()].map((s) => s.handle);
   }
 }

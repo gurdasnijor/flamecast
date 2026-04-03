@@ -147,8 +147,9 @@ export function sessionLogsToSegments(logs: SessionLog[]): SessionLogMarkdownSeg
 
     if (log.type === "session_update") {
       const d = log.data;
-      if (isRecord(d)) {
-        applySessionUpdateRecord(d, segments);
+      // The ACP update is nested in d.update
+      if (isRecord(d) && isRecord(d.update)) {
+        applySessionUpdateRecord(d.update as Record<string, unknown>, segments);
       }
       continue;
     }
