@@ -22,7 +22,7 @@ function AgentsPage() {
 
   const createMutation = useMutation({
     mutationFn: (agentName: string) =>
-      client.newSession(agentName),
+      client.newSession({ cwd: "/", mcpServers: [], _meta: { agentName } }),
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
       navigate({ to: "/sessions/$id", params: { id: session.sessionId } });

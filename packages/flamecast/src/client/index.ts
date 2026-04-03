@@ -26,7 +26,14 @@ import * as acp from "@agentclientprotocol/sdk";
 
 // Type-only — no server SDK in bundle
 import type { AcpSession as AcpSessionDef } from "../session.js";
+import type { AcpAgents as AcpAgentsDef } from "../agents.js";
 const AcpSession: typeof AcpSessionDef = { name: "AcpSession" } as never;
+const AcpAgents: typeof AcpAgentsDef = { name: "AcpAgents" } as never;
+
+export interface AgentInfo {
+  name: string;
+  description?: string;
+}
 
 export interface FlamecastClientConfig {
   /** Restate ingress URL. */
@@ -153,6 +160,14 @@ export class FlamecastClient implements acp.Agent {
     return this.ingress
       .objectClient(AcpSession, sessionId)
       .resumePermission({ awakeableId, optionId, outcome });
+  }
+
+  // ── Agent discovery ──────────────────────────────────────────────────
+
+  async listAgents(): Promise<AgentInfo[]> {
+    return this.ingress
+      .serviceClient(AcpAgents)
+      .listAgents() as Promise<AgentInfo[]>;
   }
 
   // ── Event listener (pubsub SSE → acp.Client callbacks) ───────────────
