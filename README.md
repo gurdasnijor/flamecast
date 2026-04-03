@@ -1,6 +1,6 @@
 # Flamecast
 
-Flamecast is an open-source, self-hostable control plane for ACP-compatible agents. It manages durable agent sessions via [Restate](https://restate.dev/) Virtual Objects, brokers permission requests through awakeables, streams events via SSE, and ships a React UI.
+Flamecast is an open-source, self-hostable control plane for [ACP](https://agentclientprotocol.com/)-compatible agents. It manages durable agent sessions via [Restate](https://restate.dev/) Virtual Objects, brokers permission requests through awakeables, streams events via pubsub, and ships a React UI.
 
 ---
 
@@ -11,7 +11,7 @@ pnpm install
 pnpm dev
 ```
 
-Open **http://localhost:3000**. Select an agent template and click **Start session**.
+Open **http://localhost:3000**. Select an agent and click **Start session**.
 
 ---
 
@@ -19,13 +19,15 @@ Open **http://localhost:3000**. Select an agent template and click **Start sessi
 
 | Layer | Technology |
 |---|---|
-| Control plane | `Flamecast` class + Hono API |
-| Session orchestration | Restate Virtual Object (`AgentSession`) — durable, single invocation per conversation |
-| Event streaming | Restate pubsub → SSE (`EventSource`) |
-| Agent protocols | stdio (ACP over JSON-RPC) and A2A (HTTP) |
-| Process management | `InProcessRuntimeHost` (holds agent stdio pipes) |
-| API | [Hono](https://hono.dev/) on Node, port 3001 |
-| Client | React 19, Vite, TanStack Router + Query, Tailwind v4 |
+| Session orchestration | Restate Virtual Object (`AcpSession`) — exclusive handlers per turn, shared handlers for queries |
+| Agent transport | `@flamecast/acp` — pluggable transports (stdio, WebSocket, HTTP+SSE, Protobuf, NATS) |
+| Agent process pool | `PooledConnectionFactory` — one process per agent name, mutable client delegation |
+| Event streaming | Restate pubsub → SSE via `@restatedev/pubsub-client` |
+| Agent protocol | [Agent Client Protocol](https://agentclientprotocol.com/) (JSON-RPC over stdio/WS/HTTP) |
+| Agent discovery | `AcpAgents` Restate service + ACP CDN registry |
+| Control plane API | Restate ingress (auto-generated OpenAPI 3.1 from Zod schemas) |
+| Client SDK | `@flamecast/sdk/client` — typed Restate SDK client (browser-safe) |
+| Frontend | React 19, Vite, TanStack Router + Query, Tailwind v4 |
 
 ---
 
@@ -33,151 +35,118 @@ Open **http://localhost:3000**. Select an agent template and click **Start sessi
 
 ```
 Frontend (React, port 3000)
-  | HTTP + SSE
-  v
-Hono API Server (port 3001)
-  | typed ingress client (@restatedev/restate-sdk-clients)
+  | Vite proxy /restate/* → Restate ingress
   v
 Restate Runtime
-  |- Ingress (port 18080) -- VO handler calls
-  |- Admin   (port 19070) -- state queries
-  '- Endpoint (port 9080) -- service registration
-      |- AgentSession VO -- conversation loop, permissions, state
-      '- pubsub VO ------- event distribution
+  |- Ingress (port 18080) — handler calls (auto-generated REST API)
+  |- Admin   (port 19070) — state queries, OpenAPI specs
+  '- Endpoint (port 9080) — service registration
+      |- AcpSession VO — newSession, prompt, cancel, resumePermission, getStatus, close
+      |- AcpAgents svc — listAgents, getAgent (CDN registry)
+      '- pubsub VO ---- event distribution
   |
   v
-InProcessRuntimeHost (holds agent processes)
-  |- StdioAdapter -- local ACP agents (codex, claude, gemini, etc.)
-  '- A2AAdapter --- HTTP agents (LangGraph, CrewAI, ADK)
-  |
+PooledConnectionFactory (agent process table)
+  |- RegistryConnectionFactory — resolves agent name → transport
+  |    |- StdioTransport  — local agents (codex, claude, gemini, etc.)
+  |    |- WsTransport     — remote agents via WebSocket
+  |    '- HttpSseTransport — remote agents via HTTP+SSE
   v
-Agent Processes (spawned via child_process or HTTP)
+Agent Processes (ACP protocol — initialize, session/new, session/prompt)
 ```
 
 ### How it works
 
-1. `POST /api/sessions` resolves an agent template and calls `AgentSession.startSession()` via the Restate ingress client.
-2. `startSession` spawns the agent process (via `InProcessRuntimeHost`), stores agent identity + connection metadata in VO state, and kicks off `conversationLoop` (fire-and-forget).
-3. `conversationLoop` is a single Restate invocation that loops for the entire conversation:
-   - Suspends on an awakeable (zero compute) waiting for the next prompt
-   - Frontend sends `POST /api/sessions/:id/prompt` → `sendPrompt` resolves the awakeable
-   - RuntimeHost drives the agent, streaming events to pubsub via external client
-   - Agent finishes → publishes `complete` event → loop suspends again
-4. Permissions: agent requests permission → handler creates an awakeable per request → publishes `permission_request` via SSE → user clicks Allow → `POST /api/sessions/:id/resume` resolves the awakeable directly → agent continues.
-5. The React UI connects via `EventSource` to `/api/sessions/:id/events` for live streaming.
+1. `POST /AcpSession/{key}/newSession` resolves the agent via `AgentConnectionFactory`, connects via the appropriate transport, does the ACP handshake (initialize + session/new), and returns `{ sessionId }`.
+
+2. `POST /AcpSession/{key}/prompt` is an exclusive, blocking handler. It sends the prompt to the agent via `conn.prompt()`, streams `session/update` notifications to pubsub during processing, suspends on awakeables for permission requests, and returns `{ stopReason }` when the turn completes.
+
+3. Permission flow: agent calls `session/request_permission` → `FlamecastClient.requestPermission()` creates a Restate awakeable → emits `permission_request` event to pubsub → frontend/caller resolves via `POST /AcpSession/{key}/resumePermission` → agent continues.
+
+4. The `PooledConnectionFactory` maintains one agent process per agent name. Multiple sessions share the same process. A delegating `acp.Client` swaps the active callback reference per handler invocation so each Restate context gets its own pubsub/awakeable routing.
 
 ### Key patterns
 
-- **Single invocation per conversation** — `conversationLoop` stays alive across turns. Zero compute between turns (Restate suspends on awakeables).
-- **Ephemeral prompts, durable state** — agent responses stream via external pubsub (not journaled). Only deterministic values go through `ctx.set`.
-- **Direct awakeable resolution** — permissions and prompts resolve awakeables via `ingress.resolveAwakeable()`, no shared handler needed.
-- **`AgentRuntime` interface** — testable seam between VO handlers and Restate SDK (`step`, `sleep`, `now`, `emit`, `state`, `createDurablePromise`).
+- **Spec-aligned handlers** — `newSession`, `prompt`, `cancel` map directly to ACP protocol methods.
+- **Exclusive prompt, shared queries** — `prompt` is exclusive (serial per key), `getStatus`/`cancel`/`resumePermission` are shared (concurrent).
+- **`acp.Client` interface** — `FlamecastClient` implements the ACP client callback interface (session updates → pubsub, permissions → awakeables, filesystem → node:fs).
+- **Process pool with mutable delegation** — one `ClientSideConnection` per agent, callback routing swapped per handler invocation.
+- **Zod schemas from `@agentclientprotocol/sdk`** — handler I/O types composed from SDK schemas, auto-generates OpenAPI 3.1.
+- **No hand-rolled types** — `SessionState = acp.SessionInfo`, agent identity via `_meta.agentName` (ACP extensibility).
 
 ---
 
-## Agent templates
-
-Templates are configured in `apps/server/src/agent-templates.ts`:
-
-```ts
-{
-  id: "codex",
-  name: "Codex",
-  spawn: { command: "npx", args: ["@zed-industries/codex-acp@0.10.0"] },
-  runtime: { provider: "default" },
-}
-```
-
-`POST /api/agent-templates` registers additional templates at runtime.
-
----
-
-## HTTP API
-
-Base URL: `http://localhost:3001/api`
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/agent-templates` | List agent templates |
-| `POST` | `/agent-templates` | Register a template |
-| `PUT` | `/agent-templates/:id` | Update a template |
-| `GET` | `/sessions` | List all sessions (via Restate admin SQL) |
-| `POST` | `/sessions` | Create a session (starts agent + conversation loop) |
-| `GET` | `/sessions/:id` | Get session metadata |
-| `POST` | `/sessions/:id/prompt` | Send a prompt (resolves awaiting-prompt awakeable) |
-| `POST` | `/sessions/:id/resume` | Resolve a permission awakeable |
-| `POST` | `/sessions/:id/cancel` | Cancel current prompt |
-| `GET` | `/sessions/:id/events` | SSE event stream (text, tool, complete, permission_request) |
-| `GET` | `/sessions/:id/fs` | Recursive directory listing |
-| `GET` | `/sessions/:id/files?path=...` | Read file content |
-| `POST` | `/sessions/:id/delegate` | Start a child agent session |
-
----
-
-## Repository layout
+## Packages
 
 ```
-apps/
-  server/         # Node entry point — creates Flamecast, listens on 3001
-  client/         # React UI — Vite, TanStack Router
-  docs/           # Mintlify documentation site
 packages/
-  protocol/       # Shared TypeScript types (SessionEvent, SessionMeta, etc.)
-  flamecast/      # @flamecast/sdk — the SDK
+  acp/            @flamecast/acp — transport layer + connection factory
     src/
-      flamecast-class.ts  # Flamecast class (template management + Hono app)
-      api.ts              # Hono API routes (typed Restate ingress client)
-      restate/            # AgentSession VO, shared-handlers, adapter types
-      runtime/            # AgentRuntime interface + Restate/test implementations
-      runtime-host/       # RuntimeHost, InProcessRuntimeHost, strategies
-      adapters/           # StdioAdapter, A2AAdapter
-      client/             # Browser SDK (FlamecastClient)
-tests/
-  echo-agent/     # Test ACP agent
+      acp-client.ts      — AgentConnectionFactory interface
+      transport.ts        — Transport<T> + TransportConnection
+      resolver.ts         — RegistryConnectionFactory (CDN registry → transport)
+      pool.ts             — PooledConnectionFactory (process table)
+      registry.ts         — CDN agent registry resolution
+      transports/
+        stdio.ts          — StdioTransport
+        websocket.ts      — WsTransport
+        http-sse.ts       — HttpSseTransport
+        protobuf.ts       — ProtobufTransport (binary WS)
+        nats.ts           — NatsTransport
+    test/
+      transport.test.ts   — 8 in-memory protocol tests
+      acp-client.test.ts  — connection factory tests
+      pool.test.ts        — process pool + mutable delegation tests
+      http-sse-transport.test.ts
+      ws-transport.test.ts
+      protobuf-transport.test.ts
+      nats-transport.test.ts
+      gateway.test.ts     — gateway pattern across transports
+      transport-bench.test.ts
+
+  flamecast/      @flamecast/sdk — Restate services + client
+    src/
+      session.ts          — AcpSession VO (inline handlers)
+      agents.ts           — AcpAgents stateless service
+      pubsub.ts           — pubsub VO
+      endpoint.ts         — service registration + serve()
+      client/index.ts     — FlamecastClient (browser-safe, ./client export)
+      index.ts            — barrel exports
+
+  protocol/       @flamecast/protocol — shared TypeScript types
+  client/         (deleted — merged into @flamecast/sdk/client)
+
+apps/
+  client/         React UI — Vite, TanStack Router
+  server/         (legacy — Restate is the server now)
 ```
 
 ---
 
 ## Configuration
 
-```ts
-import { Flamecast } from "@flamecast/sdk";
-
-const flamecast = new Flamecast({
-  agentTemplates: [...],
-  restateUrl: "http://localhost:18080",
-});
-
-// Node.js
-const server = flamecast.listen(3001, (info) => {
-  console.log(`Running on ${info.port}`);
-});
-
-// Or mount on any runtime
-export default flamecast.app;
-```
-
-| Option | Description |
+| Variable | Purpose |
 |---|---|
-| `agentTemplates` | Initial agent template list |
-| `restateUrl` | Restate ingress URL (default: `http://localhost:18080`) |
+| `ACP_AGENTS` | Comma-separated agent IDs from the ACP CDN registry (default: `claude-acp`) |
+| `RESTATE_INGRESS_URL` | Restate ingress endpoint (default: `http://localhost:18080`) |
+| `VITE_RESTATE_INGRESS_URL` | Frontend ingress URL (default: `/restate` via Vite proxy) |
 
 ---
 
-## Environment variables
+## OpenAPI
 
-| Variable | Purpose |
-|---|---|
-| `RESTATE_INGRESS_URL` | Restate ingress endpoint (default: `http://localhost:18080`) |
-| `FLAMECAST_RUNTIME_HOST` | `inprocess` (default) or `remote` — where agent processes run |
-| `FLAMECAST_RUNTIME_HOST_URL` | RuntimeHost server URL (required when `remote`, e.g. `http://localhost:9100`) |
-| `RUNTIME_HOST_PORT` | RuntimeHost server listen port (default: `9100`) |
+Restate auto-generates OpenAPI 3.1 specs from the Zod-typed handler schemas:
+
+```bash
+curl http://localhost:19070/services/AcpSession/openapi
+curl http://localhost:19070/services/AcpAgents/openapi
+```
 
 ---
 
 ## Related
 
-- [Agent Client Protocol (ACP)](https://agentclientprotocol.com/)
-- [Restate](https://restate.dev/)
-- [A2A Protocol](https://github.com/google/A2A)
+- [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) — the protocol we implement
+- [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) — `ClientSideConnection`, `AgentSideConnection`
+- [Restate](https://restate.dev/) — durable execution runtime
+- [ACP CDN Registry](https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json) — agent discovery
