@@ -49,89 +49,125 @@ export class PooledConnectionFactory implements AgentConnectionFactory {
    */
   async warmup(
     agentNames: string[],
-    opts?: { cwd?: string },
+    opts?: { cwd?: string; retries?: number; retryDelayMs?: number },
   ): Promise<Map<string, string>> {
     const sessions = new Map<string, string>();
+    const maxRetries = opts?.retries ?? 3;
+    const retryDelay = opts?.retryDelayMs ?? 2000;
+    const failed: string[] = [];
 
     await Promise.all(
       agentNames.map(async (agentName) => {
-        let active: acp.Client = warmupClient;
-
-        const delegatingClient: acp.Client = {
-          async requestPermission(params) {
-            return active.requestPermission(params);
-          },
-          async sessionUpdate(params) {
-            return active.sessionUpdate(params);
-          },
-          async readTextFile(params) {
-            return active.readTextFile!(params);
-          },
-          async writeTextFile(params) {
-            return active.writeTextFile!(params);
-          },
-          async createTerminal(params) {
-            return active.createTerminal!(params);
-          },
-          async terminalOutput(params) {
-            return active.terminalOutput!(params);
-          },
-          async releaseTerminal(params) {
-            return active.releaseTerminal!(params);
-          },
-          async waitForTerminalExit(params) {
-            return active.waitForTerminalExit!(params);
-          },
-          async killTerminal(params) {
-            return active.killTerminal!(params);
-          },
-          async extMethod(method, params) {
-            return active.extMethod!(method, params);
-          },
-          async extNotification(method, params) {
-            return active.extNotification!(method, params);
-          },
-        };
-
-        const result = await this.inner.connect(agentName, delegatingClient);
-
-        // Initialize
-        await result.conn.initialize({
-          protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {
-            fs: { readTextFile: true, writeTextFile: true },
-          },
-          clientInfo: {
-            name: "flamecast",
-            title: "Flamecast",
-            version: "0.1.0",
-          },
-        });
-
-        // Create session
-        const session = await result.conn.newSession({
-          cwd: opts?.cwd ?? process.cwd(),
-          mcpServers: [],
-        });
-
-        const entry: PoolEntry = {
-          conn: result.conn,
-          acpSessionId: session.sessionId,
-          close: result.close,
-          setActive: (c) => {
-            active = c;
-          },
-        };
-
-        this.pool.set(agentName, entry);
-        sessions.set(agentName, session.sessionId);
-        console.log(
-          `[pool] ${agentName} warm — session ${session.sessionId}`,
-        );
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const entry = await this.spawnAgent(agentName, opts?.cwd);
+            this.pool.set(agentName, entry);
+            sessions.set(agentName, entry.acpSessionId);
+            console.log(
+              `[pool] ${agentName} warm — session ${entry.acpSessionId}`,
+            );
+            return;
+          } catch (err) {
+            const msg =
+              err instanceof Error
+                ? err.message
+                : typeof err === "object" && err !== null
+                  ? JSON.stringify(err)
+                  : String(err);
+            if (attempt < maxRetries) {
+              console.warn(
+                `[pool] ${agentName} failed (attempt ${attempt}/${maxRetries}): ${msg} — retrying in ${retryDelay}ms`,
+              );
+              await new Promise((r) => setTimeout(r, retryDelay));
+            } else {
+              console.error(
+                `[pool] ${agentName} failed after ${maxRetries} attempts: ${msg}`,
+              );
+              failed.push(agentName);
+            }
+          }
+        }
       }),
     );
 
+    if (failed.length > 0) {
+      console.error(
+        `[pool] ${failed.length}/${agentNames.length} agents failed to warm: ${failed.join(", ")}`,
+      );
+    }
+
     return sessions;
+  }
+
+  private async spawnAgent(
+    agentName: string,
+    cwd?: string,
+  ): Promise<PoolEntry> {
+    let active: acp.Client = warmupClient;
+
+    const delegatingClient: acp.Client = {
+      async requestPermission(params) {
+        return active.requestPermission(params);
+      },
+      async sessionUpdate(params) {
+        return active.sessionUpdate(params);
+      },
+      async readTextFile(params) {
+        return active.readTextFile!(params);
+      },
+      async writeTextFile(params) {
+        return active.writeTextFile!(params);
+      },
+      async createTerminal(params) {
+        return active.createTerminal!(params);
+      },
+      async terminalOutput(params) {
+        return active.terminalOutput!(params);
+      },
+      async releaseTerminal(params) {
+        return active.releaseTerminal!(params);
+      },
+      async waitForTerminalExit(params) {
+        return active.waitForTerminalExit!(params);
+      },
+      async killTerminal(params) {
+        return active.killTerminal!(params);
+      },
+      async extMethod(method, params) {
+        return active.extMethod!(method, params);
+      },
+      async extNotification(method, params) {
+        return active.extNotification!(method, params);
+      },
+    };
+
+    const result = await this.inner.connect(agentName, delegatingClient);
+
+    await result.conn.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+      clientInfo: {
+        name: "flamecast",
+        title: "Flamecast",
+        version: "0.1.0",
+      },
+    });
+
+    const session = await result.conn.newSession({
+      cwd: cwd ?? process.cwd(),
+      mcpServers: [],
+    });
+
+    return {
+      conn: result.conn,
+      acpSessionId: session.sessionId,
+      close: result.close,
+      setActive: (c) => {
+        active = c;
+      },
+    };
   }
 
   async connect(
