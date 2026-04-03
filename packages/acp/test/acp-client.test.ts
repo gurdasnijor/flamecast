@@ -253,7 +253,6 @@ describe("AcpClient", () => {
     const session = await client.connect("echo-1");
 
     expect(session.sessionId).toBe("echo-1-session");
-    expect(session.agentName).toBe("echo-1");
   });
 
   it("throws when connecting to unknown agent", async () => {
@@ -465,9 +464,9 @@ describe("AcpClient", () => {
 
     const sessions = client.sessions();
     expect(sessions).toHaveLength(2);
-    expect(sessions.map((s) => s.agentName).sort()).toEqual([
-      "echo-1",
-      "echo-2",
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([
+      "echo-1-session",
+      "echo-2-session",
     ]);
 
     await client.close(s1.sessionId);
