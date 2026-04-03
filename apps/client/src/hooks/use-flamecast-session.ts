@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionLog } from "@flamecast/protocol/session";
+import { client } from "@/lib/api";
 
 type ConnectionState = "disconnected" | "connecting" | "connected";
 
@@ -7,38 +8,58 @@ export function useFlamecastSession(sessionId: string) {
   const [events, setEvents] = useState<SessionLog[]>([]);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
-  const esRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setEvents([]);
     setConnectionState("connecting");
 
-    const es = new EventSource(`/acp/sessions/${sessionId}/events`);
-    esRef.current = es;
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    es.onopen = () => setConnectionState("connected");
-
-    es.onmessage = (ev) => {
+    (async () => {
       try {
-        const parsed = JSON.parse(ev.data);
-        const log: SessionLog = {
-          type: parsed.type ?? "unknown",
-          data: parsed,
-          timestamp: new Date().toISOString(),
-        };
-        setEvents((prev) => [...prev, log]);
-      } catch {
-        // ignore malformed SSE data
-      }
-    };
+        const stream = client.subscribeSSE(sessionId, { signal: ac.signal });
+        setConnectionState("connected");
 
-    es.onerror = () => {
-      setConnectionState("disconnected");
-    };
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value as Uint8Array, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop()!;
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                const log: SessionLog = {
+                  type: parsed.type ?? "unknown",
+                  data: parsed,
+                  timestamp: new Date().toISOString(),
+                };
+                setEvents((prev) => [...prev, log]);
+              } catch {
+                // ignore malformed
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setConnectionState("disconnected");
+        }
+      }
+    })();
 
     return () => {
-      esRef.current = null;
-      es.close();
+      abortRef.current = null;
+      ac.abort();
     };
   }, [sessionId]);
 
@@ -46,21 +67,19 @@ export function useFlamecastSession(sessionId: string) {
     (text: string) => {
       setEvents((prev) => [
         ...prev,
-        { type: "prompt_sent", data: { text }, timestamp: new Date().toISOString() },
+        {
+          type: "prompt_sent",
+          data: { text },
+          timestamp: new Date().toISOString(),
+        },
       ]);
-      fetch(`/acp/sessions/${sessionId}/prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      }).catch(() => {});
+      client.sendPrompt(sessionId, text).catch(() => {});
     },
     [sessionId],
   );
 
   const cancel = useCallback(() => {
-    fetch(`/acp/sessions/${sessionId}/cancel`, {
-      method: "POST",
-    }).catch(() => {});
+    client.terminate(sessionId).catch(() => {});
   }, [sessionId]);
 
   const requestFilePreview = useCallback(

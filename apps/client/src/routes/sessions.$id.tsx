@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchSession } from "@/lib/api";
+import { client } from "@/lib/api";
 import { FileSystemPanel } from "@/components/filesystem-panel";
 import { sessionLogsToSegments } from "@/lib/logs-markdown";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -32,7 +32,7 @@ function SessionDetailPage() {
   // REST for initial session metadata and server-owned filesystem snapshot
   const { data: session, isLoading } = useQuery({
     queryKey: ["session", id, showAllFiles],
-    queryFn: () => fetchSession(id, { includeFileSystem: true, showAllFiles }),
+    queryFn: () => client.getStatus(id),
     staleTime: Infinity, // runtime WS handles live updates
   });
 
@@ -124,14 +124,7 @@ function SessionDetailPage() {
     );
     if (!event?.data?.awakeableId) return;
 
-    fetch(`/acp/sessions/${id}/resume`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        awakeableId: event.data.awakeableId,
-        optionId: "optionId" in body ? body.optionId : "",
-      }),
-    })
+    client.resume(id, event.data.awakeableId as string, "optionId" in body ? body.optionId : "")
       .then(() => {
         addEvent({
           type: "permission_responded",

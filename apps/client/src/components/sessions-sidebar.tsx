@@ -1,7 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchSessions } from "@/lib/api";
-// Note: fetchSessions returns [] for now — run listing not yet implemented
+// Session listing not yet available from browser — stub for now
 import { cn } from "@/lib/utils";
 import {
   Sidebar,
@@ -25,7 +24,7 @@ export function SessionsSidebar() {
 
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions"],
-    queryFn: fetchSessions,
+    queryFn: () => Promise.resolve([]),
     refetchInterval: 30_000,
   });
 

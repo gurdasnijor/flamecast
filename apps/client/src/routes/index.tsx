@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchAgents, createSession } from "@/lib/api";
+import { client } from "@/lib/api";
+import type { AgentInfo } from "@flamecast/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoaderCircleIcon, PlayIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
-import type { AgentInfo } from "@flamecast/sdk/client";
 
 export const Route = createFileRoute("/")({
   component: AgentsPage,
@@ -17,15 +17,15 @@ function AgentsPage() {
 
   const { data: agents = [], isLoading } = useQuery({
     queryKey: ["agents"],
-    queryFn: fetchAgents,
+    queryFn: () => client.listAgents(),
   });
 
   const createMutation = useMutation({
     mutationFn: (agentName: string) =>
-      createSession({ agentName }),
+      client.startSession(agentName),
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      navigate({ to: "/sessions/$id", params: { id: session.id } });
+      navigate({ to: "/sessions/$id", params: { id: session.sessionId } });
     },
     onError: (err) => {
       toast.error("Failed to create run", {
