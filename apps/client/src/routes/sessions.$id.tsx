@@ -73,12 +73,23 @@ function SessionDetailPage() {
     for (let i = 0; i < wsEvents.length; i++) {
       const event = wsEvents[i];
       if (event.type === "permission_request") {
-        // Skip permissions that came before the last complete event
         if (lastComplete >= 0 && i < lastComplete) continue;
-        const parsed = PendingPermissionSchema.safeParse(event.data);
-        if (parsed.success && !resolvedIds.has(parsed.data.requestId)) {
-          pending.push(parsed.data);
-        }
+        const d = event.data as Record<string, unknown>;
+        // Map raw ACP shape to what the UI expects
+        const toolCall = d.toolCall as Record<string, unknown> | undefined;
+        const requestId = (toolCall?.toolCallId as string) ?? (d.requestId as string) ?? "";
+        if (resolvedIds.has(requestId)) continue;
+        pending.push({
+          requestId,
+          toolCallId: requestId,
+          title: (toolCall?.title as string) ?? "Permission required",
+          kind: toolCall?.kind as string | undefined,
+          options: ((d.options as Array<Record<string, unknown>>) ?? []).map((o) => ({
+            optionId: o.optionId as string,
+            name: o.name as string,
+            kind: o.kind as string,
+          })),
+        });
       }
     }
     if (pending.length === 0 && session?.pendingPermission) {
@@ -118,10 +129,14 @@ function SessionDetailPage() {
     requestId: string,
     body: { optionId: string } | { outcome: "cancelled" },
   ) => {
-    // Find the matching permission event to get awakeableId + generation
-    const event = wsEvents.find(
-      (e) => e.type === "permission_request" && e.data?.requestId === requestId,
-    );
+    // Find the matching permission event to get awakeableId
+    const event = wsEvents.find((e) => {
+      if (e.type !== "permission_request") return false;
+      const d = e.data as Record<string, unknown>;
+      const toolCall = d.toolCall as Record<string, unknown> | undefined;
+      const rid = (toolCall?.toolCallId as string) ?? (d.requestId as string);
+      return rid === requestId;
+    });
     if (!event?.data?.awakeableId) return;
 
     client.resumePermission(id, event.data.awakeableId as string, "optionId" in body ? body.optionId : "")
