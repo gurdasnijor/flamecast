@@ -6,8 +6,8 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
-import { AcpSession } from "../../src/acp/session.js";
-import { pubsubObject } from "../../src/restate/pubsub.js";
+import { AcpSession } from "../../src/session.js";
+import { pubsubObject } from "../../src/pubsub.js";
 import { FlamecastClient } from "../../src/client/index.js";
 
 let restateEnv: RestateTestEnvironment;

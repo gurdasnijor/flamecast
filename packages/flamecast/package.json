@@ -16,16 +16,12 @@
       "types": "./src/client/index.ts",
       "import": "./src/client/index.ts"
     },
-    "./restate": {
-      "types": "./src/restate/index.ts",
-      "import": "./src/restate/index.ts"
-    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "pnpm run build:package",
     "build:package": "tsc -p tsconfig.package.json",
-    "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx src/restate/serve-endpoint.ts",
+    "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx src/endpoint.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
     "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run --config vitest.integration.config.ts",
@@ -34,7 +30,6 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
     "@flamecast/acp": "workspace:*",
-    "@flamecast/protocol": "workspace:*",
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",
     "@restatedev/restate-sdk": "^1.5.0",
