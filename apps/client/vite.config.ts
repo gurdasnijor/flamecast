@@ -21,9 +21,10 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/acp": {
-        target: "http://localhost:3001",
+      "/restate": {
+        target: "http://localhost:18080",
         changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/restate/, ""),
       },
     },
   },

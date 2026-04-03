@@ -1,21 +1,8 @@
-import { createFlamecastClient } from "@flamecast/sdk/client";
+import { createFlamecastClient } from "@flamecast/client";
 
-export function resolveApiBaseUrl(env: { VITE_API_URL?: string; DEV?: boolean }): string {
-  if (env.VITE_API_URL) return env.VITE_API_URL;
-  return env.DEV ? "" : "http://localhost:3001";
-}
+// In dev, Vite proxies /restate/* → Restate ingress (avoids CORS).
+// In prod, set VITE_RESTATE_INGRESS_URL to the ingress proxy.
+const ingressUrl =
+  import.meta.env.VITE_RESTATE_INGRESS_URL ?? "/restate";
 
-const client = createFlamecastClient({
-  baseUrl: resolveApiBaseUrl(import.meta.env),
-});
-
-export const {
-  fetchAgents,
-  createSession,
-  sendPrompt,
-  fetchSession,
-  cancelSession,
-  resumeSession,
-  fetchAgentTemplates,
-  fetchSessions,
-} = client;
+export const client = createFlamecastClient({ ingressUrl });

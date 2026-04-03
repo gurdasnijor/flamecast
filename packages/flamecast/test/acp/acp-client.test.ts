@@ -1,21 +1,17 @@
 /**
  * Integration test for the ACP Restate layer.
  *
- * Starts:
- *   1. Restate endpoint (port 9080) — AcpSession VO
- *   2. Restate server (testcontainers) — journals + state
- *
- * Tests the full path: typed client → Restate ingress → AcpSession VO → AcpClient → agent
+ * Uses @flamecast/client (the single client) against a Restate test environment.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import { AcpSession } from "../../src/acp/session.js";
-import { createAcpClient } from "../../src/acp/client.js";
 import { pubsubObject } from "../../src/restate/pubsub.js";
+import { createFlamecastClient } from "@flamecast/client";
 
 let restateEnv: RestateTestEnvironment;
-let client: ReturnType<typeof createAcpClient>;
+let client: ReturnType<typeof createFlamecastClient>;
 
 describe("ACP Restate Integration", () => {
   beforeAll(async () => {
@@ -23,9 +19,8 @@ describe("ACP Restate Integration", () => {
       services: [AcpSession, pubsubObject],
     });
 
-    client = createAcpClient({
+    client = createFlamecastClient({
       ingressUrl: restateEnv.baseUrl(),
-      adminUrl: restateEnv.baseUrl().replace(":18080", ":19070"),
     });
   }, 60_000);
 
@@ -48,7 +43,6 @@ describe("ACP Restate Integration", () => {
 
     await client.sendPrompt(sessionId, "Say exactly: test-ok");
 
-    // Poll until the session returns to active (turn completed)
     let status;
     for (let i = 0; i < 30; i++) {
       status = await client.getStatus(sessionId);
