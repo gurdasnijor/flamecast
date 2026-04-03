@@ -2,20 +2,24 @@
  * AgentConnectionFactory — resolves an agent name and connects via
  * the appropriate transport, returning a ClientSideConnection.
  *
- * The factory picks the transport based on the agent's distribution
- * type (stdio, websocket, http+sse). The caller does the ACP handshake
- * (initialize + newSession) themselves.
+ * Two usage patterns:
  *
- *   const { conn, close } = await factory.connect("claude-acp", myClient);
- *   await conn.initialize({ ... });
- *   const session = await conn.newSession({ ... });
- *   const result = await conn.prompt({ ... });
- *   await close();
+ * 1. PooledConnectionFactory (recommended) — warmed at boot:
+ *    const { conn, acpSessionId } = await pool.connect("claude", client);
+ *    await conn.prompt({ sessionId: acpSessionId, ... });
+ *
+ * 2. Raw factory — caller does handshake:
+ *    const { conn } = await factory.connect("claude", client);
+ *    await conn.initialize({ ... });
+ *    const session = await conn.newSession({ ... });
  */
 
 import * as acp from "@agentclientprotocol/sdk";
+
 export interface AgentConnectionResult {
   conn: acp.ClientSideConnection;
+  /** Pre-created ACP session ID (set by PooledConnectionFactory). */
+  acpSessionId?: string;
   close: () => Promise<void>;
 }
 

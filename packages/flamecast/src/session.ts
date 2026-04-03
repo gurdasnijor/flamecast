@@ -137,16 +137,12 @@ export const AcpSession = restate.object({
         const agentName = (input._meta?.agentName as string) ?? "claude-acp";
         const client = new FlamecastClient(ctx);
 
-        // Connect (pool handles initialize, we do newSession)
-        const { conn } = await factory.connect(agentName, client);
-        const session = await conn.newSession({
-          cwd: input.cwd,
-          mcpServers: input.mcpServers,
-        });
+        // Pool is warm — get the pre-created connection + session ID
+        const { acpSessionId } = await factory.connect(agentName, client);
 
         ctx.set("meta", { sessionId, cwd: input.cwd } satisfies SessionState);
         ctx.set("agentName", agentName);
-        ctx.set("acpSessionId", session.sessionId);
+        ctx.set("acpSessionId", acpSessionId);
 
         emit(ctx, { type: "session.created", sessionId });
 
