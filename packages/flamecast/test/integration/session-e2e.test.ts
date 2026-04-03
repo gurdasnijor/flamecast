@@ -6,7 +6,8 @@ import { resolve } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import * as acp from "@agentclientprotocol/sdk";
-import { StdioTransport } from "@flamecast/acp/transports/stdio";
+import { connectStdio } from "@flamecast/acp/transports/stdio";
+import { applyCodec, ndJsonCodec } from "@flamecast/acp/transport";
 import { PooledConnectionFactory } from "../../src/pool.js";
 import type { AgentConnectionFactory, AgentConnectionResult } from "../../src/factory.js";
 import { AcpSession, configureAcp } from "../../src/session.js";
@@ -19,18 +20,18 @@ const ECHO_AGENT_PATH = resolve(
   "../fixtures/echo-agent.ts",
 );
 
-const stdioTransport = new StdioTransport();
+
 
 const innerFactory: AgentConnectionFactory = {
   async connect(_agentName, client): Promise<AgentConnectionResult> {
-    const connection = await stdioTransport.connect({
+    const connection = await connectStdio({
       cmd: "npx",
       args: ["tsx", ECHO_AGENT_PATH],
       label: "echo-agent",
     });
     const conn = new acp.ClientSideConnection(
       () => client,
-      connection.stream,
+      applyCodec(connection, ndJsonCodec()),
     );
     return { conn, close: () => connection.close() };
   },

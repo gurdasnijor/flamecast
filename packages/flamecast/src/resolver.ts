@@ -3,23 +3,20 @@
  * registry and connects via the appropriate transport.
  *
  * Distribution type → transport:
- *   npx / binary / uvx → StdioTransport
- *   url (ws://)        → WsTransport
- *   url (http://)      → HttpSseTransport
+ *   npx / binary / uvx → connectStdio
+ *   url (ws://)        → connectWs
+ *   url (http://)      → connectHttpSse
  */
 
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentConnectionFactory, AgentConnectionResult } from "./factory.js";
 import { loadRegistryFromIds, type SpawnConfig } from "@flamecast/acp/registry";
-import { StdioTransport } from "@flamecast/acp/transports/stdio";
-import { WsTransport } from "@flamecast/acp/transports/websocket";
-import { HttpSseTransport } from "@flamecast/acp/transports/http-sse";
+import { applyCodec, ndJsonCodec, jsonCodec } from "@flamecast/acp/transport";
+import { connectStdio } from "@flamecast/acp/transports/stdio";
+import { connectWs } from "@flamecast/acp/transports/websocket";
+import { connectHttpSse } from "@flamecast/acp/transports/http-sse";
 
 export type { AgentConnectionFactory };
-
-const stdioTransport = new StdioTransport();
-const wsTransport = new WsTransport();
-const httpSseTransport = new HttpSseTransport();
 
 export class RegistryConnectionFactory implements AgentConnectionFactory {
   private configs: Map<string, SpawnConfig> | null = null;
@@ -55,17 +52,19 @@ export class RegistryConnectionFactory implements AgentConnectionFactory {
     }
 
     const dist = config.distribution;
-    let connection;
+    let stream: acp.Stream & { close: () => Promise<void>; signal: AbortSignal };
 
     if (dist.type === "url") {
       const url = dist.url;
       if (url.startsWith("ws://") || url.startsWith("wss://")) {
-        connection = await wsTransport.connect({ url });
+        const bytes = await connectWs({ url });
+        stream = applyCodec(bytes, jsonCodec());
       } else {
-        connection = await httpSseTransport.connect({ url });
+        const bytes = await connectHttpSse({ url });
+        stream = applyCodec(bytes, jsonCodec());
       }
     } else {
-      connection = await stdioTransport.connect({
+      const bytes = await connectStdio({
         cmd: dist.cmd,
         args: dist.args,
         env: {
@@ -74,13 +73,14 @@ export class RegistryConnectionFactory implements AgentConnectionFactory {
         },
         label: agentName,
       });
+      stream = applyCodec(bytes, ndJsonCodec());
     }
 
-    const conn = new acp.ClientSideConnection(() => client, connection.stream);
+    const conn = new acp.ClientSideConnection(() => client, stream);
 
     return {
       conn,
-      close: () => connection.close(),
+      close: () => stream.close(),
     };
   }
 }
