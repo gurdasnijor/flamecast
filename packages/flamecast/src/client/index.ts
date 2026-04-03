@@ -170,6 +170,19 @@ export class FlamecastClient implements acp.Agent {
       .listAgents() as Promise<AgentInfo[]>;
   }
 
+  // ── Streaming ───────────────────────────────────────────────────────
+
+  subscribeSSE(
+    sessionId: string,
+    opts?: { offset?: number; signal?: AbortSignal },
+  ) {
+    return this.pubsub.sse({
+      topic: `session:${sessionId}`,
+      offset: opts?.offset ?? 0,
+      signal: opts?.signal,
+    });
+  }
+
   // ── Event listener (pubsub SSE → acp.Client callbacks) ───────────────
 
   private startEventListener(sessionId: string) {
