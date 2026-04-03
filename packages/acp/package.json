@@ -40,10 +40,6 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
-    "@nats-io/jetstream": "^3.3.1",
-    "@nats-io/nats-core": "^3.3.1",
-    "@nats-io/transport-node": "^3.3.1",
-    "protobufjs": "^8.0.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {
