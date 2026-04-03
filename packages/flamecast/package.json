@@ -21,7 +21,6 @@
   "scripts": {
     "build": "pnpm run build:package",
     "build:package": "tsc -p tsconfig.package.json",
-    "dev": "ACP_AGENTS=claude-acp,codex-acp,gemini,opencode,kilo tsx src/endpoint.ts",
     "dev:server": "npx @restatedev/restate-server --config-file=restate.toml",
     "dev:register": "sleep 5 && RESTATE_ADMIN_BASE_URL=http://localhost:19070 npx @restatedev/restate -y deployments register http://localhost:9080",
     "test": "vitest run --config vitest.integration.config.ts",
