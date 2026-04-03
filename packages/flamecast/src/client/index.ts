@@ -71,18 +71,20 @@ export class FlamecastClient {
 
   // ── Session lifecycle ───────────────────────────────────────────────────
 
-  async startSession(agentName: string, cwd = "/") {
+  async newSession(agentName: string, cwd = "/") {
     const sessionId = crypto.randomUUID();
-    const result = await this.ingress
+    // Blocking — waits for agent connection (initialize + session/new)
+    await this.ingress
       .objectClient(AcpSession, sessionId)
-      .startSession({ cwd, mcpServers: [], _meta: { agentName } });
-    return { ...result, sessionId };
+      .newSession({ cwd, mcpServers: [], _meta: { agentName } });
+    return { sessionId };
   }
 
-  async sendPrompt(sessionId: string, text: string) {
+  async prompt(sessionId: string, text: string) {
+    // Blocking — waits for the full prompt turn to complete
     return this.ingress
       .objectClient(AcpSession, sessionId)
-      .sendPrompt({ sessionId, prompt: [{ type: "text", text }] });
+      .prompt({ sessionId, prompt: [{ type: "text", text }] });
   }
 
   async getStatus(sessionId: string) {
@@ -91,7 +93,7 @@ export class FlamecastClient {
       .getStatus();
   }
 
-  async resume(
+  async resumePermission(
     sessionId: string,
     awakeableId: string,
     optionId?: string,
@@ -99,7 +101,7 @@ export class FlamecastClient {
   ) {
     return this.ingress
       .objectClient(AcpSession, sessionId)
-      .resumeAgent({ awakeableId, optionId, outcome });
+      .resumePermission({ awakeableId, optionId, outcome });
   }
 
   async cancel(sessionId: string) {
@@ -108,10 +110,10 @@ export class FlamecastClient {
       .cancel();
   }
 
-  async terminate(sessionId: string) {
+  async close(sessionId: string) {
     return this.ingress
       .objectClient(AcpSession, sessionId)
-      .terminateSession();
+      .close();
   }
 
   // ── Agent discovery ─────────────────────────────────────────────────────

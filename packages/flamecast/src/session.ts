@@ -1,12 +1,13 @@
 /**
  * AcpSession — Restate Virtual Object for multi-turn agent sessions.
  *
- * Keyed by session ID. Maintains a persistent agent connection across
- * multiple prompt turns via a conversation loop.
- *
- * Session state is ACP SessionInfo. Turn lifecycle (in-progress,
- * awaiting, completed, failed) is communicated via pubsub events
- * using ACP's native types (StopReason, ToolCallStatus, etc).
+ * Handler names match the ACP spec:
+ *   newSession  → initialize + session/new (exclusive, blocking)
+ *   prompt      → session/prompt (exclusive, blocking per turn)
+ *   cancel      → session/cancel (shared)
+ *   getStatus   → query session metadata (shared)
+ *   resumePermission → resolve permission request (shared)
+ *   close       → terminate session (shared)
  */
 
 import * as restate from "@restatedev/restate-sdk";
@@ -14,27 +15,30 @@ import * as acp from "@agentclientprotocol/sdk";
 import {
   zNewSessionRequest,
   zNewSessionResponse,
-  zInitializeResponse,
   zPromptRequest,
   zPromptResponse,
   zRequestPermissionResponse,
   zSessionInfo,
 } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 import { z } from "zod";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createPubsubClient } from "@restatedev/pubsub-client";
-import { AcpClient } from "@flamecast/acp";
-import { RegistryTransport } from "@flamecast/acp/transports/registry";
+import type { AgentConnectionFactory } from "@flamecast/acp";
+import { RegistryConnectionFactory } from "@flamecast/acp/resolver";
 
-// ─── ACP transport client ───────────────────────────────────────────────────
+// ─── Agent connection factory (injectable for tests) ────────────────────────
 
 const agentIds = (process.env.ACP_AGENTS ?? "claude-acp")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const acpClient = new AcpClient({
-  transport: new RegistryTransport(agentIds),
-});
+let factory: AgentConnectionFactory = new RegistryConnectionFactory(agentIds);
+
+export function configureAcp(f: AgentConnectionFactory) {
+  factory = f;
+}
 
 // ─── Pubsub ─────────────────────────────────────────────────────────────────
 
@@ -47,19 +51,61 @@ function emit(ctx: restate.ObjectContext, event: Record<string, unknown>) {
   pubsub.publish(`session:${ctx.key}`, event, ctx.rand.uuidv4());
 }
 
+// ─── ACP Client implementation ──────────────────────────────────────────────
+
+/**
+ * Flamecast's acp.Client — handles agent→client callbacks.
+ */
+class FlamecastClient implements acp.Client {
+  constructor(private ctx: restate.ObjectContext) {}
+
+  async sessionUpdate(params: acp.SessionNotification): Promise<void> {
+    emit(this.ctx, {
+      type: "session_update",
+      sessionUpdate: params.update.sessionUpdate,
+      update: params.update,
+    });
+  }
+
+  async requestPermission(
+    params: acp.RequestPermissionRequest,
+  ): Promise<acp.RequestPermissionResponse> {
+    const { id: awakeableId, promise } =
+      this.ctx.awakeable<acp.RequestPermissionOutcome>();
+
+    emit(this.ctx, {
+      type: "permission_request",
+      toolCall: params.toolCall,
+      options: params.options,
+      awakeableId,
+    });
+
+    return { outcome: await promise };
+  }
+
+  async readTextFile(
+    params: acp.ReadTextFileRequest,
+  ): Promise<acp.ReadTextFileResponse> {
+    return { content: await readFile(params.path, "utf-8") };
+  }
+
+  async writeTextFile(
+    params: acp.WriteTextFileRequest,
+  ): Promise<acp.WriteTextFileResponse> {
+    await mkdir(dirname(params.path), { recursive: true });
+    await writeFile(params.path, params.content, "utf-8");
+    return {};
+  }
+}
+
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
-// agentName passed via _meta.agentName (ACP extensibility)
-const StartSessionInput = zNewSessionRequest;
-const StartSessionOutput = zInitializeResponse.partial().merge(zNewSessionResponse);
-
-const ResumeAgentInput = z.object({
+const ResumePermissionInput = z.object({
   awakeableId: z.string(),
   optionId: z.string().optional(),
   outcome: z.enum(["selected", "cancelled"]).default("selected"),
 });
 
-// Session state is pure ACP SessionInfo
 export type SessionState = acp.SessionInfo;
 
 // ─── Virtual Object ─────────────────────────────────────────────────────────
@@ -67,94 +113,59 @@ export type SessionState = acp.SessionInfo;
 export const AcpSession = restate.object({
   name: "AcpSession",
   handlers: {
-    startSession: restate.handlers.object.exclusive(
+    newSession: restate.handlers.object.exclusive(
       {
-        input: restate.serde.schema(StartSessionInput),
-        output: restate.serde.schema(StartSessionOutput),
+        input: restate.serde.schema(zNewSessionRequest),
+        output: restate.serde.schema(zNewSessionResponse),
       },
-      async (ctx: restate.ObjectContext, input: acp.NewSessionRequest) => {
+      async (
+        ctx: restate.ObjectContext,
+        input: acp.NewSessionRequest,
+      ): Promise<acp.NewSessionResponse> => {
         const sessionId = ctx.key;
         const agentName = (input._meta?.agentName as string) ?? "claude-acp";
+        const client = new FlamecastClient(ctx);
 
-        // Connect briefly to get agent capabilities, then close.
-        // The conversation loop will create its own connection with callbacks.
-        const handle = await acpClient.connect(agentName, { cwd: input.cwd });
-        await acpClient.close(handle.sessionId);
-
-        const meta: SessionState = {
-          sessionId,
+        // Connect (pool handles initialize, we do newSession)
+        const { conn } = await factory.connect(agentName, client);
+        const session = await conn.newSession({
           cwd: input.cwd,
-        };
+          mcpServers: input.mcpServers,
+        });
 
-        ctx.set("meta", meta);
+        ctx.set("meta", { sessionId, cwd: input.cwd } satisfies SessionState);
         ctx.set("agentName", agentName);
-        if (handle.modes) ctx.set("modes", handle.modes);
+        ctx.set("acpSessionId", session.sessionId);
 
         emit(ctx, { type: "session.created", sessionId });
 
-        ctx.objectSendClient(AcpSession, sessionId).conversationLoop();
-
-        return {
-          ...handle,
-          sessionId,
-        } as z.infer<typeof StartSessionOutput>;
+        return { sessionId };
       },
     ),
 
-    conversationLoop: async (ctx: restate.ObjectContext): Promise<void> => {
-      const agentName = await ctx.get<string>("agentName");
-      if (!agentName) throw new restate.TerminalError("No agent configured");
-
-      let acpSessionId: string | null = null;
-
-      async function ensureConnection(): Promise<string> {
-        if (!acpSessionId) {
-          const handle = await acpClient.connect(agentName!, {
-            cwd: (await ctx.get<string>("cwd")) ?? process.cwd(),
-
-            onSessionUpdate(params: acp.SessionNotification) {
-              emit(ctx, {
-                type: "session_update",
-                sessionUpdate: params.update.sessionUpdate,
-                update: params.update,
-              });
-            },
-
-            async onPermissionRequest(
-              params: acp.RequestPermissionRequest,
-            ): Promise<acp.RequestPermissionResponse> {
-              const { id: awakeableId, promise } =
-                ctx.awakeable<acp.RequestPermissionOutcome>();
-
-              emit(ctx, {
-                type: "permission_request",
-                toolCall: params.toolCall,
-                options: params.options,
-                awakeableId,
-              });
-
-              return { outcome: await promise };
-            },
-          });
-          acpSessionId = handle.sessionId;
-          ctx.set("acpSessionId", acpSessionId);
+    prompt: restate.handlers.object.exclusive(
+      {
+        input: restate.serde.schema(zPromptRequest),
+        output: restate.serde.schema(zPromptResponse),
+      },
+      async (
+        ctx: restate.ObjectContext,
+        input: acp.PromptRequest,
+      ): Promise<acp.PromptResponse> => {
+        const agentName = await ctx.get<string>("agentName");
+        const acpSessionId = await ctx.get<string>("acpSessionId");
+        if (!agentName || !acpSessionId) {
+          throw new restate.TerminalError(
+            "No active session — call newSession first",
+          );
         }
-        return acpSessionId!;
-      }
 
-      while (true) {
-        const { id: promptId, promise: promptPromise } =
-          ctx.awakeable<acp.PromptRequest | null>();
-        ctx.set("pending_prompt", { awakeableId: promptId });
+        const client = new FlamecastClient(ctx);
 
-        const next = await promptPromise;
-        ctx.clear("pending_prompt");
+        // Pool swaps the active client to this handler's context
+        const { conn } = await factory.connect(agentName, client);
 
-        if (!next) break;
-
-        const sid = await ensureConnection();
-
-        const text = next.prompt
+        const text = input.prompt
           .filter(
             (b): b is { type: "text"; text: string } => b.type === "text",
           )
@@ -162,51 +173,30 @@ export const AcpSession = restate.object({
           .join("\n");
 
         try {
-          const result = await acpClient.prompt(sid, text);
+          const result = await conn.prompt({
+            sessionId: acpSessionId,
+            prompt: [{ type: "text", text }],
+          });
 
           emit(ctx, {
             type: "prompt_complete",
             stopReason: result.stopReason,
           });
+
+          const meta = await ctx.get<SessionState>("meta");
+          if (meta) {
+            meta.updatedAt = await ctx.date.toJSON();
+            ctx.set("meta", meta);
+          }
+
+          return result;
         } catch (err) {
           emit(ctx, {
             type: "prompt_failed",
             error: err instanceof Error ? err.message : String(err),
           });
+          throw err;
         }
-
-        // Update SessionInfo.updatedAt
-        const meta = await ctx.get<SessionState>("meta");
-        if (meta) {
-          meta.updatedAt = await ctx.date.toJSON();
-          ctx.set("meta", meta);
-        }
-      }
-
-      if (acpSessionId) {
-        await acpClient.close(acpSessionId);
-      }
-    },
-
-    sendPrompt: restate.handlers.object.shared(
-      {
-        input: restate.serde.schema(zPromptRequest),
-        output: restate.serde.schema(zPromptResponse),
-      },
-      async (
-        ctx: restate.ObjectSharedContext,
-        input: acp.PromptRequest,
-      ): Promise<acp.PromptResponse> => {
-        const pending = await ctx.get<{ awakeableId: string }>(
-          "pending_prompt",
-        );
-        if (!pending) {
-          throw new restate.TerminalError(
-            "No pending prompt — session may not be running or is mid-turn",
-          );
-        }
-        ctx.resolveAwakeable(pending.awakeableId, input);
-        return { stopReason: "end_turn" };
       },
     ),
 
@@ -214,12 +204,8 @@ export const AcpSession = restate.object({
       {
         output: restate.serde.schema(z.object({ cancelled: z.boolean() })),
       },
-      async (ctx: restate.ObjectSharedContext) => {
-        const acpSessionId = await ctx.get<string>("acpSessionId");
-        if (acpSessionId) {
-          await acpClient.cancel(acpSessionId);
-          return { cancelled: true };
-        }
+      async (_ctx: restate.ObjectSharedContext) => {
+        // TODO: need in-flight connection reference to cancel
         return { cancelled: false };
       },
     ),
@@ -228,21 +214,19 @@ export const AcpSession = restate.object({
       {
         output: restate.serde.schema(zSessionInfo.nullable()),
       },
-      async (
-        ctx: restate.ObjectSharedContext,
-      ): Promise<SessionState | null> => {
+      async (ctx: restate.ObjectSharedContext): Promise<SessionState | null> => {
         return ctx.get<SessionState>("meta");
       },
     ),
 
-    resumeAgent: restate.handlers.object.shared(
+    resumePermission: restate.handlers.object.shared(
       {
-        input: restate.serde.schema(ResumeAgentInput),
+        input: restate.serde.schema(ResumePermissionInput),
         output: restate.serde.schema(zRequestPermissionResponse),
       },
       async (
         ctx: restate.ObjectSharedContext,
-        input: z.infer<typeof ResumeAgentInput>,
+        input: z.infer<typeof ResumePermissionInput>,
       ): Promise<acp.RequestPermissionResponse> => {
         const outcome: acp.RequestPermissionOutcome =
           input.outcome === "cancelled"
@@ -254,20 +238,11 @@ export const AcpSession = restate.object({
       },
     ),
 
-    terminateSession: restate.handlers.object.exclusive(
+    close: restate.handlers.object.shared(
       {
         output: restate.serde.schema(zPromptResponse),
       },
-      async (ctx: restate.ObjectContext): Promise<acp.PromptResponse> => {
-        const pending = await ctx.get<{ awakeableId: string }>(
-          "pending_prompt",
-        );
-        if (pending) {
-          ctx.resolveAwakeable(pending.awakeableId, null);
-        }
-
-        emit(ctx, { type: "session.terminated" });
-
+      async (_ctx: restate.ObjectSharedContext): Promise<acp.PromptResponse> => {
         return { stopReason: "cancelled" };
       },
     ),

@@ -124,7 +124,7 @@ function SessionDetailPage() {
     );
     if (!event?.data?.awakeableId) return;
 
-    client.resume(id, event.data.awakeableId as string, "optionId" in body ? body.optionId : "")
+    client.resumePermission(id, event.data.awakeableId as string, "optionId" in body ? body.optionId : "")
       .then(() => {
         addEvent({
           type: "permission_responded",
