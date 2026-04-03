@@ -1,4 +1,6 @@
-export { AcpSession } from "./acp/session.js";
-export type { SessionState, RunStatus } from "./acp/session.js";
-export { AcpAgents } from "./acp/agents.js";
-export type { AgentInfo } from "./acp/agents.js";
+export { AcpSession } from "./session.js";
+export type { SessionState, RunStatus } from "./session.js";
+export { AcpAgents } from "./agents.js";
+export type { AgentInfo } from "./agents.js";
+export { pubsubObject } from "./pubsub.js";
+export { serve, services } from "./endpoint.js";

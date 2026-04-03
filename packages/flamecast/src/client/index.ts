@@ -20,8 +20,8 @@ import type {
   RunStatus,
   AgentInfo,
 } from "../index.js";
-import type { AcpSession as AcpSessionDef } from "../acp/session.js";
-import type { AcpAgents as AcpAgentsDef } from "../acp/agents.js";
+import type { AcpSession as AcpSessionDef } from "../session.js";
+import type { AcpAgents as AcpAgentsDef } from "../agents.js";
 const AcpSession: typeof AcpSessionDef = { name: "AcpSession" };
 const AcpAgents: typeof AcpAgentsDef = { name: "AcpAgents" };
 
@@ -95,10 +95,15 @@ export class FlamecastClient {
       .getStatus();
   }
 
-  async resume(sessionId: string, awakeableId: string, optionId: string) {
+  async resume(
+    sessionId: string,
+    awakeableId: string,
+    optionId?: string,
+    outcome: "selected" | "cancelled" = "selected",
+  ) {
     return this.ingress
       .objectClient(AcpSession, sessionId)
-      .resumeAgent({ awakeableId, optionId });
+      .resumeAgent({ awakeableId, optionId, outcome });
   }
 
   async terminate(sessionId: string) {
@@ -152,13 +157,7 @@ export class FlamecastClient {
     for (const row of rows) {
       try {
         const meta = JSON.parse(row.value_utf8) as SessionState;
-        sessions.push({
-          sessionId: row.service_key,
-          agentName: meta.agentName,
-          status: meta.status,
-          startedAt: meta.startedAt,
-          lastUpdatedAt: meta.lastUpdatedAt,
-        });
+        sessions.push(meta);
       } catch {
         // skip malformed
       }

@@ -348,9 +348,6 @@ importers:
       '@flamecast/acp':
         specifier: workspace:*
         version: link:../acp
-      '@flamecast/protocol':
-        specifier: workspace:*
-        version: link:../protocol
       '@restatedev/pubsub':
         specifier: ^0.1.0
         version: 0.1.0(@restatedev/restate-sdk-zod@1.11.1(zod@4.3.6))(@restatedev/restate-sdk@1.11.1)(zod@4.3.6)
