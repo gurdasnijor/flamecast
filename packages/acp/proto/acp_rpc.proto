@@ -1,0 +1,38 @@
+syntax = "proto3";
+package acp_rpc;
+
+// JSON-RPC 2.0 message encoded in protobuf for efficient binary transport.
+//
+// Design decisions:
+//   - `oneof id_present` gives us proper absence detection (no id = notification)
+//   - ID is always string-encoded (JSON-RPC allows string or number IDs;
+//     we normalize to string on the wire, parse back on decode)
+//   - params/result are JSON-encoded bytes — avoids recursive
+//     google.protobuf.Value overhead while keeping the envelope binary
+//   - Future: hot-path messages can get fully-typed params fields
+
+message RpcMessage {
+  // JSON-RPC request/response ID.
+  // Absent (oneof not set) = notification.
+  oneof id_present {
+    string id = 1;
+  }
+
+  // Method name (request/notification). Empty for responses.
+  string method = 2;
+
+  // Request/notification params — JSON-encoded UTF-8 bytes.
+  bytes params = 3;
+
+  // Response result — JSON-encoded UTF-8 bytes.
+  bytes result = 4;
+
+  // Response error.
+  RpcError error = 5;
+}
+
+message RpcError {
+  int32 code = 1;
+  string message = 2;
+  bytes data = 3;
+}
