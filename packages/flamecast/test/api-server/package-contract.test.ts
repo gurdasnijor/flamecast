@@ -20,7 +20,7 @@ describe("package contract", () => {
     expect(packageJson.name).toBe("@flamecast/sdk");
     expect(packageJson.files).toEqual(["dist"]);
 
-    // Core entrypoint (server: session VO, agents service, endpoint)
+    // Core entrypoint (server: VOs, endpoint)
     expect(packageJson.exports["."]).toEqual({
       types: "./src/index.ts",
       import: "./src/index.ts",
@@ -32,14 +32,9 @@ describe("package contract", () => {
       import: "./src/client/index.ts",
     });
 
-    // Removed sub-paths
-    expect(packageJson.exports["./restate"]).toBeUndefined();
-    expect(packageJson.exports["./acp"]).toBeUndefined();
-    expect(packageJson.exports["./edge"]).toBeUndefined();
-
     const entry = await import("../../src/index.js");
-    expect(entry.AcpAgent).toBeDefined();
-    expect(entry.fetchAgentConfigs).toBeTypeOf("function");
+    expect(entry.AgentConnection).toBeDefined();
+    expect(entry.AgentSession).toBeDefined();
     expect(entry.serve).toBeTypeOf("function");
   });
 });

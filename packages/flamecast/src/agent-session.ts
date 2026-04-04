@@ -1,33 +1,34 @@
 /**
  * AgentSession — Restate Virtual Object, keyed by sessionId.
  *
- * Session-level ACP Agent handlers: prompt, cancel, loadSession.
- * Client callbacks (sessionUpdate, requestPermission) run inline
- * in the prompt handler via the toClient closure — NOT as separate handlers.
+ * Every handler spawns a fresh agent process from durable K/V state.
+ * No module-level cache. No mutable Maps. The process lives for the
+ * duration of the handler invocation and is cleaned up after.
+ *
+ * K/V state (set by init, read by every handler):
+ *   - clientId, agentName, spawnConfig, acpSessionId, cwd
+ *   - updates[] (accumulated sessionUpdate notifications)
+ *   - pendingPermission (current awakeable for permission request)
  *
  * Type-checked against acp.Agent via RestateAgentSession mapped type.
  */
 
 import * as restate from "@restatedev/restate-sdk";
 import * as acp from "@agentclientprotocol/sdk";
-import { execa } from "execa";
+import { execa, type ResultPromise } from "execa";
 import { Readable, Writable } from "node:stream";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 // ─── Type safety: VO handlers must match acp.Agent ──────────────────────
 
-/** Session-scoped subset of acp.Agent, lifted for Restate. */
 type RestateAgentSession = {
   [K in "prompt" | "cancel"]: Required<acp.Agent>[K] extends (...args: infer A) => infer R
     ? (ctx: restate.ObjectContext, ...args: A) => R
     : never;
 } & {
-  /** Internal: called by AgentConnection.newSession to bootstrap this session. */
   init: (ctx: restate.ObjectContext, params: InitParams) => Promise<void>;
-  /** Shared: read pending permission for frontend polling. */
   getPendingPermission: (ctx: restate.ObjectSharedContext) => Promise<PendingPermission | null>;
-  /** Shared: read accumulated updates for frontend polling. */
   getUpdates: (ctx: restate.ObjectSharedContext) => Promise<acp.SessionNotification[]>;
 };
 
@@ -45,19 +46,6 @@ interface PendingPermission {
   options: acp.RequestPermissionRequest["options"];
 }
 
-// ─── Module state (ephemeral cache, rebuilt from K/V on restart) ─────────
-
-interface SessionHandle {
-  conn: acp.ClientSideConnection;
-}
-
-const sessions = new Map<string, SessionHandle>();
-
-// Mutable ref for the current handler's ctx — set before conn.prompt(), used by toClient closure
-let currentCtx: restate.ObjectContext | null = null;
-
-// ─── Spawn ──────────────────────────────────────────────────────────────
-
 interface SpawnConfig {
   type: "npx";
   cmd: string;
@@ -65,7 +53,12 @@ interface SpawnConfig {
   env?: Record<string, string>;
 }
 
-function spawnConnection(sessionKey: string, config: SpawnConfig): SessionHandle {
+// ─── Spawn a fresh connection for this handler invocation ───────────────
+
+function spawnForHandler(ctx: restate.ObjectContext, config: SpawnConfig): {
+  conn: acp.ClientSideConnection;
+  proc: ResultPromise;
+} {
   const proc = execa(config.cmd, config.args, {
     stdin: "pipe",
     stdout: "pipe",
@@ -75,25 +68,24 @@ function spawnConnection(sessionKey: string, config: SpawnConfig): SessionHandle
   });
   proc.catch(() => {});
 
+  // The acp.Client — uses ctx directly (no mutable ref needed, ctx is live for this handler)
   const conn = new acp.ClientSideConnection(
     () => ({
       async sessionUpdate(p: acp.SessionNotification) {
-        if (!currentCtx) return;
-        const updates = (await currentCtx.get<acp.SessionNotification[]>("updates")) ?? [];
+        const updates = (await ctx.get<acp.SessionNotification[]>("updates")) ?? [];
         updates.push(p);
-        currentCtx.set("updates", updates);
+        ctx.set("updates", updates);
       },
 
       async requestPermission(p: acp.RequestPermissionRequest) {
-        if (!currentCtx) throw new Error("No ctx — requestPermission called outside prompt handler");
-        const { id, promise } = currentCtx.awakeable<acp.RequestPermissionOutcome>();
-        currentCtx.set("pendingPermission", {
+        const { id, promise } = ctx.awakeable<acp.RequestPermissionOutcome>();
+        ctx.set("pendingPermission", {
           awakeableId: id,
           toolCall: p.toolCall,
           options: p.options,
         } satisfies PendingPermission);
         const outcome = await promise;
-        currentCtx.clear("pendingPermission");
+        ctx.clear("pendingPermission");
         return { outcome };
       },
 
@@ -113,34 +105,45 @@ function spawnConnection(sessionKey: string, config: SpawnConfig): SessionHandle
     ),
   );
 
-  const handle: SessionHandle = { conn };
-  sessions.set(sessionKey, handle);
-
-  conn.closed
-    .then(() => sessions.delete(sessionKey))
-    .catch(() => sessions.delete(sessionKey));
-
-  return handle;
+  return { conn, proc };
 }
 
-async function getOrReconnect(ctx: restate.ObjectContext): Promise<SessionHandle> {
-  const cached = sessions.get(ctx.key);
-  if (cached) return cached;
-
+/**
+ * Spawn a fresh agent process, initialize it, and restore the ACP session.
+ * Called at the start of every handler that needs the downstream connection.
+ */
+async function connectAgent(ctx: restate.ObjectContext): Promise<{
+  conn: acp.ClientSideConnection;
+  proc: ResultPromise;
+}> {
   const config = await ctx.get<SpawnConfig>("spawnConfig");
   const acpSessionId = await ctx.get<string>("acpSessionId");
-  if (!config || !acpSessionId) {
+  const cwd = (await ctx.get<string>("cwd")) ?? "/";
+
+  if (!config) {
     throw new restate.TerminalError("No session — call init first");
   }
 
-  const handle = spawnConnection(ctx.key, config);
-  await handle.conn.initialize({
+  const { conn, proc } = spawnForHandler(ctx, config);
+
+  await conn.initialize({
     protocolVersion: acp.PROTOCOL_VERSION,
     clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
     clientInfo: { name: "flamecast", title: "Flamecast", version: "0.1.0" },
   });
-  await handle.conn.loadSession({ sessionId: acpSessionId, cwd: "/", mcpServers: [] });
-  return handle;
+
+  if (acpSessionId) {
+    // Existing session — try loadSession, fall back to newSession
+    try {
+      await conn.loadSession({ sessionId: acpSessionId, cwd, mcpServers: [] });
+    } catch {
+      // Agent doesn't support loadSession or doesn't recognize the session — create fresh
+      const session = await conn.newSession({ cwd, mcpServers: [] });
+      ctx.set("acpSessionId", session.sessionId);
+    }
+  }
+
+  return { conn, proc };
 }
 
 // ─── CDN config resolution ──────────────────────────────────────────────
@@ -171,6 +174,7 @@ export const AgentSession = restate.object<string, RestateAgentSession>({
       async (ctx: restate.ObjectContext, params: InitParams): Promise<void> => {
         ctx.set("clientId", params.clientId);
         ctx.set("agentName", params.agentName);
+        ctx.set("cwd", params.cwd);
         ctx.set("updates", []);
 
         // Resolve spawn config: from _meta (tests) or CDN (production)
@@ -179,40 +183,44 @@ export const AgentSession = restate.object<string, RestateAgentSession>({
           : await ctx.run("resolve-config", () => resolveSpawnConfig(params.agentName));
         ctx.set("spawnConfig", spawnConfig);
 
-        // Spawn and initialize downstream agent
-        const handle = spawnConnection(ctx.key, spawnConfig);
-        currentCtx = ctx;
+        // Spawn, initialize, create session — then kill the process
+        // (next handler invocation will respawn from K/V)
+        const { conn, proc } = spawnForHandler(ctx, spawnConfig);
 
-        const initResponse = await handle.conn.initialize({
+        const initResponse = await conn.initialize({
           protocolVersion: acp.PROTOCOL_VERSION,
           clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
           clientInfo: { name: "flamecast", title: "Flamecast", version: "0.1.0" },
         });
         ctx.set("agentCapabilities", initResponse.agentCapabilities);
 
-        const session = await handle.conn.newSession({
+        const session = await conn.newSession({
           cwd: params.cwd,
           mcpServers: params.mcpServers,
         });
         ctx.set("acpSessionId", session.sessionId);
 
-        currentCtx = null;
+        // Process cleanup — init is done, next handler will spawn fresh
+        proc.kill();
       },
     ),
 
     async prompt(ctx: restate.ObjectContext, params: acp.PromptRequest): Promise<acp.PromptResponse> {
-      const handle = await getOrReconnect(ctx);
-      currentCtx = ctx;
+      const { conn, proc } = await connectAgent(ctx);
       try {
-        return await handle.conn.prompt(params);
+        return await conn.prompt(params);
       } finally {
-        currentCtx = null;
+        proc.kill();
       }
     },
 
     cancel: restate.handlers.object.shared(
-      async (_ctx: restate.ObjectSharedContext, params: acp.CancelNotification): Promise<void> => {
-        await sessions.get(params.sessionId)?.conn.cancel(params);
+      async (_ctx: restate.ObjectSharedContext, _params: acp.CancelNotification): Promise<void> => {
+        // Cancel is best-effort: if the prompt handler's process is running,
+        // the exclusive lock means cancel can't run until prompt finishes.
+        // For real cancellation, use Restate invocation cancellation:
+        //   restate invocations cancel <invocationId>
+        // TODO: store invocation ID in K/V for programmatic cancellation
       },
     ),
 
