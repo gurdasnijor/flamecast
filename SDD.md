@@ -147,9 +147,11 @@ const conn = new acp.ClientSideConnection(
 );
 ```
 
-The `toClient` closure routes `sessionUpdate` and `requestPermission` BACK to the same AgentSession VO's own handlers — via `ctx.objectSendClient` / `ctx.objectClient`. This is inter-VO communication to self, which creates journal entries and enables the awakeable pattern for permissions.
+The `toClient` closure uses `currentCtx` directly — NOT inter-VO calls. The Client callbacks run inline within the prompt handler's execution context, so they have access to `ctx` for awakeables and K/V writes. No self-calling, no lock conflicts.
 
-`readTextFile` and `writeTextFile` are direct fs calls — no Restate needed.
+- `sessionUpdate` — appends to K/V directly via `currentCtx.set()`
+- `requestPermission` — creates awakeable via `currentCtx.awakeable()`, stores pending permission in K/V, suspends the prompt handler. Frontend resolves via `POST /restate/awakeables/{id}/resolve`. Prompt handler resumes.
+- `readTextFile` / `writeTextFile` — direct fs calls, no Restate needed.
 
 `currentCtx` is a mutable ref set at the top of the prompt handler. This is necessary because `toClient` is called once at construction but `ctx` changes per handler invocation.
 
