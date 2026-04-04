@@ -1,11 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { client } from "@/lib/api";
-import type { AgentInfo } from "@flamecast/sdk/client";
+import { connectSession, BrowserClient, listAgents } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoaderCircleIcon, PlayIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
+import * as acp from "@agentclientprotocol/sdk";
+
+// Agent IDs to show — matches server's ACP_AGENTS env var
+const AGENT_IDS = ["claude-acp", "codex-acp", "gemini", "opencode", "kilo"];
 
 export const Route = createFileRoute("/")({
   component: AgentsPage,
@@ -17,15 +20,28 @@ function AgentsPage() {
 
   const { data: agents = [], isLoading } = useQuery({
     queryKey: ["agents"],
-    queryFn: () => client.listAgents(),
+    queryFn: () => listAgents(AGENT_IDS),
   });
 
   const createMutation = useMutation({
-    mutationFn: (agentName: string) =>
-      client.newSession({ cwd: "/", mcpServers: [], _meta: { agentName } }),
-    onSuccess: (session) => {
+    mutationFn: async (agentName: string) => {
+      const sessionKey = crypto.randomUUID();
+      const client = new BrowserClient();
+      const agent = connectSession(sessionKey, client);
+
+      await agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
+        clientInfo: { name: "flamecast-ui", title: "Flamecast", version: "0.1.0" },
+        _meta: { agentName },
+      });
+
+      const session = await agent.newSession({ cwd: "/", mcpServers: [] });
+      return { sessionId: session.sessionId, sessionKey };
+    },
+    onSuccess: ({ sessionKey }) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      navigate({ to: "/sessions/$id", params: { id: session.sessionId } });
+      navigate({ to: "/sessions/$id", params: { id: sessionKey } });
     },
     onError: (err) => {
       toast.error("Failed to create run", {
@@ -66,7 +82,7 @@ function AgentsPage() {
           </Card>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((agent: AgentInfo) => (
+            {agents.map((agent) => (
               <Card
                 key={agent.name}
                 className="group transition-colors hover:border-foreground/20"
@@ -74,15 +90,7 @@ function AgentsPage() {
                 <CardHeader className="pb-2 pt-3 px-3">
                   <div className="flex items-center gap-2">
                     <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-primary/10 text-primary">
-                      {agent.metadata?.icon ? (
-                        <img
-                          src={agent.metadata.icon as string}
-                          alt={agent.name}
-                          className="h-4 w-4"
-                        />
-                      ) : (
-                        <TerminalIcon className="h-3 w-3" />
-                      )}
+                      <TerminalIcon className="h-3 w-3" />
                     </div>
                     <CardTitle className="text-xs font-semibold">
                       {agent.name}
@@ -98,11 +106,11 @@ function AgentsPage() {
                   <Button
                     size="sm"
                     className="w-full h-7 text-xs"
-                    onClick={() => createMutation.mutate(agent.name)}
+                    onClick={() => createMutation.mutate(agent.id)}
                     disabled={createMutation.isPending}
                   >
                     {createMutation.isPending &&
-                    createMutation.variables === agent.name ? (
+                    createMutation.variables === agent.id ? (
                       <LoaderCircleIcon
                         data-icon="inline-start"
                         className="animate-spin"
@@ -111,7 +119,7 @@ function AgentsPage() {
                       <PlayIcon data-icon="inline-start" />
                     )}
                     {createMutation.isPending &&
-                    createMutation.variables === agent.name
+                    createMutation.variables === agent.id
                       ? "Starting..."
                       : "Start run"}
                   </Button>

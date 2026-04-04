@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { client } from "@/lib/api";
+import { ingressUrl, pubsub } from "@/lib/api";
+import * as restate from "@restatedev/restate-sdk-clients";
 import { FileSystemPanel } from "@/components/filesystem-panel";
 import { sessionLogsToSegments } from "@/lib/logs-markdown";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -32,7 +33,7 @@ function SessionDetailPage() {
   // REST for initial session metadata and server-owned filesystem snapshot
   const { data: session, isLoading } = useQuery({
     queryKey: ["session", id, showAllFiles],
-    queryFn: () => client.getStatus(id),
+    queryFn: () => ({ sessionId: id, cwd: "/" }), // Session exists if we navigated here
     staleTime: Infinity, // runtime WS handles live updates
   });
 

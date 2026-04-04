@@ -1,9 +1,7 @@
 import * as restate from "@restatedev/restate-sdk";
 import { pubsubObject } from "./pubsub.js";
-import { AcpSession } from "./session.js";
-
-export const services = [pubsubObject, AcpSession];
+import { AcpAgent } from "./agent.js";
 
 export function serve(port = 9080) {
-  return restate.serve({ services, port });
+  return restate.serve({ services: [pubsubObject, AcpAgent], port });
 }

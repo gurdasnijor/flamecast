@@ -10,6 +10,11 @@
       "source": "mintlify.com",
       "sourceType": "well-known",
       "computedHash": "fc61ab6703f692dc2c215e74327a8998d02987ca9571084440be20e7ecad6b46"
+    },
+    "restatedev": {
+      "source": "docs.restate.dev",
+      "sourceType": "well-known",
+      "computedHash": "576ceccc23a11a3e82631d20fc6ed36780bff79b6d27bd5ba931b8de41230e40"
     }
   }
 }

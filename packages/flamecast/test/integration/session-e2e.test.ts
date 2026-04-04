@@ -1,14 +1,13 @@
 /**
- * E2E integration test: Echo Agent ↔ AcpSession VO ↔ FlamecastClient
+ * E2E integration test: Echo Agent ↔ AcpAgent VO ↔ FlamecastClient
  */
 
 import { resolve } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
-import * as acp from "@agentclientprotocol/sdk";
-import { connectStdio } from "@flamecast/acp/transports/stdio";
-import { AcpSession, configureAcp } from "../../src/session.js";
+import { AcpAgent } from "../../src/agent.js";
 import { pubsubObject } from "../../src/pubsub.js";
+import { registerAgent } from "../../src/registry.js";
 import { FlamecastClient } from "../../src/client/index.js";
 
 const ECHO_AGENT_PATH = resolve(
@@ -16,27 +15,20 @@ const ECHO_AGENT_PATH = resolve(
   "../fixtures/echo-agent.ts",
 );
 
-function resolveAgent(
-  _name: string,
-  _sessionId: string,
-  toClient: (agent: acp.Agent) => acp.Client,
-) {
-  return connectStdio(
-    { cmd: "npx", args: ["tsx", ECHO_AGENT_PATH], label: "echo-agent" },
-    toClient,
-  );
-}
+registerAgent({
+  id: "echo-agent",
+  manifest: { name: "echo-agent", description: "Echo", version: "1.0" },
+  distribution: { type: "npx" as const, cmd: "npx", args: ["tsx", ECHO_AGENT_PATH] },
+});
 
 let restateEnv: RestateTestEnvironment;
 let client: FlamecastClient;
 
-describe("AcpSession E2E with Echo Agent", () => {
+describe("AcpAgent E2E with Echo Agent", () => {
   beforeAll(async () => {
     restateEnv = await RestateTestEnvironment.start({
-      services: [AcpSession, pubsubObject],
+      services: [AcpAgent, pubsubObject],
     });
-
-    configureAcp({ resolveAgent }, { ingressUrl: restateEnv.baseUrl() });
 
     client = new FlamecastClient({
       ingressUrl: restateEnv.baseUrl(),
