@@ -39,7 +39,7 @@ describe("package contract", () => {
 
     const entry = await import("../../src/index.js");
     expect(entry.AcpAgent).toBeDefined();
-    expect(entry.initAgents).toBeTypeOf("function");
+    expect(entry.fetchAgentConfigs).toBeTypeOf("function");
     expect(entry.serve).toBeTypeOf("function");
   });
 });
