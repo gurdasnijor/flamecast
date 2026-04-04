@@ -12,11 +12,9 @@
   "workspaces": {
     "packages/flamecast": {
       "entry": [
-        "src/cli.ts",
-        "src/client/api.ts",
-        "test/fixtures/example-agent.ts",
         "src/index.ts",
-        "src/index.ts",
+        "src/client/index.ts",
+        "test/fixtures/*.ts",
         "test/**/*.test.ts"
       ],
       "ignoreBinaries": [
@@ -56,9 +54,7 @@
         "src/routes/**/*.tsx",
         "src/hooks/*.ts",
         "src/components/*.tsx",
-        "src/lib/flamecast-connection.ts",
-        "src/lib/flamecast-context.ts",
-        "src/lib/channel-subscription.ts"
+        "src/lib/*.ts"
       ],
       "ignoreUnresolved": [
         "./routeTree.gen"
