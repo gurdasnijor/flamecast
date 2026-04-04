@@ -80,7 +80,9 @@ export const AcpAgent = restate.object<string, RestateAgent>({
       const handle = spawnSession(agentName, ctx.key);
       sessions.set(ctx.key, handle);
       ctx.set("agentName", agentName);
-      return handle.conn.initialize(params);
+
+      // Journal the init result — on replay, spawn still happens but initialize() is skipped
+      return ctx.run("initialize", () => handle.conn.initialize(params));
     },
 
     async newSession(ctx: restate.ObjectContext<AgentState>, params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
@@ -89,16 +91,19 @@ export const AcpAgent = restate.object<string, RestateAgent>({
         const handle = spawnSession(agentName, ctx.key);
         sessions.set(ctx.key, handle);
         ctx.set("agentName", agentName);
-        await handle.conn.initialize({
+        await ctx.run("auto-initialize", () => handle.conn.initialize({
           protocolVersion: acp.PROTOCOL_VERSION,
           clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
           clientInfo: { name: "flamecast", title: "Flamecast", version: "0.1.0" },
-        });
+        }));
       } else if (!sessions.has(ctx.key)) {
         await getOrReconnect(ctx);
       }
 
-      const result = await sessions.get(ctx.key)!.conn.newSession(params);
+      // Journal sessionId — on replay, newSession() is skipped, stored sessionId used
+      const result = await ctx.run("newSession", () =>
+        sessions.get(ctx.key)!.conn.newSession(params),
+      );
       ctx.set("acpSessionId", result.sessionId);
       return result;
     },
