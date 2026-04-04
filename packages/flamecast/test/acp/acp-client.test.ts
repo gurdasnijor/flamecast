@@ -6,11 +6,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { FlamecastClient } from "../../src/client/index.js";
+import { FlamecastConnection } from "../../src/client/index.js";
 
-describe("FlamecastClient", () => {
+describe("FlamecastConnection", () => {
   it("implements acp.Agent interface", () => {
-    const client = new FlamecastClient({
+    const client = new FlamecastConnection(() => ({} as any), {
       ingressUrl: "http://localhost:18080",
     });
 

@@ -16,36 +16,36 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import * as acp from "@agentclientprotocol/sdk";
-import { connectStdio } from "@flamecast/acp/transports/stdio";
-import { AcpSession, configureAcp } from "../../src/session.js";
+import { AcpAgent } from "../../src/agent.js";
 import { pubsubObject } from "../../src/pubsub.js";
-import { FlamecastClient } from "../../src/client/index.js";
+import { registerAgent } from "../../src/registry.js";
+import { FlamecastConnection } from "../../src/client/index.js";
 
 const SKIP = !process.env.ANTHROPIC_API_KEY;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
-function resolveAgent(_name: string, _sessionId: string, toClient: (agent: acp.Agent) => acp.Client) {
-  return connectStdio(
-    {
-      cmd: "npx",
-      args: ["@agentclientprotocol/claude-agent-acp"],
-      env: {
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
-        PATH: process.env.PATH!,
-        HOME: process.env.HOME!,
-      },
-      label: "claude-acp",
-    },
-    toClient,
-  );
-}
+registerAgent({
+  id: "claude-acp",
+  manifest: { name: "claude-acp", description: "Claude ACP", version: "1.0" },
+  distribution: {
+    type: "npx" as const,
+    cmd: "npx",
+    args: ["@agentclientprotocol/claude-agent-acp"],
+    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+  },
+});
 
-type ClientConfig = ConstructorParameters<typeof FlamecastClient>[0];
-type Update = Record<string, unknown>;
+class TestClient implements acp.Client {
+  updates: acp.SessionNotification[] = [];
+  autoApprove = true;
 
-function autoApprove(): ClientConfig["onPermissionRequest"] {
-  return async (params) => {
+  async sessionUpdate(params: acp.SessionNotification) {
+    this.updates.push(params);
+  }
+
+  async requestPermission(params: acp.RequestPermissionRequest) {
+    if (!this.autoApprove) return { outcome: { outcome: "cancelled" as const } };
     const allow = params.options.find((o) => o.kind === "allow_once");
     return {
       outcome: {
@@ -53,46 +53,37 @@ function autoApprove(): ClientConfig["onPermissionRequest"] {
         optionId: allow?.optionId ?? params.options[0].optionId,
       },
     };
-  };
+  }
 }
 
-async function createSession(
-  ingressUrl: string,
-  cwd: string,
-  overrides?: Partial<ClientConfig>,
-) {
-  const client = new FlamecastClient({ ingressUrl, ...overrides });
-  await client.initialize({
+async function createSession(ingressUrl: string, cwd: string) {
+  const testClient = new TestClient();
+  const conn = new FlamecastConnection(() => testClient, { ingressUrl });
+  await conn.initialize({
     protocolVersion: acp.PROTOCOL_VERSION,
     clientCapabilities: {
       fs: { readTextFile: true, writeTextFile: true },
       terminal: true,
     },
   });
-  const { sessionId } = await client.newSession({ cwd, mcpServers: [] });
-  return { client, sessionId };
+  const { sessionId } = await conn.newSession({ cwd, mcpServers: [] });
+  return { conn, sessionId, testClient };
 }
 
-/** Collect SSE updates, prompt, wait for propagation, return updates. */
 async function promptAndCollect(
   ingressUrl: string,
   cwd: string,
   text: string,
-  overrides?: Partial<ClientConfig>,
   waitMs = 500,
 ) {
-  const updates: acp.SessionNotification[] = [];
-  const { client, sessionId } = await createSession(ingressUrl, cwd, {
-    onSessionUpdate: (p) => updates.push(p),
-    ...overrides,
-  });
-  const result = await client.prompt({
+  const { conn, sessionId, testClient } = await createSession(ingressUrl, cwd);
+  const result = await conn.prompt({
     sessionId,
     prompt: [{ type: "text", text }],
   });
   await new Promise((r) => setTimeout(r, waitMs));
-  client.dispose();
-  return { result, updates, sessionId };
+  conn.dispose();
+  return { result, updates: testClient.updates, sessionId };
 }
 
 // ─── Setup ──────────────────────────────────────────────────────────────────
@@ -103,9 +94,8 @@ let tmpDir: string;
 describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
   beforeAll(async () => {
     restateEnv = await RestateTestEnvironment.start({
-      services: [AcpSession, pubsubObject],
+      services: [AcpAgent, pubsubObject],
     });
-    configureAcp({ resolveAgent }, { ingressUrl: restateEnv.baseUrl() });
     tmpDir = await mkdtemp(join(tmpdir(), "flamecast-acp-"));
   }, 120_000);
 
@@ -119,7 +109,7 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
 
   describe("Initialization", () => {
     it("returns matching protocol version", async () => {
-      const client = new FlamecastClient({ ingressUrl: restateEnv.baseUrl() });
+      const client = new FlamecastConnection(() => new TestClient(), { ingressUrl: restateEnv.baseUrl() });
       const result = await client.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
@@ -128,7 +118,7 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
     });
 
     it("returns agentCapabilities object", async () => {
-      const client = new FlamecastClient({ ingressUrl: restateEnv.baseUrl() });
+      const client = new FlamecastConnection(() => new TestClient(), { ingressUrl: restateEnv.baseUrl() });
       const result = await client.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {
@@ -165,7 +155,7 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
     }, 60_000);
 
     it("accepts _meta extension fields", async () => {
-      const client = new FlamecastClient({
+      const client = new FlamecastConnection(() => new TestClient(), {
         ingressUrl: restateEnv.baseUrl(),
       });
       await client.initialize({
@@ -839,7 +829,7 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
 
   describe("Extensibility", () => {
     it("_meta fields pass through on newSession", async () => {
-      const client = new FlamecastClient({
+      const client = new FlamecastConnection(() => new TestClient(), {
         ingressUrl: restateEnv.baseUrl(),
       });
       await client.initialize({
@@ -875,14 +865,13 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
   // ── 14. Cancellation ───────────────────────────────────────────────────
 
   describe("Cancellation", () => {
-    it("close returns stopReason: cancelled", async () => {
-      const { client, sessionId } = await createSession(
+    it("cancel returns without error", async () => {
+      const { conn, sessionId } = await createSession(
         restateEnv.baseUrl(),
         tmpDir,
       );
-      const result = await client.closeSession({ sessionId });
-      expect(result.stopReason).toBe("cancelled");
-      client.dispose();
+      await conn.cancel({ sessionId });
+      conn.dispose();
     }, 30_000);
   });
 
@@ -890,7 +879,7 @@ describe.skipIf(SKIP)("ACP Compliance — claude-acp through Flamecast", () => {
 
   describe("Error Handling", () => {
     it("prompt without session throws", async () => {
-      const client = new FlamecastClient({
+      const client = new FlamecastConnection(() => new TestClient(), {
         ingressUrl: restateEnv.baseUrl(),
       });
       await client.initialize({

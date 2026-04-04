@@ -1,22 +1,46 @@
 /**
  * Transport composition tests.
  *
- * Validates that connectX + serveX produce working ACP connections
- * across all transport types.
+ * Validates that transports produce working ACP connections.
  *
  * Matrix:
- *   stdio:  connectStdio → echo-agent fixture
+ *   stdio:  execa + ndJsonStream → echo-agent fixture
  *   ws:     serveWs + connectWs (in-process, both ends)
- *   mixed:  serveWs (agent) + connectWs (client), different codecs aren't possible
- *           since the transport function picks the right serialization internally
+ *   bridge: serveWs (agent) + connectWs (client), bridged to stdio
+ *   reuse:  same process, two sequential ClientSideConnections (the session-host scenario)
  */
 
 import { describe, it, expect, afterEach } from "vitest";
 import * as acp from "@agentclientprotocol/sdk";
-import { connectStdio, fromStdio } from "../src/transports/stdio.js";
 import { connectWs, serveWs, acceptWs } from "../src/transports/websocket.js";
-import { bridge } from "../src/transports/bridge.js";
+import { execa, type ResultPromise } from "execa";
+import { Readable, Writable } from "node:stream";
 import { resolve } from "node:path";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+const ECHO_AGENT_PATH = resolve(
+  import.meta.dirname,
+  "fixtures/echo-agent.ts",
+);
+
+/** Spawn an echo-agent and return an acp.Stream for it. */
+function spawnEchoAgent(): { stream: acp.Stream; proc: ResultPromise } {
+  const proc = execa("npx", ["tsx", ECHO_AGENT_PATH], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+    cleanup: true,
+  });
+  proc.catch(() => {});
+
+  const stream = acp.ndJsonStream(
+    Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>,
+    Readable.toWeb(proc.stdout! as import("node:stream").Readable) as ReadableStream<Uint8Array>,
+  );
+
+  return { stream, proc };
+}
 
 // ─── Echo agent factory (for serve* functions) ─────────────────────────────
 
@@ -73,9 +97,9 @@ function makeClientFactory(updates?: acp.SessionNotification[]) {
 
 // ─── Cleanup ───────────────────────────────────────────────────────────────
 
-const cleanups: Array<() => Promise<void>> = [];
+const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
-  for (const fn of cleanups) await fn().catch(() => {});
+  for (const fn of cleanups) await Promise.resolve(fn()).catch(() => {});
   cleanups.length = 0;
 });
 
@@ -137,16 +161,14 @@ describe("Transport Composition", () => {
   });
 
   describe("bridge: WS → stdio", () => {
-    const ECHO_AGENT_PATH = resolve(
-      import.meta.dirname,
-      "../../flamecast/test/fixtures/echo-agent.ts",
-    );
-
     it("proxies ACP through WS bridge to stdio agent", async () => {
-      const server = await bridge(
-        (h) => acceptWs({ port: 0 }, h),
-        () => fromStdio({ cmd: "npx", args: ["tsx", ECHO_AGENT_PATH] }),
-      );
+      const { stream: agentStream, proc } = spawnEchoAgent();
+      cleanups.push(() => { proc.kill(); });
+
+      const server = await acceptWs({ port: 0 }, (clientStream) => {
+        clientStream.readable.pipeTo(agentStream.writable).catch(() => {});
+        agentStream.readable.pipeTo(clientStream.writable).catch(() => {});
+      });
       cleanups.push(() => server.close());
 
       const updates: acp.SessionNotification[] = [];
@@ -174,17 +196,12 @@ describe("Transport Composition", () => {
   });
 
   describe("stdio", () => {
-    const ECHO_AGENT_PATH = resolve(
-      import.meta.dirname,
-      "../../flamecast/test/fixtures/echo-agent.ts",
-    );
-
     it("full ACP handshake + prompt over stdio", async () => {
+      const { stream, proc } = spawnEchoAgent();
+      cleanups.push(() => { proc.kill(); });
+
       const updates: acp.SessionNotification[] = [];
-      const agent = connectStdio(
-        { cmd: "npx", args: ["tsx", ECHO_AGENT_PATH], label: "echo-agent" },
-        makeClientFactory(updates),
-      );
+      const agent = new acp.ClientSideConnection(makeClientFactory(updates), stream);
 
       const init = await agent.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
@@ -201,6 +218,37 @@ describe("Transport Composition", () => {
       expect(init.agentInfo?.name).toBe("echo-agent");
       expect(result.stopReason).toBe("end_turn");
       expect(updates.length).toBeGreaterThan(0);
+    });
+
+    it("same connection serves multiple prompts (pool reuse)", async () => {
+      const { stream, proc } = spawnEchoAgent();
+      cleanups.push(() => { proc.kill(); });
+
+      const agent = new acp.ClientSideConnection(makeClientFactory(), stream);
+
+      await agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const session = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+
+      // Multiple prompts on the same connection — the pool scenario
+      const r1 = await agent.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "turn-1" }],
+      });
+      const r2 = await agent.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "turn-2" }],
+      });
+      const r3 = await agent.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "turn-3" }],
+      });
+
+      expect(r1.stopReason).toBe("end_turn");
+      expect(r2.stopReason).toBe("end_turn");
+      expect(r3.stopReason).toBe("end_turn");
     });
   });
 });

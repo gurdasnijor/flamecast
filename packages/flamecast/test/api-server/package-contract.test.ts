@@ -38,7 +38,8 @@ describe("package contract", () => {
     expect(packageJson.exports["./edge"]).toBeUndefined();
 
     const entry = await import("../../src/index.js");
-    expect(entry.AcpSession).toBeDefined();
+    expect(entry.AcpAgent).toBeDefined();
+    expect(entry.initAgents).toBeTypeOf("function");
     expect(entry.serve).toBeTypeOf("function");
   });
 });
