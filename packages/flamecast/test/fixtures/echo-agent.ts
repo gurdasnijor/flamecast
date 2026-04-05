@@ -5,7 +5,7 @@
  */
 
 import * as acp from "@agentclientprotocol/sdk";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
 
 class EchoAgent implements acp.Agent {
   private connection: acp.AgentSideConnection;

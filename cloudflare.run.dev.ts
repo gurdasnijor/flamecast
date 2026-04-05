@@ -35,7 +35,7 @@ const restate = await docker.Container("restate", {
   restart: "unless-stopped",
 });
 
-// ─── Service endpoint (Restate VOs: AgentSession + pubsub) ──────────────
+// ─── Service endpoint (Restate VO: AcpSession) ─────────────────────────
 
 const endpoint = await docker.Container("endpoint", {
   image: flamecastImage,

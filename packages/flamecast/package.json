@@ -27,6 +27,7 @@
     "test:api:coverage": "vitest run --coverage --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "^0.25.0",
     "@agentclientprotocol/sdk": "^0.16.1",
     "@restatedev/pubsub": "^0.1.0",
     "@restatedev/pubsub-client": "^0.1.0",

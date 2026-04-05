@@ -1,17 +1,20 @@
 /**
- * Smoke test — verifies the two VOs are importable and have the expected shape.
+ * Smoke test — verifies the VO and exports are importable.
  */
 
 import { describe, it, expect } from "vitest";
-import { AgentConnection } from "../../src/agent-connection.js";
-import { AgentSession } from "../../src/agent-session.js";
+import { AcpConnection, pubsubObject, createDurableStream } from "../../src/index.js";
 
-describe("VO exports", () => {
-  it("AgentConnection has name property", () => {
-    expect(AgentConnection.name).toBe("AgentConnection");
+describe("exports", () => {
+  it("AcpConnection has name property", () => {
+    expect(AcpConnection.name).toBe("AcpConnection");
   });
 
-  it("AgentSession has name property", () => {
-    expect(AgentSession.name).toBe("AgentSession");
+  it("pubsubObject has name property", () => {
+    expect(pubsubObject.name).toBe("pubsub");
+  });
+
+  it("createDurableStream is a function", () => {
+    expect(typeof createDurableStream).toBe("function");
   });
 });
