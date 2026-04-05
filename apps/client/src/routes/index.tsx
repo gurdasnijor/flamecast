@@ -1,11 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectSession, BrowserClient, listAgents } from "@/lib/api";
+import { flamecast, BrowserClient, listAgents } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoaderCircleIcon, PlayIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
-import * as acp from "@agentclientprotocol/sdk";
 
 // Agent IDs to show — matches server's ACP_AGENTS env var
 const AGENT_IDS = ["claude-acp", "codex-acp", "gemini", "opencode", "kilo"];
@@ -25,23 +24,17 @@ function AgentsPage() {
 
   const createMutation = useMutation({
     mutationFn: async (agentName: string) => {
-      const sessionKey = crypto.randomUUID();
       const client = new BrowserClient();
-      const agent = connectSession(sessionKey, client);
-
-      await agent.initialize({
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
-        clientInfo: { name: "flamecast-ui", title: "Flamecast", version: "0.1.0" },
-        _meta: { agentName },
-      });
-
-      const session = await agent.newSession({ cwd: "/", mcpServers: [] });
-      return { sessionId: session.sessionId, sessionKey };
+      const { connectionId } = await flamecast.connect(
+        agentName,
+        { cwd: "/", mcpServers: [], clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } } },
+        () => client,
+      );
+      return { connectionId };
     },
-    onSuccess: ({ sessionKey }) => {
+    onSuccess: ({ connectionId }) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      navigate({ to: "/sessions/$id", params: { id: sessionKey } });
+      navigate({ to: "/sessions/$id", params: { id: connectionId } });
     },
     onError: (err) => {
       toast.error("Failed to create run", {

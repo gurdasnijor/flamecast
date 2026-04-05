@@ -1,94 +1,95 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionLog } from "@flamecast/protocol/session";
-import { connectSession, BrowserClient, pubsub } from "@/lib/api";
+import { flamecast, BrowserClient } from "@/lib/api";
 import type * as acp from "@agentclientprotocol/sdk";
 
 type ConnectionState = "disconnected" | "connecting" | "connected";
 
-export function useFlamecastSession(sessionId: string) {
+export interface PendingPermissionUI {
+  requestId: string;
+  toolCall: acp.RequestPermissionRequest["toolCall"];
+  options: acp.RequestPermissionRequest["options"];
+  resolve: (outcome: acp.RequestPermissionOutcome) => void;
+}
+
+export function useFlamecastSession(connectionId: string) {
   const [events, setEvents] = useState<SessionLog[]>([]);
+  const [pendingPermissions, setPendingPermissions] = useState<PendingPermissionUI[]>([]);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const connRef = useRef<acp.ClientSideConnection | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setEvents([]);
+    setPendingPermissions([]);
     setConnectionState("connecting");
 
-    const ac = new AbortController();
-    abortRef.current = ac;
+    const browserClient = new BrowserClient();
 
-    // Create a BrowserClient that feeds events into React state
-    const client = new BrowserClient();
-    client.onSessionUpdate = (params) => {
+    browserClient.onSessionUpdate = (params: acp.SessionNotification) => {
       const log: SessionLog = {
-        type: params.update.sessionUpdate ?? "session_update",
-        data: params.update as Record<string, unknown>,
+        type: "session_update",
+        data: { update: params.update } as Record<string, unknown>,
         timestamp: new Date().toISOString(),
       };
       setEvents((prev) => [...prev, log]);
     };
 
-    const conn = connectSession(sessionId, client);
+    browserClient.onPermissionRequest = (params: acp.RequestPermissionRequest) => {
+      return new Promise<acp.RequestPermissionResponse>((resolve) => {
+        const requestId = params.toolCall.toolCallId;
+        const pending: PendingPermissionUI = {
+          requestId,
+          toolCall: params.toolCall,
+          options: params.options,
+          resolve: (outcome: acp.RequestPermissionOutcome) => {
+            setPendingPermissions((prev) => prev.filter((p) => p.requestId !== requestId));
+            setEvents((prev) => [
+              ...prev,
+              { type: "permission_responded", data: { requestId, outcome } as Record<string, unknown>, timestamp: new Date().toISOString() },
+            ]);
+            resolve({ outcome });
+          },
+        };
+        setPendingPermissions((prev) => [...prev, pending]);
+        setEvents((prev) => [
+          ...prev,
+          { type: "permission_request", data: { requestId, toolCall: params.toolCall, options: params.options } as Record<string, unknown>, timestamp: new Date().toISOString() },
+        ]);
+      });
+    };
+
+    // Attach to existing durable connection — returns a standard ClientSideConnection
+    const conn = flamecast.attach(connectionId, () => browserClient);
     connRef.current = conn;
     setConnectionState("connected");
 
-    // Also listen to raw pubsub for events the ClientSideConnection doesn't route
-    (async () => {
-      try {
-        for await (const event of pubsub.pull({ topic: `session:${sessionId}`, signal: ac.signal })) {
-          if (event?.type && event.type !== "session_update" && event.type !== "permission_request") {
-            const log: SessionLog = {
-              type: event.type,
-              data: event,
-              timestamp: new Date().toISOString(),
-            };
-            setEvents((prev) => [...prev, log]);
-          }
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setConnectionState("disconnected");
-        }
-      }
-    })();
-
     return () => {
-      abortRef.current = null;
       connRef.current = null;
-      ac.abort();
     };
-  }, [sessionId]);
+  }, [connectionId]);
 
   const prompt = useCallback(
     (text: string) => {
       setEvents((prev) => [
         ...prev,
-        {
-          type: "prompt_sent",
-          data: { text },
-          timestamp: new Date().toISOString(),
-        },
+        { type: "prompt_sent", data: { text }, timestamp: new Date().toISOString() },
       ]);
-      connRef.current?.prompt({ sessionId, prompt: [{ type: "text", text }] }).catch(() => {});
+      connRef.current?.prompt({ sessionId: "", prompt: [{ type: "text", text }] }).catch(() => {});
     },
-    [sessionId],
+    [connectionId],
   );
 
   const cancel = useCallback(() => {
-    connRef.current?.cancel({ sessionId }).catch(() => {});
-  }, [sessionId]);
+    connRef.current?.cancel({ sessionId: "" }).catch(() => {});
+  }, [connectionId]);
 
-  const requestFilePreview = useCallback(
-    (_filePath: string) => Promise.resolve({ content: "" }),
-    [],
-  );
-
-  const requestFsSnapshot = useCallback(
-    (_opts?: { showAllFiles?: boolean }) =>
-      Promise.resolve({ root: "", entries: [] }),
-    [],
+  const respondPermission = useCallback(
+    (requestId: string, outcome: acp.RequestPermissionOutcome) => {
+      const pending = pendingPermissions.find((p) => p.requestId === requestId);
+      if (pending) pending.resolve(outcome);
+    },
+    [pendingPermissions],
   );
 
   const addEvent = useCallback((log: SessionLog) => {
@@ -97,12 +98,12 @@ export function useFlamecastSession(sessionId: string) {
 
   return {
     events,
+    pendingPermissions,
     connectionState,
     isConnected: connectionState === "connected",
     prompt,
     cancel,
+    respondPermission,
     addEvent,
-    requestFilePreview,
-    requestFsSnapshot,
   };
 }

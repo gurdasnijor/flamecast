@@ -1,7 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ingressUrl, pubsub } from "@/lib/api";
-import * as restate from "@restatedev/restate-sdk-clients";
 import { FileSystemPanel } from "@/components/filesystem-panel";
 import { sessionLogsToSegments } from "@/lib/logs-markdown";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -16,8 +14,6 @@ import { Streamdown } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { ArrowLeftIcon, ChevronDownIcon, SendIcon } from "lucide-react";
 import type { FileSystemEntry, SessionLog } from "@flamecast/protocol/session";
-import { PendingPermissionSchema } from "@flamecast/protocol/session/zod";
-import type { PermissionRequestEvent } from "@flamecast/protocol/session-host";
 import { useFlamecastSession } from "@/hooks/use-flamecast-session";
 
 export const Route = createFileRoute("/sessions/$id")({
@@ -40,8 +36,10 @@ function SessionDetailPage() {
   // SSE for live session events, REST for prompt/cancel/filesystem
   const {
     events: wsEvents,
+    pendingPermissions,
     isConnected,
     prompt: wsPrompt,
+    respondPermission,
     addEvent,
     requestFilePreview,
     requestFsSnapshot,
@@ -50,70 +48,12 @@ function SessionDetailPage() {
   // Merge: use WS events if available, fall back to REST logs
   const logs: SessionLog[] = useMemo(() => {
     if (wsEvents.length > 0) return [...wsEvents];
-    return session?.logs ?? [];
-  }, [wsEvents, session?.logs]);
+    return [];
+  }, [wsEvents]);
 
-  // Derive all pending permissions from WS events
-  const pendingPermissions = useMemo(() => {
-    const resolvedIds = new Set<string>();
-    for (const event of wsEvents) {
-      if (
-        event.type === "permission_approved" ||
-        event.type === "permission_rejected" ||
-        event.type === "permission_cancelled" ||
-        event.type === "permission_responded"
-      ) {
-        const rid = event.data.requestId;
-        if (typeof rid === "string") resolvedIds.add(rid);
-      }
-    }
-    // A complete event means the prompt finished — all permissions are resolved
-    const lastComplete = wsEvents.findLastIndex((e) => e.type === "complete");
-
-    const pending: PermissionRequestEvent[] = [];
-    for (let i = 0; i < wsEvents.length; i++) {
-      const event = wsEvents[i];
-      if (event.type === "permission_request") {
-        if (lastComplete >= 0 && i < lastComplete) continue;
-        const d = event.data as Record<string, unknown>;
-        // Map raw ACP shape to what the UI expects
-        const toolCall = d.toolCall as Record<string, unknown> | undefined;
-        const requestId = (toolCall?.toolCallId as string) ?? (d.requestId as string) ?? "";
-        if (resolvedIds.has(requestId)) continue;
-        pending.push({
-          requestId,
-          toolCallId: requestId,
-          title: (toolCall?.title as string) ?? "Permission required",
-          kind: toolCall?.kind as string | undefined,
-          options: ((d.options as Array<Record<string, unknown>>) ?? []).map((o) => ({
-            optionId: o.optionId as string,
-            name: o.name as string,
-            kind: o.kind as string,
-          })),
-        });
-      }
-    }
-    if (pending.length === 0 && session?.pendingPermission) {
-      return [session.pendingPermission];
-    }
-    return pending;
-  }, [wsEvents, session?.pendingPermission]);
-
-  // Fetch filesystem snapshot via HTTP, refetch when files change
+  // Filesystem state (placeholder — not yet wired to VO)
   const [fileEntries, setFileEntries] = useState<FileSystemEntry[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!session?.fileSystem) return;
-    setFileEntries(session.fileSystem.entries);
-    setWorkspaceRoot(session.fileSystem.root);
-  }, [session?.fileSystem]);
-
-  // Fetch snapshot on connect and when filesystem.changed events arrive
-  const fsChangeCount = useMemo(
-    () => wsEvents.filter((e) => e.type === "filesystem.changed").length,
-    [wsEvents],
-  );
 
   useEffect(() => {
     if (!session) return;
@@ -123,32 +63,22 @@ function SessionDetailPage() {
         setWorkspaceRoot(snapshot.root);
       })
       .catch(() => {});
-  }, [fsChangeCount, requestFsSnapshot, session, showAllFiles]);
+  }, [requestFsSnapshot, session, showAllFiles]);
+
   const markdownSegments = useMemo(() => sessionLogsToSegments(logs), [logs]);
 
   const handlePermission = (
     requestId: string,
     body: { optionId: string } | { outcome: "cancelled" },
   ) => {
-    // Find the matching permission event to get awakeableId
-    const event = wsEvents.find((e) => {
-      if (e.type !== "permission_request") return false;
-      const d = e.data as Record<string, unknown>;
-      const toolCall = d.toolCall as Record<string, unknown> | undefined;
-      const rid = (toolCall?.toolCallId as string) ?? (d.requestId as string);
-      return rid === requestId;
-    });
-    if (!event?.data?.awakeableId) return;
-
-    client.resumePermission(id, event.data.awakeableId as string, "optionId" in body ? body.optionId : "")
-      .then(() => {
-        addEvent({
-          type: "permission_responded",
-          data: { requestId },
-          timestamp: new Date().toISOString(),
-        });
-      })
-      .catch(() => {});
+    if ("outcome" in body) {
+      respondPermission(requestId, { outcome: "cancelled" });
+    } else {
+      respondPermission(requestId, {
+        outcome: "selected",
+        optionId: body.optionId,
+      });
+    }
   };
 
   const handleSend = () => {
@@ -188,13 +118,13 @@ function SessionDetailPage() {
       <div className="flex shrink-0 flex-wrap items-center gap-3 pb-4">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:gap-3">
           <Badge variant="secondary" className="shrink-0">
-            {session.agentName}
+            {session.sessionId}
           </Badge>
           <code
             className="max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-            title={session.id}
+            title={id}
           >
-            {session.id}
+            {id}
           </code>
           {isConnected ? (
             <Badge variant="outline" className="text-green-600">
@@ -279,16 +209,16 @@ function SessionDetailPage() {
                     <CardHeader>
                       <CardTitle className="text-base">Permission required</CardTitle>
                       <CardDescription>
-                        {pending.title}
-                        {pending.kind ? (
+                        {pending.toolCall.title}
+                        {pending.toolCall.kind ? (
                           <Badge variant="outline" className="ml-2">
-                            {pending.kind}
+                            {pending.toolCall.kind}
                           </Badge>
                         ) : null}
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-wrap gap-2">
-                      {pending.options.map((opt) => (
+                      {pending.options.map((opt: { optionId: string; name: string; kind: string }) => (
                         <Button
                           key={opt.optionId}
                           variant={opt.kind === "allow_once" ? "default" : "secondary"}

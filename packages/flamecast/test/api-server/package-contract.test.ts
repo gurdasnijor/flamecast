@@ -20,21 +20,20 @@ describe("package contract", () => {
     expect(packageJson.name).toBe("@flamecast/sdk");
     expect(packageJson.files).toEqual(["dist"]);
 
-    // Core entrypoint (server: VOs, endpoint)
     expect(packageJson.exports["."]).toEqual({
       types: "./src/index.ts",
       import: "./src/index.ts",
     });
 
-    // Client sub-export (browser-safe)
     expect(packageJson.exports["./client"]).toEqual({
       types: "./src/client/index.ts",
       import: "./src/client/index.ts",
     });
 
     const entry = await import("../../src/index.js");
-    expect(entry.AgentConnection).toBeDefined();
-    expect(entry.AgentSession).toBeDefined();
+    expect(entry.AcpConnection).toBeDefined();
+    expect(entry.pubsubObject).toBeDefined();
+    expect(entry.createDurableStream).toBeTypeOf("function");
     expect(entry.serve).toBeTypeOf("function");
   });
 });

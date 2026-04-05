@@ -1,7 +1,7 @@
 import * as restate from "@restatedev/restate-sdk";
-import { AgentConnection } from "./agent-connection.js";
-import { AgentSession } from "./agent-session.js";
+import { AcpConnection } from "./connection.js";
+import { pubsubObject } from "./pubsub.js";
 
 export function serve(port = 9080) {
-  return restate.serve({ services: [AgentConnection, AgentSession], port });
+  return restate.serve({ services: [AcpConnection, pubsubObject], port });
 }
